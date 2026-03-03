@@ -9,7 +9,13 @@ from google.cloud import storage
 
 
 def main():
-    client = storage.Client()
+    # 设置必需的 scopes
+    SCOPES = ["https://www.googleapis.com/auth/devstorage.full_control"]
+
+    from google.auth import default
+    credentials, _ = default(scopes=SCOPES)
+    client = storage.Client(credentials=credentials)
+
     bucket = client.bucket("decom-objects")
 
     source_path = Path(__file__).parent / "2026-03-03.json"
