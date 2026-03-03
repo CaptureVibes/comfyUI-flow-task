@@ -31,6 +31,28 @@ def main():
 
     print(f"✅ 上传成功: gs://decom-objects/jimeng/jobs/2026-03-03.json")
 
+    # 验证上传
+    verify(bucket)
+
+
+def verify(bucket):
+    """验证文件是否上传成功"""
+    blob = bucket.blob("jimeng/jobs/2026-03-03.json")
+
+    if not blob.exists():
+        print("❌ 文件不存在")
+        return
+
+    print(f"📦 文件存在: {blob.name}")
+    print(f"📏 大小: {blob.size} bytes")
+    print(f"🕒 更新时间: {blob.updated}")
+    print(f"🔗 公开 URL: {blob.public_url}")
+
+    # 下载并打印内容
+    content = blob.download_as_text()
+    data = json.loads(content)
+    print(f"📄 内容预览: {json.dumps(data, indent=2, ensure_ascii=False)[:200]}...")
+
 
 if __name__ == "__main__":
     main()
