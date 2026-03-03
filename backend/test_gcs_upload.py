@@ -51,7 +51,7 @@ def verify(bucket):
     # 下载并打印内容
     content = blob.download_as_text()
     data = json.loads(content)
-    print(f"📄 内容预览: {json.dumps(data, indent=2, ensure_ascii=False)[:200]}...")
+    print(f"📄 内容预览: {json.dumps(data, indent=2, ensure_ascii=False)}...")
 
 
 if __name__ == "__main__":
