@@ -179,7 +179,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource } from '../api/video_sources'
-import { createVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
+import { createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { isDuplicateRequestError } from '../api/http'
 
 const router = useRouter()
@@ -262,6 +262,8 @@ async function handleCreateTemplate(item) {
       description: '',
       video_source_id: item.id,
     })
+    // 创建完立即启动 AI 分析
+    try { await startVideoAITemplate(tpl.id) } catch { /* ignore */ }
     templateMap.value = { ...templateMap.value, [item.id]: tpl.id }
     router.push(`/dashboard/video-ai-templates/${tpl.id}/edit`)
   } catch (err) {
