@@ -37,7 +37,7 @@ def main():
 
 def verify(bucket):
     """验证文件是否上传成功"""
-    blob = bucket.blob("jimeng/jobs/2026-03-03.json")
+    blob = bucket.blob("jimeng/results/2026-03-03/001/video.mp4")
 
     if not blob.exists():
         print("❌ 文件不存在")
