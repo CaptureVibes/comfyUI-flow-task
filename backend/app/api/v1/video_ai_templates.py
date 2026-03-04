@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
 from app.models.enums import VideoAIProcessStatus
+from app.models.user import User
 from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
 from app.schemas.video_ai_template import (
     VideoAITemplateCreate,
+    VideoAITemplateListItem,
     VideoAITemplateListResponse,
     VideoAITemplatePatch,
     VideoAITemplateRead,
@@ -29,7 +31,13 @@ router = APIRouter(prefix="/video-ai-templates", tags=["video-ai-templates"])
 
 
 def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
+    """查询过滤用：管理员返回 None（不过滤），普通用户返回自己的 user_id"""
     return None if current_user.is_admin else current_user.user_id
+
+
+def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID:
+    """创建记录用：始终返回实际 user_id"""
+    return current_user.user_id
 
 
 async def _get_tpl_or_404(
@@ -71,11 +79,11 @@ async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITempla
 @router.post("", response_model=VideoAITemplateRead, status_code=201)
 async def create_template(
     payload: VideoAITemplateCreate,
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoAITemplateRead:
     tpl = VideoAITemplate(
-        owner_id=owner_id,
+        owner_id=creator_id,
         title=payload.title,
         description=payload.description,
         video_source_id=payload.video_source_id,
@@ -115,9 +123,35 @@ async def list_templates(
         total_stmt = total_stmt.where(VideoAITemplate.video_source_id == video_source_id)
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)
+
+    # 批量查询涉及的 owner_id 对应的用户名
+    owner_ids = list({r.owner_id for r in rows if r.owner_id is not None})
+    username_map: dict[uuid.UUID, str] = {}
+    if owner_ids:
+        users = (await session.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
+        for u in users:
+            username_map[u.id] = u.display_name or u.username
+
     items_read = []
     for r in rows:
-        items_read.append(await _to_read(session, r))
+        vs = None
+        if r.video_source_id:
+            vs_obj = await session.get(VideoSource, r.video_source_id)
+            if vs_obj:
+                vs = VideoSourceSummary.model_validate(vs_obj)
+        items_read.append(VideoAITemplateListItem(
+            id=r.id,
+            owner_id=r.owner_id,
+            owner_username=username_map.get(r.owner_id) if r.owner_id else None,
+            title=r.title,
+            description=r.description,
+            video_source_id=r.video_source_id,
+            video_source=vs,
+            process_status=r.process_status,
+            process_error=r.process_error,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        ))
 
     return VideoAITemplateListResponse(
         items=items_read,

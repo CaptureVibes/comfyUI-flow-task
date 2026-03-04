@@ -63,6 +63,7 @@
           <div v-if="item.video_source.platform" class="vt-platform-badge">
             {{ platformLabel(item.video_source.platform) }}
           </div>
+          <span v-if="isAdmin() && item.owner_username" class="vt-owner-badge">{{ item.owner_username }}</span>
         </div>
 
         <!-- Content -->
@@ -120,7 +121,7 @@
       <div v-loading="configLoading" class="cfg-body">
         <div class="cfg-hint-bar">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          API Key 和 Base URL 在<router-link to="/dashboard/settings" @click="showConfig=false">设置页面</router-link>配置，与 EvoLink Key 共用。
+          API Key 和 Base URL 由管理员在<router-link to="/dashboard/settings" @click="showConfig=false">系统设置</router-link>中配置，此处为你的个人流程参数。
         </div>
 
         <el-tabs v-model="configTab" type="border-card" class="cfg-tabs">
@@ -229,8 +230,11 @@ import {
   resumeVideoAITemplate,
   deleteVideoAITemplate,
 } from '../api/video_ai_templates'
-import { fetchEvolinkSettings, updateEvolinkSettings } from '../api/settings'
+import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { isDuplicateRequestError } from '../api/http'
+import { useAuth } from '../composables/useAuth'
+
+const { isAdmin } = useAuth()
 
 const router = useRouter()
 
@@ -257,8 +261,6 @@ const cfg = reactive({
   understand_temperature: 0.3,
   understand_output_format: 'text',
   understand_json_schema: '',
-  api_key: '',
-  api_base_url: 'https://api.evolink.ai',
 })
 
 // JSON validation errors for schema fields
@@ -285,15 +287,13 @@ async function openConfig() {
   configLoading.value = true
   jsonErrors.understand = ''
   try {
-    const data = await fetchEvolinkSettings()
+    const data = await fetchPipelineSettings()
     Object.assign(cfg, {
       understand_model: data.understand_model || '',
       understand_prompt: data.understand_prompt || '',
       understand_temperature: data.understand_temperature ?? 0.3,
       understand_output_format: data.understand_output_format || 'text',
       understand_json_schema: data.understand_json_schema || '',
-      api_key: data.api_key || '',
-      api_base_url: data.api_base_url || 'https://api.evolink.ai',
     })
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
@@ -309,9 +309,7 @@ async function saveConfig() {
   }
   configSaving.value = true
   try {
-    await updateEvolinkSettings({
-      api_key: cfg.api_key,
-      api_base_url: cfg.api_base_url,
+    await updatePipelineSettings({
       understand_model: cfg.understand_model,
       understand_prompt: cfg.understand_prompt,
       understand_temperature: cfg.understand_temperature,
@@ -854,6 +852,23 @@ onMounted(() => {
   backdrop-filter: blur(4px);
 }
 
+.vt-owner-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #f3e8ff;
+  color: #9333ea;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: .03em;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Content */
 .vt-content {
   padding: 16px;
@@ -911,6 +926,14 @@ onMounted(() => {
 .vt-video-info {
   font-weight: 500;
   color: #64748b;
+}
+
+.vt-owner {
+  font-size: 11px;
+  color: #9333ea;
+  background: #f3e8ff;
+  border-radius: 4px;
+  padding: 1px 6px;
 }
 
 /* Footer */

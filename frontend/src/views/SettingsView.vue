@@ -1,20 +1,21 @@
 <template>
   <div class="settings-container">
-    <!-- ComfyUI Settings Card -->
     <el-card class="page-card" v-loading="loading">
       <template #header>
         <div class="header-row">
           <div>
             <div class="page-title">系统设置</div>
-            <div class="page-subtitle">配置 ComfyUI 服务器与端口池</div>
+            <div class="page-subtitle">配置 ComfyUI 服务器与 EvoLink AI 接口参数（仅管理员可修改）</div>
           </div>
         </div>
       </template>
 
       <el-form label-position="top" class="settings-form">
+        <el-divider content-position="left">ComfyUI 服务器</el-divider>
+
         <el-form-item label="ComfyUI 服务器 IP / Host">
           <el-input
-            v-model="form.server_ip"
+            v-model="form.comfyui_server_ip"
             placeholder="例如：34.59.208.230"
             clearable
             :disabled="saving || !canEdit"
@@ -33,60 +34,41 @@
           />
           <div class="ports-help">支持逗号分隔和区间写法，自动去重排序。</div>
         </el-form-item>
-      </el-form>
 
-      <div class="ports-preview">
-        <div class="preview-title">解析结果</div>
-        <div v-if="parsedPorts.length" class="ports-tags">
-          <el-tag v-for="port in parsedPorts" :key="port" type="info">:{{ port }}</el-tag>
-        </div>
-        <el-empty v-else description="暂无可用端口" :image-size="60" />
-      </div>
-
-      <div v-if="!canEdit" class="readonly-notice">
-        <el-alert type="info" :closable="false" show-icon title="当前账号无权修改设置，仅供查看" />
-      </div>
-
-      <div v-if="canEdit" class="actions">
-        <el-button type="primary" :loading="saving" @click="handleSave">保存设置</el-button>
-      </div>
-    </el-card>
-
-    <!-- EvoLink AI Settings Card -->
-    <el-card class="page-card" v-loading="evoLoading" style="margin-top: 24px">
-      <template #header>
-        <div class="header-row">
-          <div>
-            <div class="page-title">EvoLink AI 设置</div>
-            <div class="page-subtitle">配置视频AI模板使用的 EvoLink（Gemini协议）接口参数</div>
+        <div class="ports-preview">
+          <div class="preview-title">解析结果</div>
+          <div v-if="parsedPorts.length" class="ports-tags">
+            <el-tag v-for="port in parsedPorts" :key="port" type="info">:{{ port }}</el-tag>
           </div>
+          <el-empty v-else description="暂无可用端口" :image-size="60" />
         </div>
-      </template>
 
-      <el-form label-position="top" class="settings-form">
+        <el-divider content-position="left" style="margin-top: 24px">EvoLink AI 接口</el-divider>
+
         <el-form-item label="API Base URL">
           <el-input
-            v-model="evoForm.api_base_url"
+            v-model="form.evolink_api_base_url"
             placeholder="https://api.evolink.ai"
             clearable
-            :disabled="evoSaving || !canEdit"
+            :disabled="saving || !canEdit"
             :readonly="!canEdit"
           />
         </el-form-item>
 
         <el-form-item label="API Key">
           <el-input
-            v-model="evoForm.api_key"
+            v-model="form.evolink_api_key"
             placeholder="Bearer token"
             show-password
-            :disabled="evoSaving || !canEdit"
+            :disabled="saving || !canEdit"
             :readonly="!canEdit"
           />
         </el-form-item>
       </el-form>
+
       <div class="evo-pipeline-hint">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        AI 处理流程参数（模型、提示词、温度、输出格式等）请在<router-link to="/dashboard/video-ai-templates">视频AI模板</router-link>页面右上角「流程配置」中设置。
+        AI 处理流程参数（模型、提示词、温度、输出格式等）在<router-link to="/dashboard/video-ai-templates">视频AI模板</router-link>页面右上角「流程配置」中按用户独立设置。
       </div>
 
       <div v-if="!canEdit" class="readonly-notice">
@@ -94,7 +76,7 @@
       </div>
 
       <div v-if="canEdit" class="actions">
-        <el-button type="primary" :loading="evoSaving" @click="handleEvoSave">保存 EvoLink 设置</el-button>
+        <el-button type="primary" :loading="saving" @click="handleSave">保存系统设置</el-button>
       </div>
     </el-card>
   </div>
@@ -104,7 +86,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { fetchComfyuiSettings, updateComfyuiSettings, fetchEvolinkSettings, updateEvolinkSettings } from '../api/settings'
+import { fetchSystemSettings, updateSystemSettings } from '../api/settings'
 import { isDuplicateRequestError } from '../api/http'
 import { useAuth } from '../composables/useAuth'
 
@@ -114,18 +96,10 @@ const canEdit = isAdmin()
 const loading = ref(false)
 const saving = ref(false)
 const form = reactive({
-  server_ip: '',
-  portsText: ''
-})
-
-// EvoLink state - only shows api_key/api_base_url; other pipeline fields preserved and passed through on save
-const evoLoading = ref(false)
-const evoSaving = ref(false)
-const evoForm = reactive({
-  api_key: '',
-  api_base_url: 'https://api.evolink.ai',
-  // pipeline fields — preserved but not shown here
-  _pipeline: {},
+  comfyui_server_ip: '',
+  portsText: '',
+  evolink_api_key: '',
+  evolink_api_base_url: 'https://api.evolink.ai',
 })
 
 const parsedPorts = computed(() => {
@@ -180,9 +154,11 @@ function toPortsText(ports) {
 async function loadSettings() {
   loading.value = true
   try {
-    const data = await fetchComfyuiSettings()
-    form.server_ip = data.server_ip || ''
-    form.portsText = toPortsText(data.ports || [])
+    const data = await fetchSystemSettings()
+    form.comfyui_server_ip = data.comfyui_server_ip || ''
+    form.portsText = toPortsText(data.comfyui_ports || [])
+    form.evolink_api_key = data.evolink_api_key || ''
+    form.evolink_api_base_url = data.evolink_api_base_url || 'https://api.evolink.ai'
   } catch (error) {
     if (isDuplicateRequestError(error)) return
     ElMessage.error(error?.response?.data?.detail || '加载设置失败')
@@ -193,11 +169,6 @@ async function loadSettings() {
 
 async function handleSave() {
   if (saving.value) return
-  const serverIp = String(form.server_ip || '').trim()
-  if (!serverIp) {
-    ElMessage.error('请填写 ComfyUI 服务器 IP / Host')
-    return
-  }
 
   let ports = []
   try {
@@ -206,20 +177,20 @@ async function handleSave() {
     ElMessage.error(error?.message || '端口格式错误')
     return
   }
-  if (!ports.length) {
-    ElMessage.error('请至少配置一个端口')
-    return
-  }
 
   saving.value = true
   try {
-    const data = await updateComfyuiSettings({
-      server_ip: serverIp,
-      ports
+    const data = await updateSystemSettings({
+      comfyui_server_ip: String(form.comfyui_server_ip || '').trim(),
+      comfyui_ports: ports,
+      evolink_api_key: form.evolink_api_key,
+      evolink_api_base_url: form.evolink_api_base_url || 'https://api.evolink.ai',
     })
-    form.server_ip = data.server_ip || serverIp
-    form.portsText = toPortsText(data.ports || ports)
-    ElMessage.success('ComfyUI 设置已保存')
+    form.comfyui_server_ip = data.comfyui_server_ip || ''
+    form.portsText = toPortsText(data.comfyui_ports || ports)
+    form.evolink_api_key = data.evolink_api_key || ''
+    form.evolink_api_base_url = data.evolink_api_base_url || 'https://api.evolink.ai'
+    ElMessage.success('系统设置已保存')
   } catch (error) {
     if (isDuplicateRequestError(error)) return
     ElMessage.error(error?.response?.data?.detail || '保存设置失败')
@@ -228,54 +199,14 @@ async function handleSave() {
   }
 }
 
-async function loadEvoSettings() {
-  evoLoading.value = true
-  try {
-    const data = await fetchEvolinkSettings()
-    evoForm.api_key = data.api_key || ''
-    evoForm.api_base_url = data.api_base_url || 'https://api.evolink.ai'
-    // preserve all pipeline fields so they are passed through on save
-    const { api_key, api_base_url, ...pipeline } = data
-    evoForm._pipeline = pipeline
-  } catch (error) {
-    if (isDuplicateRequestError(error)) return
-    ElMessage.error(error?.response?.data?.detail || '加载 EvoLink 设置失败')
-  } finally {
-    evoLoading.value = false
-  }
-}
-
-async function handleEvoSave() {
-  if (evoSaving.value) return
-  evoSaving.value = true
-  try {
-    await updateEvolinkSettings({
-      ...evoForm._pipeline,
-      api_key: evoForm.api_key,
-      api_base_url: evoForm.api_base_url || 'https://api.evolink.ai',
-    })
-    ElMessage.success('EvoLink 设置已保存')
-  } catch (error) {
-    if (isDuplicateRequestError(error)) return
-    ElMessage.error(error?.response?.data?.detail || '保存 EvoLink 设置失败')
-  } finally {
-    evoSaving.value = false
-  }
-}
-
 onMounted(() => {
   loadSettings()
-  loadEvoSettings()
 })
 </script>
 
 <style scoped>
 .settings-container {
   animation: rise 0.35s ease;
-}
-
-.page-card {
-  /* no separate animation needed when wrapped */
 }
 
 .header-row {

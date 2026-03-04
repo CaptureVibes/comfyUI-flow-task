@@ -26,10 +26,14 @@ class ComfyUIPortsStatusResponse(BaseModel):
     items: list[ComfyUIPortStatusItem] = Field(default_factory=list)
 
 
-class EvoLinkSettingsPayload(BaseModel):
-    api_key: str = ""
-    api_base_url: str = "https://api.evolink.ai"
-    # 步骤一：视频整体理解
+class SystemSettingsPayload(BaseModel):
+    comfyui_server_ip: str = ""
+    comfyui_ports: list[int] = Field(default_factory=list)
+    evolink_api_key: str = ""
+    evolink_api_base_url: str = "https://api.evolink.ai"
+
+
+class PipelineSettingsPayload(BaseModel):
     understand_model: str = ""
     understand_prompt: str = ""
     understand_temperature: float = 0.3

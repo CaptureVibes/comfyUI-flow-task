@@ -67,6 +67,7 @@
             </div>
           </div>
           <div class="vc-badge">{{ platformShort(item.platform) }}</div>
+          <span v-if="isAdmin() && item.owner_username" class="vc-owner-badge">{{ item.owner_username }}</span>
         </div>
 
         <!-- Body -->
@@ -181,6 +182,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource } from '../api/video_sources'
 import { createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { isDuplicateRequestError } from '../api/http'
+import { useAuth } from '../composables/useAuth'
+
+const { isAdmin } = useAuth()
 
 const router = useRouter()
 
@@ -263,7 +267,7 @@ async function handleCreateTemplate(item) {
       video_source_id: item.id,
     })
     // 创建完立即启动 AI 分析
-    try { await startVideoAITemplate(tpl.id) } catch { /* ignore */ }
+    await startVideoAITemplate(tpl.id)
     templateMap.value = { ...templateMap.value, [item.id]: tpl.id }
     router.push(`/dashboard/video-ai-templates/${tpl.id}/edit`)
   } catch (err) {
@@ -534,6 +538,23 @@ onUnmounted(() => {
   border-radius: 6px;
   backdrop-filter: blur(4px);
   letter-spacing: .03em;
+}
+
+.vc-owner-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #f3e8ff;
+  color: #9333ea;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: .03em;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Card body */

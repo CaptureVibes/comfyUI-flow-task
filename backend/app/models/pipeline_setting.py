@@ -14,14 +14,11 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class EvoLinkSetting(Base):
-    __tablename__ = "evolink_settings"
+class PipelineSetting(Base):
+    __tablename__ = "pipeline_settings"
 
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    api_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    api_base_url: Mapped[str] = mapped_column(Text, nullable=False, default="https://api.evolink.ai")
 
-    # 步骤一：视频整体理解
     understand_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     understand_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     understand_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)

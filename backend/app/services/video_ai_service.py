@@ -306,15 +306,22 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 await _persist_states([template_id])
                 return
 
-            # 加载 EvoLink 设置
-            from app.services.evolink_settings_service import get_or_create_evolink_settings
-            evo = await get_or_create_evolink_settings(session)
-            api_key = evo.api_key
-            api_base_url = evo.api_base_url
-            # 步骤一：视频整体理解
-            understand_model = evo.understand_model or "gemini-3.1-pro-preview"
-            understand_prompt = evo.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
-            understand_temperature = evo.understand_temperature
+            # 加载系统配置（api_key/url）和用户流程配置（understand_*）
+            from app.services.system_settings_service import get_or_create_system_settings
+            from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+            sys_cfg = await get_or_create_system_settings(session)
+            api_key = sys_cfg.evolink_api_key
+            api_base_url = sys_cfg.evolink_api_base_url
+            # 步骤一：视频整体理解（如模板无 owner_id 则使用默认配置）
+            if tpl.owner_id is not None:
+                pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
+                understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
+                understand_prompt = pipeline_cfg.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
+                understand_temperature = pipeline_cfg.understand_temperature
+            else:
+                understand_model = "gemini-3.1-pro-preview"
+                understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
+                understand_temperature = 0.3
         try:
             # ========== 步骤 1: 视频整体理解 ==========
             _set_status(template_id, VideoAIProcessStatus.understanding)
@@ -374,16 +381,16 @@ async def _queue_processor_loop() -> None:
     队列处理循环，从队列中获取任务并执行
     """
     semaphore = asyncio.Semaphore(_CONCURRENCY)
-    try:
-        while True:
+    while True:
+        try:
             template_id = await video_ai_queue.get()
             task = asyncio.get_running_loop().create_task(_run_pipeline(template_id, semaphore))
             video_ai_worker_tasks[template_id] = task
             video_ai_queue.task_done()
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception("Video AI queue processor crashed")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Video AI queue processor error, continuing")
 
 
 # =============================================================================

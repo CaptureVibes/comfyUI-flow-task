@@ -7,8 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
+from sqlalchemy import select
+
+from app.models.user import User
 from app.schemas.video_source import (
     VideoSourceCreate,
+    VideoSourceListItem,
     VideoSourceListResponse,
     VideoSourceParseRequest,
     VideoSourceParseResult,
@@ -31,7 +35,13 @@ router = APIRouter(prefix="/video-sources", tags=["video-sources"])
 
 
 def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
+    """Query filter: admin→None (no filter), user→user_id"""
     return None if current_user.is_admin else current_user.user_id
+
+
+def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID:
+    """Create records: always returns actual user_id"""
+    return current_user.user_id
 
 
 # /stats and /parse MUST be before /{vs_id} to avoid UUID matching them
@@ -47,21 +57,21 @@ async def get_stats_endpoint(
 @router.post("/parse", response_model=VideoSourceParseResult)
 async def parse_video_endpoint(
     payload: VideoSourceParseRequest,
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceParseResult:
     """Parse a video URL via yt-dlp without saving to database.
-    If source_url already exists, returns existing_id in response."""
-    return await parse_video_url(payload.source_url, session=session, owner_id=owner_id)
+    If source_url already exists for this user, returns existing_id in response."""
+    return await parse_video_url(payload.source_url, session=session, owner_id=creator_id)
 
 
 @router.post("", response_model=VideoSourceRead, status_code=201)
 async def create_video_source_endpoint(
     payload: VideoSourceCreate,
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceRead:
-    vs = await create_video_source(session, payload, owner_id)
+    vs = await create_video_source(session, payload, creator_id)
     return VideoSourceRead.model_validate(vs)
 
 
@@ -72,9 +82,25 @@ async def list_video_sources_endpoint(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceListResponse:
-    items, total = await list_video_sources(session, page=page, page_size=page_size, owner_id=owner_id)
+    rows, total = await list_video_sources(session, page=page, page_size=page_size, owner_id=owner_id)
+
+    # 批量查询创建者用户名
+    owner_ids = list({r.owner_id for r in rows if r.owner_id is not None})
+    username_map: dict[uuid.UUID, str] = {}
+    if owner_ids:
+        users = (await session.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
+        for u in users:
+            username_map[u.id] = u.display_name or u.username
+
+    items = [
+        VideoSourceListItem(
+            **{k: getattr(r, k) for k in VideoSourceListItem.model_fields if k not in ("owner_username",) and hasattr(r, k)},
+            owner_username=username_map.get(r.owner_id) if r.owner_id else None,
+        )
+        for r in rows
+    ]
     return VideoSourceListResponse(
-        items=items,  # type: ignore[arg-type]
+        items=items,
         total=total,
         page=page,
         page_size=page_size,

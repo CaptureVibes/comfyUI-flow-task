@@ -99,10 +99,10 @@ async def check_duplicate_url(
     source_url: str,
     owner_id: UUID | None,
 ) -> VideoSource | None:
-    """Return existing VideoSource if source_url already exists for this owner."""
+    """Return existing VideoSource if source_url already exists for this owner.
+    Admin (owner_id=None) and regular users each have their own namespace."""
     stmt = select(VideoSource).where(VideoSource.source_url == source_url)
-    if owner_id is not None:
-        stmt = stmt.where(VideoSource.owner_id == owner_id)
+    stmt = stmt.where(VideoSource.owner_id == owner_id)
     return await session.scalar(stmt)
 
 

@@ -15,12 +15,22 @@ export async function fetchComfyuiPortStatus() {
   return data
 }
 
-export async function fetchEvolinkSettings() {
-  const { data } = await http.get('/settings/evolink')
+export async function fetchSystemSettings() {
+  const { data } = await http.get('/settings/system')
   return data
 }
 
-export async function updateEvolinkSettings(payload) {
-  const { data } = await http.put('/settings/evolink', payload)
+export async function updateSystemSettings(payload) {
+  const { data } = await http.put('/settings/system', payload)
+  return data
+}
+
+export async function fetchPipelineSettings() {
+  const { data } = await http.get('/settings/pipeline')
+  return data
+}
+
+export async function updatePipelineSettings(payload) {
+  const { data } = await http.put('/settings/pipeline', payload)
   return data
 }

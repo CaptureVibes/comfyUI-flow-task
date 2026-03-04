@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.comfyui_setting import ComfyUISetting
+from app.models.system_setting import SystemSetting
 from app.services.comfyui_service import fetch_queue_status
 
 DEFAULT_SETTINGS_KEY = "default"
@@ -74,28 +74,31 @@ def _parse_default_endpoint_from_env() -> ComfyUIEndpoint:
     return ComfyUIEndpoint(server_ip=host, port=port)
 
 
-async def get_or_create_comfyui_settings(session: AsyncSession) -> ComfyUISetting:
-    existing = await session.scalar(select(ComfyUISetting).where(ComfyUISetting.key == DEFAULT_SETTINGS_KEY))
+async def get_or_create_comfyui_settings(session: AsyncSession) -> SystemSetting:
+    existing = await session.scalar(select(SystemSetting).where(SystemSetting.key == DEFAULT_SETTINGS_KEY))
     if existing:
         try:
-            normalized_server_ip = normalize_server_ip(existing.server_ip)
-            normalized_ports = normalize_ports([int(item) for item in (existing.ports or [])])
+            normalized_server_ip = normalize_server_ip(existing.comfyui_server_ip)
+            normalized_ports = normalize_ports([int(item) for item in (existing.comfyui_ports or [])])
         except ValueError:
             default_endpoint = _parse_default_endpoint_from_env()
             normalized_server_ip = default_endpoint.server_ip
             normalized_ports = [default_endpoint.port]
-        if existing.server_ip != normalized_server_ip or list(existing.ports or []) != normalized_ports:
-            existing.server_ip = normalized_server_ip
-            existing.ports = normalized_ports
+        if existing.comfyui_server_ip != normalized_server_ip or list(existing.comfyui_ports or []) != normalized_ports:
+            existing.comfyui_server_ip = normalized_server_ip
+            existing.comfyui_ports = normalized_ports
             await session.commit()
             await session.refresh(existing)
         return existing
 
     default_endpoint = _parse_default_endpoint_from_env()
-    created = ComfyUISetting(
+    now = datetime.now(timezone.utc)
+    created = SystemSetting(
         key=DEFAULT_SETTINGS_KEY,
-        server_ip=default_endpoint.server_ip,
-        ports=[default_endpoint.port],
+        comfyui_server_ip=default_endpoint.server_ip,
+        comfyui_ports=[default_endpoint.port],
+        created_at=now,
+        updated_at=now,
     )
     session.add(created)
     await session.commit()
@@ -108,10 +111,10 @@ async def update_comfyui_settings(
     *,
     server_ip: str,
     ports: list[int],
-) -> ComfyUISetting:
+) -> SystemSetting:
     config = await get_or_create_comfyui_settings(session)
-    config.server_ip = normalize_server_ip(server_ip)
-    config.ports = normalize_ports(ports)
+    config.comfyui_server_ip = normalize_server_ip(server_ip)
+    config.comfyui_ports = normalize_ports(ports)
     await session.commit()
     await session.refresh(config)
     return config
@@ -131,8 +134,8 @@ def classify_port_level(*, reachable: bool, running_count: int, pending_count: i
 
 async def fetch_ports_runtime_status(session: AsyncSession) -> tuple[str, datetime, list[ComfyUIPortRuntimeStatus]]:
     config = await get_or_create_comfyui_settings(session)
-    server_ip = normalize_server_ip(config.server_ip)
-    ports = normalize_ports([int(item) for item in (config.ports or [])])
+    server_ip = normalize_server_ip(config.comfyui_server_ip)
+    ports = normalize_ports([int(item) for item in (config.comfyui_ports or [])])
     refreshed_at = datetime.now(timezone.utc)
 
     async def _fetch_one(port: int) -> ComfyUIPortRuntimeStatus:
@@ -166,8 +169,8 @@ async def ensure_allowed_endpoint(
 ) -> ComfyUIEndpoint:
     config = await get_or_create_comfyui_settings(session)
     normalized_server_ip = normalize_server_ip(server_ip)
-    allowed_server_ip = normalize_server_ip(config.server_ip)
-    allowed_ports = normalize_ports([int(item) for item in (config.ports or [])])
+    allowed_server_ip = normalize_server_ip(config.comfyui_server_ip)
+    allowed_ports = normalize_ports([int(item) for item in (config.comfyui_ports or [])])
 
     if normalized_server_ip != allowed_server_ip:
         raise ValueError("Selected server_ip is not allowed by current settings")

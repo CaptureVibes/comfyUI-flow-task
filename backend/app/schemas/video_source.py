@@ -89,6 +89,8 @@ class VideoSourceRead(BaseModel):
 
 class VideoSourceListItem(BaseModel):
     id: uuid.UUID
+    owner_id: uuid.UUID | None = None
+    owner_username: str | None = None
     platform: str | None
     blogger_name: str | None
     video_title: str | None

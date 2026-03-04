@@ -60,6 +60,8 @@ class VideoAITemplateRead(BaseModel):
 
 class VideoAITemplateListItem(BaseModel):
     id: uuid.UUID
+    owner_id: uuid.UUID | None = None
+    owner_username: str | None = None
     title: str
     description: str | None
     video_source_id: uuid.UUID | None
