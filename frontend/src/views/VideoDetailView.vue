@@ -518,6 +518,8 @@ const shareMax = computed(() => Math.max(...shareData.value, 1))
 const shareMin = computed(() => Math.min(...shareData.value, 0))
 
 // Y-axis positions (5 grid lines from top to bottom)
+const chartLeft = 50
+const chartRight = 610
 const chartHeight = 160
 const chartTop = 30
 const chartBottom = 190
@@ -566,11 +568,12 @@ const shareYLabels = computed(() => {
 
 // X-axis labels (dates) - show at most 7 labels
 const maxLabels = 7
-const labelStep = Math.max(1, Math.floor(statsItems.value.length / maxLabels))
+const labelStep = computed(() => Math.max(1, Math.floor(statsItems.value.length / maxLabels)))
+const xStep = computed(() => statsItems.value.length > 1 ? (chartRight - chartLeft) / (statsItems.value.length - 1) : 0)
 
 const viewXLabels = computed(() => {
   return statsItems.value
-    .filter((_, i) => i % labelStep === 0 || i === statsItems.value.length - 1)
+    .filter((_, i) => i % labelStep.value === 0 || i === statsItems.value.length - 1)
     .map(s => formatDateShort(s.collected_at))
 })
 
@@ -582,7 +585,7 @@ const shareXLabels = viewXLabels
 const viewXPositions = computed(() => {
   return statsItems.value
     .map((_, i) => chartLeft + i * xStep.value)
-    .filter((_, i) => i % labelStep === 0 || i === statsItems.value.length - 1)
+    .filter((_, i) => i % labelStep.value === 0 || i === statsItems.value.length - 1)
 })
 
 const likeXPositions = viewXPositions
