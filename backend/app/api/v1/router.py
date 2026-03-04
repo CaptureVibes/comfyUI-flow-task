@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1 import accounts, auth, callbacks, execution, settings, subtasks, task_templates, tasks, uploads, video_ai_templates, video_sources
+from app.api.v1 import accounts, auth, callbacks, execution, settings, subtasks, task_templates, tasks, uploads, video_ai_templates, video_generations, video_sources
 from app.core.security import get_current_user
 
 api_router = APIRouter(prefix="/api/v1")
@@ -25,3 +25,4 @@ api_router.include_router(settings.router, dependencies=_auth_dep)
 api_router.include_router(video_sources.router, dependencies=_auth_dep)
 api_router.include_router(video_ai_templates.router, dependencies=_auth_dep)
 api_router.include_router(accounts.router, dependencies=_auth_dep)
+api_router.include_router(video_generations.router, dependencies=_auth_dep)

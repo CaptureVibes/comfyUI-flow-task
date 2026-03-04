@@ -1,0 +1,7 @@
+import uuid
+from pydantic import BaseModel
+
+class VideoGenerationRequest(BaseModel):
+    account_id: uuid.UUID
+    template_id: uuid.UUID
+    final_prompt: str

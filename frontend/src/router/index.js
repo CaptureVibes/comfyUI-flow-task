@@ -149,10 +149,22 @@ const routes = [
         meta: { title: '新建账号', parent: 'accounts' }
       },
       {
+        path: 'accounts/:id',
+        name: 'account-detail',
+        component: () => import('../views/AccountDetailView.vue'),
+        meta: { title: '账号详情', parent: 'accounts' }
+      },
+      {
         path: 'accounts/:id/edit',
         name: 'account-edit',
         component: () => import('../views/AccountFormView.vue'),
         meta: { title: '编辑账号', parent: 'accounts' }
+      },
+      {
+        path: 'accounts/:id/generate',
+        name: 'video-generate',
+        component: () => import('../views/VideoGenerationFormView.vue'),
+        meta: { title: '生成视频', parent: 'accounts' }
       }
     ]
   },

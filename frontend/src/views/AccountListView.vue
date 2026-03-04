@@ -1,80 +1,106 @@
 <template>
-  <div class="page-container">
-    <div class="page-header">
-      <div>
-        <div class="page-title">账号配置</div>
-        <div class="page-subtitle">管理社交媒体账号及各平台绑定信息</div>
-      </div>
-      <el-button type="primary" @click="$router.push('/dashboard/accounts/new')">+ 新建账号</el-button>
+  <div class="al-page">
+    <!-- Header -->
+    <div class="al-header">
+      <h1 class="al-title">账号配置</h1>
+      <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        新建账号
+      </el-button>
     </div>
 
-    <div v-loading="loading" class="card-grid">
-      <el-card
+    <!-- Card grid -->
+    <div v-loading="loading" class="al-grid">
+      <div
         v-for="item in items"
         :key="item.id"
-        class="account-card"
-        shadow="hover"
+        class="ac"
+        @click="goToDetail(item)"
       >
-        <div class="card-header">
-          <div class="avatar-wrap">
-            <el-avatar
-              v-if="item.avatar_url"
-              :src="item.avatar_url"
-              :size="40"
-            />
-            <el-avatar v-else :size="40" icon="User" />
+        <!-- Avatar area -->
+        <div class="ac-avatar-wrap">
+          <img v-if="item.avatar_url" :src="item.avatar_url" class="ac-avatar-img" :alt="item.account_name" />
+          <div v-else class="ac-avatar-placeholder">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
           </div>
-          <div class="card-ops">
-            <el-button
-              size="small"
-              plain
-              @click="$router.push(`/dashboard/accounts/${item.id}/edit`)"
-            >编辑</el-button>
-            <el-button
-              size="small"
-              type="danger"
-              plain
-              :loading="deleting === item.id"
-              @click="handleDelete(item)"
-            >删除</el-button>
+          <!-- Platform badges -->
+          <div class="ac-platforms">
+            <span
+              v-for="binding in (item.social_bindings || [])"
+              :key="binding.platform"
+              class="ac-platform-dot"
+              :class="`ac-platform-${binding.platform}`"
+              :title="platformLabel(binding.platform)"
+            >{{ platformIcon(binding.platform) }}</span>
           </div>
         </div>
 
-        <div class="account-name">{{ item.account_name }}</div>
-        <div v-if="item.style_description" class="account-style">{{ item.style_description }}</div>
+        <!-- Body -->
+        <div class="ac-body">
+          <div class="ac-name">{{ item.account_name }}</div>
+          <div v-if="item.style_description" class="ac-style">{{ item.style_description }}</div>
+          <div v-if="!item.social_bindings?.length" class="ac-no-binding">未绑定平台</div>
 
-        <div class="bindings">
-          <el-tag
-            v-for="binding in (item.social_bindings || [])"
-            :key="binding.platform"
-            size="small"
-            class="binding-tag"
-          >{{ platformLabel(binding.platform) }}</el-tag>
+          <div class="ac-footer">
+            <div class="ac-binding-tags">
+              <span
+                v-for="binding in (item.social_bindings || [])"
+                :key="binding.platform"
+                class="ac-tag"
+                :class="`ac-tag-${binding.platform}`"
+              >{{ platformLabel(binding.platform) }}</span>
+            </div>
+            <div class="ac-actions" @click.stop>
+              <button
+                class="ac-btn ac-btn-edit"
+                @click="$router.push(`/dashboard/accounts/${item.id}/edit`)"
+              >编辑</button>
+              <button
+                class="ac-btn ac-btn-del"
+                :class="{ loading: deleting === item.id }"
+                @click="handleDelete(item)"
+              >删除</button>
+            </div>
+          </div>
         </div>
-      </el-card>
+      </div>
+
+      <!-- Add new card -->
+      <div class="ac ac-add" @click="$router.push('/dashboard/accounts/new')">
+        <div class="ac-add-inner">
+          <div class="ac-add-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </div>
+          <div class="ac-add-title">新建账号</div>
+          <div class="ac-add-sub">绑定 TikTok / YouTube 平台</div>
+        </div>
+      </div>
     </div>
 
-    <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" />
+    <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" :image-size="80" />
 
-    <div v-if="total > pageSize" class="pagination">
-      <el-pagination
-        v-model:current-page="page"
-        :page-size="pageSize"
-        :total="total"
-        layout="prev, pager, next"
-        @current-change="loadData"
-      />
+    <!-- Footer pagination -->
+    <div v-if="total > pageSize" class="al-footer">
+      <span class="al-count-text">共 {{ total }} 个账号</span>
+      <div class="al-pagination">
+        <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
+        <button class="pg-btn" :disabled="page * pageSize >= total" @click="goPage(page + 1)">下一页 →</button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccounts, deleteAccount } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
 
+const router = useRouter()
+
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
+const PLATFORM_ICONS = { youtube: '▶', tiktok: '♪', instagram: '◈' }
 
 const loading = ref(false)
 const deleting = ref(null)
@@ -84,6 +110,11 @@ const page = ref(1)
 const pageSize = 20
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
+function platformIcon(p) { return PLATFORM_ICONS[p] || '●' }
+
+function goToDetail(item) {
+  router.push(`/dashboard/accounts/${item.id}`)
+}
 
 async function loadData() {
   loading.value = true
@@ -99,16 +130,20 @@ async function loadData() {
   }
 }
 
+function goPage(p) {
+  page.value = p
+  loadData()
+}
+
 async function handleDelete(item) {
   try {
-    await ElMessageBox.confirm(`确定删除账号「${item.account_name}」？`, '提示', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-    })
-  } catch {
-    return
-  }
+    await ElMessageBox.confirm(
+      `确定删除账号「${item.account_name}」？此操作不可恢复。`,
+      '删除确认',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning', customClass: 'premium-delete-dialog' }
+    )
+  } catch { return }
+
   deleting.value = item.id
   try {
     await deleteAccount(item.id)
@@ -125,88 +160,306 @@ onMounted(loadData)
 </script>
 
 <style scoped>
-.page-container {
-  padding: 24px;
-  animation: rise 0.35s ease;
+.al-page {
+  padding: 28px 32px;
+  min-height: 100%;
+  animation: rise 0.3s ease;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-}
-
-.page-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: #153f7f;
-}
-
-.page-subtitle {
-  font-size: 13px;
-  color: #60748f;
-  margin-top: 2px;
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.account-card {
-  border-radius: 12px;
-}
-
-.card-header {
+.al-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 28px;
 }
 
-.card-ops {
+.al-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+
+.al-add-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border: none;
+}
+
+/* Grid */
+.al-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+/* Account card */
+.ac {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  transition: box-shadow 0.2s, transform 0.2s;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+}
+
+.ac:hover {
+  box-shadow: 0 8px 24px rgba(0,0,0,.1);
+  transform: translateY(-2px);
+}
+
+/* Avatar */
+.ac-avatar-wrap {
+  position: relative;
+  height: 120px;
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ac-avatar-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+
+.ac-avatar-placeholder {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+
+.ac-platforms {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
   display: flex;
   gap: 4px;
 }
 
-.account-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1e293b;
-  margin-bottom: 4px;
+.ac-platform-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.2);
 }
 
-.account-style {
-  font-size: 13px;
+.ac-platform-youtube { background: #ef4444; }
+.ac-platform-tiktok  { background: #010101; }
+.ac-platform-instagram { background: linear-gradient(135deg, #f59e0b, #ef4444, #8b5cf6); }
+
+/* Body */
+.ac-body {
+  padding: 14px 16px 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.ac-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-style {
+  font-size: 12px;
   color: #64748b;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  line-height: 1.5;
+  flex: 1;
 }
 
-.bindings {
+.ac-no-binding {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 10px;
+  flex: 1;
+}
+
+.ac-footer {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.ac-binding-tags {
+  display: flex;
+  gap: 4px;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
 }
 
-.binding-tag {
-  border-radius: 4px;
+.ac-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
 }
 
-.pagination {
-  margin-top: 24px;
+.ac-tag-youtube  { background: #fef2f2; color: #dc2626; }
+.ac-tag-tiktok   { background: #f1f5f9; color: #0f172a; }
+.ac-tag-instagram { background: #fef3c7; color: #92400e; }
+
+.ac-actions {
   display: flex;
-  justify-content: center;
+  gap: 6px;
 }
+
+.ac-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ac-btn-edit:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.ac-btn-del {
+  border-color: #fecaca;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.ac-btn-del:hover {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.ac-btn.loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Add card */
+.ac-add {
+  border: 2px dashed #c7d2fe;
+  background: #fafbff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+}
+
+.ac-add:hover {
+  border-color: #6366f1;
+  background: #eef2ff;
+  transform: none;
+  box-shadow: none;
+}
+
+.ac-add-inner { text-align: center; }
+
+.ac-add-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #eef2ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+  transition: background 0.2s;
+}
+
+.ac-add:hover .ac-add-icon { background: #c7d2fe; }
+
+.ac-add-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #3730a3;
+  margin-bottom: 4px;
+}
+
+.ac-add-sub { font-size: 13px; color: #818cf8; }
+
+/* Footer */
+.al-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.al-count-text { font-size: 13px; color: #94a3b8; }
+
+.al-pagination { display: flex; gap: 8px; }
+
+.pg-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pg-btn:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .al-page { padding: 16px; }
+  .al-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
 }
 </style>
