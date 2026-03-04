@@ -26,11 +26,6 @@ class EvoLinkSetting(Base):
     understand_output_format: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
     understand_json_schema: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
-    # 兼容旧字段（保留在DB中，不再暴露给前端）
-    model_name: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-2.0-flash")
-    image_gen_api_base_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    image_gen_api_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
-
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

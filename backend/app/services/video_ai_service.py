@@ -312,7 +312,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             api_key = evo.api_key
             api_base_url = evo.api_base_url
             # 步骤一：视频整体理解
-            understand_model = evo.understand_model or evo.model_name or "gemini-3.1-pro-preview"
+            understand_model = evo.understand_model or "gemini-3.1-pro-preview"
             understand_prompt = evo.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
             understand_temperature = evo.understand_temperature
         try:
