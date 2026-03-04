@@ -280,6 +280,7 @@ async function handleSave() {
       try {
         await downloadVideoSource(result.id)
       } catch { /* ignore download error, will show on detail page */ }
+
     }
 
     // Redirect to detail page

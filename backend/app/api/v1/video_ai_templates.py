@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,8 +24,6 @@ from app.services.video_ai_service import (
     pause_template,
     resume_template,
 )
-from app.services.gemini_service import gemini_service
-from app.services.image_upload_service import image_upload_service
 
 router = APIRouter(prefix="/video-ai-templates", tags=["video-ai-templates"])
 
@@ -96,6 +94,7 @@ async def create_template(
 async def list_templates(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    video_source_id: uuid.UUID | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoAITemplateListResponse:
@@ -111,10 +110,17 @@ async def list_templates(
     if owner_id is not None:
         stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
         total_stmt = total_stmt.where(VideoAITemplate.owner_id == owner_id)
+    if video_source_id is not None:
+        stmt = stmt.where(VideoAITemplate.video_source_id == video_source_id)
+        total_stmt = total_stmt.where(VideoAITemplate.video_source_id == video_source_id)
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)
+    items_read = []
+    for r in rows:
+        items_read.append(await _to_read(session, r))
+
     return VideoAITemplateListResponse(
-        items=list(rows),  # type: ignore[arg-type]
+        items=items_read,
         total=total,
         page=page,
         page_size=page_size,
@@ -145,6 +151,10 @@ async def patch_template(
         tpl.description = payload.description
     if payload.video_source_id is not None:
         tpl.video_source_id = payload.video_source_id
+    if payload.prompt_description is not None:
+        tpl.prompt_description = payload.prompt_description
+    if payload.extracted_shots is not None:
+        tpl.extracted_shots = payload.extracted_shots
     if payload.extra is not None:
         tpl.extra = payload.extra
     await session.commit()
@@ -221,128 +231,19 @@ async def get_template_state_endpoint(
     return state
 
 
-@router.post("/analyze-video")
-async def analyze_video(
-    video_source_id: uuid.UUID,
-    template_id: uuid.UUID | None = None,
+@router.post("/{tpl_id}/upload-shot")
+async def upload_shot_image(
+    tpl_id: uuid.UUID,
+    file: UploadFile = File(...),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """
-    Analyze video using Gemini AI and generate style images.
-
-    This endpoint:
-    1. Retrieves the video source
-    2. Calls Gemini to analyze video content
-    3. Generates image prompts for key shots
-    4. Optionally saves results to a template if template_id is provided
-    5. Returns analysis results (images are not generated yet, use /generate-images for that)
-    """
-    from app.services.video_source_service import get_video_source_or_404
-
-    # Get video source
-    video_source = await get_video_source_or_404(session, video_source_id, owner_id)
-
-    try:
-        # Analyze video with Gemini
-        analysis = await gemini_service.analyze_video(video_source)
-
-        prompt_description = analysis.get("description", "")
-        style_analysis = analysis.get("style_analysis", "")
-        key_shots = analysis.get("key_shots", [])
-
-        # If template_id is provided, save analysis results to template
-        if template_id:
-            tpl = await _get_tpl_or_404(session, template_id, owner_id)
-            tpl.prompt_description = prompt_description
-            await session.commit()
-
-        return {
-            "success": True,
-            "data": {
-                "prompt_description": prompt_description,
-                "style_analysis": style_analysis,
-                "key_shots": key_shots,
-            }
-        }
-    except Exception as e:
-        logger.error(f"Failed to analyze video {video_source_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"视频分析失败: {str(e)}"
-        ) from e
+    from app.services.upload_service import UpstreamImageUploadService
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    content = await file.read()
+    content_type = file.content_type or "image/png"
+    svc = UpstreamImageUploadService()
+    result = await svc.upload_image(content, content_type, file.filename)
+    return {"url": result.url}
 
 
-@router.post("/generate-images")
-async def generate_images(
-    template_id: uuid.UUID,
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    """
-    Generate and upload style images for a template.
-
-    This endpoint:
-    1. Retrieves the template with analysis results
-    2. Generates images based on prompts (using mock images for now)
-    3. Uploads images to CDN
-    4. Updates template with extracted_shots
-    """
-    tpl = await _get_tpl_or_404(session, template_id, owner_id)
-
-    if not tpl.prompt_description:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先分析视频"
-        )
-
-    try:
-        # Mock image URLs - in production, these would be generated by AI
-        mock_image_urls = [
-            "https://picsum.photos/400/600?random=1",
-            "https://picsum.photos/400/600?random=2",
-            "https://picsum.photos/400/600?random=3",
-        ]
-
-        # Upload images to CDN
-        uploaded_shots = []
-        for idx, img_url in enumerate(mock_image_urls):
-            try:
-                # Upload from URL
-                upload_result = await image_upload_service.upload_from_url(
-                    image_url=img_url,
-                    filename=f"shot_{idx + 1}.png"
-                )
-
-                uploaded_shots.append({
-                    "image_url": upload_result["url"],
-                    "description": f"造型图 {idx + 1}",
-                    "prompt": f"{tpl.prompt_description} - 镜头{idx + 1}"
-                })
-            except Exception as e:
-                logger.error(f"Failed to upload image {idx + 1}: {e}")
-                # Fallback to original URL
-                uploaded_shots.append({
-                    "image_url": img_url,
-                    "description": f"造型图 {idx + 1}",
-                    "prompt": f"{tpl.prompt_description} - 镜头{idx + 1}"
-                })
-
-        # Update template with extracted shots
-        tpl.extracted_shots = uploaded_shots
-        await session.commit()
-        await session.refresh(tpl)
-
-        return {
-            "success": True,
-            "data": {
-                "extracted_shots": uploaded_shots,
-                "message": f"成功生成并上传 {len(uploaded_shots)} 张造型图"
-            }
-        }
-    except Exception as e:
-        logger.error(f"Failed to generate images for template {template_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"图片生成失败: {str(e)}"
-        ) from e

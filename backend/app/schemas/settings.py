@@ -35,14 +35,3 @@ class EvoLinkSettingsPayload(BaseModel):
     understand_temperature: float = 0.3
     understand_output_format: str = "text"
     understand_json_schema: str = ""
-    # 步骤二：造型描述提取
-    extract_model: str = ""
-    extract_prompt: str = ""
-    extract_temperature: float = 0.3
-    extract_output_format: str = "json"
-    extract_json_schema: str = ""
-    # 步骤三：生图（Job 轮询模式）POST /v1/images/generations → GET /v1/tasks/{id}
-    image_gen_model: str = ""
-    image_gen_prompt_template: str = ""
-    image_gen_size: str = "1:1"
-    image_gen_quality: str = "2K"

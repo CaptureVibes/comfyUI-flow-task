@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from uuid import UUID
 
 import httpx
 
-from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.enums import VideoAIProcessStatus
 from app.models.video_ai_template import VideoAITemplate
@@ -42,21 +40,6 @@ _PERSIST_INTERVAL = 2.0
 def _utcnow_iso() -> str:
     """获取当前 UTC 时间并格式化为 ISO 字符串"""
     return datetime.now(timezone.utc).isoformat()
-
-
-def _build_prompt(base_prompt: str, output_format: str, json_schema: str) -> str:
-    """
-    构建最终提示词：当 output_format 为 json 时，将 JSON schema 作为补充提示词追加。
-    """
-    if output_format != "json" or not json_schema.strip():
-        return base_prompt
-    schema_instruction = (
-        "\n\n---\n"
-        "请严格按照以下JSON格式返回结果，**不要包含任何其他内容**：\n"
-        f"```json\n{json_schema.strip()}\n```\n"
-        "重要：只返回JSON本身，不要有解释文字、注释、或多余的markdown标记。"
-    )
-    return base_prompt + schema_instruction
 
 
 # =============================================================================
@@ -264,178 +247,6 @@ async def _call_evolink_api(
         raise ValueError(f"Unexpected EvoLink response format: {data}") from exc
 
 
-async def _call_image_gen_api(
-    *,
-    api_base_url: str,
-    api_key: str,
-    model_name: str,
-    prompt: str,
-    size: str = "1:1",
-    quality: str = "2K",
-    poll_interval: float = 3.0,
-    poll_timeout: float = 300.0,
-) -> str:
-    """
-    调用 EvoLink 图片生成 API（Job 轮询模式）。
-
-    提交：POST /v1/images/generations
-    轮询：GET  /v1/tasks/{task_id}
-
-    Args:
-        api_base_url: EvoLink API 基础 URL（如 https://api.evolink.ai）
-        api_key:      EvoLink API 密钥
-        model_name:   生图模型（如 gemini-3.1-flash-image-preview）
-        prompt:       图片生成提示词
-        size:         宽高比（auto/1:1/2:3/3:2/9:16/16:9 等）
-        quality:      分辨率（0.5K/1K/2K/4K）
-        poll_interval: 轮询间隔（秒）
-        poll_timeout:  最大等待时间（秒）
-
-    Returns:
-        生成图片的 URL（来自 results 数组第一项）
-
-    Raises:
-        ValueError: 任务失败或 results 为空
-        httpx.HTTPStatusError: HTTP 请求失败
-        asyncio.TimeoutError: 超时
-    """
-    base = api_base_url.rstrip("/")
-    submit_url = f"{base}/v1/images/generations"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    submit_payload: dict = {
-        "model": model_name,
-        "prompt": prompt,
-        "size": size,
-        "quality": quality,
-    }
-
-    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-    logger.info("ImageGen submit: url=%s, model=%s, size=%s, quality=%s, api_key=%s",
-                submit_url, model_name, size, quality, masked_key)
-    logger.info("ImageGen prompt: %s", prompt[:200] if len(prompt) > 200 else prompt)
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        # 步骤 1：提交生图任务
-        submit_resp = await client.post(submit_url, json=submit_payload, headers=headers)
-        if not submit_resp.is_success:
-            logger.error("ImageGen submit error: status=%d, body=%s", submit_resp.status_code, submit_resp.text)
-        submit_resp.raise_for_status()
-        submit_data = submit_resp.json()
-        logger.info("ImageGen submit response: %s", json.dumps(submit_data, ensure_ascii=False)[:500])
-
-        # 提取 task_id（响应字段为 "id"）
-        task_id = submit_data.get("id")
-        if not task_id:
-            raise ValueError(f"No task id in submit response: {submit_data}")
-        logger.info("ImageGen task submitted: task_id=%s, status=%s", task_id, submit_data.get("status"))
-
-        # 步骤 2：轮询任务状态
-        poll_url = f"{base}/v1/tasks/{task_id}"
-        elapsed = 0.0
-        while elapsed < poll_timeout:
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-
-            poll_resp = await client.get(poll_url, headers=headers)
-            if not poll_resp.is_success:
-                logger.warning("ImageGen poll error: status=%d, task_id=%s, body=%s",
-                               poll_resp.status_code, task_id, poll_resp.text[:200])
-                poll_resp.raise_for_status()
-            poll_data = poll_resp.json()
-            status = (poll_data.get("status") or "").lower()
-            progress = poll_data.get("progress", 0)
-            logger.info("ImageGen poll: task_id=%s, status=%s, progress=%s, elapsed=%.0fs",
-                        task_id, status, progress, elapsed)
-
-            if status == "completed":
-                # results 是字符串 URL 列表
-                results = poll_data.get("results") or []
-                if results and isinstance(results, list):
-                    image_url = results[0]
-                    logger.info("ImageGen completed: task_id=%s, url=%s", task_id, str(image_url)[:100])
-                    return image_url
-                raise ValueError(f"Task completed but results is empty: {poll_data}")
-
-            if status == "failed":
-                err_msg = poll_data.get("error") or poll_data.get("message") or str(poll_data)
-                raise ValueError(f"ImageGen task failed (task_id={task_id}): {err_msg}")
-
-            # pending / processing — 继续等待
-
-        raise asyncio.TimeoutError(f"ImageGen task timed out after {poll_timeout}s (task_id={task_id})")
-
-
-# =============================================================================
-# 图片下载和上传
-# =============================================================================
-
-
-async def _download_and_upload_images(image_urls: list[str]) -> list[dict]:
-    """
-    从 URL 下载图片并上传到 CDN
-
-    Args:
-        image_urls: 图片 URL 列表
-
-    Returns:
-        上传后的图片信息列表: [{image_url, description}]
-    """
-    if not image_urls:
-        return []
-
-    upload_api_url = settings.video_image_upload_url
-    results = []
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        for idx, img_url in enumerate(image_urls):
-            try:
-                logger.info("Downloading image %d/%d: %s", idx + 1, len(image_urls), img_url)
-
-                # 下载图片
-                download_resp = await client.get(img_url)
-                download_resp.raise_for_status()
-                image_data = download_resp.content
-                content_type = download_resp.headers.get("content-type", "image/png")
-
-                # 上传到 CDN
-                filename = f"outfit_{idx + 1}.png"
-                files = {
-                    "file": (filename, image_data, content_type)
-                }
-
-                upload_resp = await client.post(
-                    upload_api_url,
-                    files=files,
-                    headers={"User-Agent": "confyUI-backend/1.0.0"}
-                )
-                upload_resp.raise_for_status()
-                upload_result = upload_resp.json()
-
-                if upload_result.get("code") != 0:
-                    raise Exception(f"Upload failed: {upload_result.get('message', 'Unknown error')}")
-
-                uploaded_url = upload_result.get("data", {}).get("url")
-                if not uploaded_url:
-                    raise Exception("No URL in upload response")
-
-                logger.info("Successfully uploaded image %d to CDN: %s", idx + 1, uploaded_url)
-                results.append({
-                    "image_url": uploaded_url,
-                    "description": f"穿搭图 {idx + 1}",
-                })
-
-            except Exception as exc:
-                logger.error("Failed to process image %d (%s): %s", idx + 1, img_url, exc)
-                # 保留原始 URL 作为备用
-                results.append({
-                    "image_url": img_url,
-                    "description": f"穿搭图 {idx + 1}",
-                    "error": str(exc),
-                })
-
-    return results
-
-
 # =============================================================================
 # 处理管道（Pipeline）
 # =============================================================================
@@ -502,28 +313,8 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             api_base_url = evo.api_base_url
             # 步骤一：视频整体理解
             understand_model = evo.understand_model or evo.model_name or "gemini-3.1-pro-preview"
-            understand_prompt = _build_prompt(
-                evo.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。",
-                evo.understand_output_format,
-                evo.understand_json_schema,
-            )
+            understand_prompt = evo.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
             understand_temperature = evo.understand_temperature
-            # 步骤二：造型描述提取
-            extract_model = evo.extract_model or evo.model_name or "gemini-3.1-pro-preview"
-            _default_extract_base = """请分析视频中出现的所有不同穿搭造型，以JSON数组格式返回每个造型的文字描述。"""
-            extract_prompt = _build_prompt(
-                evo.extract_prompt or _default_extract_base,
-                evo.extract_output_format or "json",
-                evo.extract_json_schema,
-            )
-            extract_temperature = evo.extract_temperature
-            extract_output_format = evo.extract_output_format or "json"
-            # 步骤三：生图（EvoLink Job 轮询模式）
-            image_gen_model = evo.image_gen_model
-            image_gen_prompt_template = evo.image_gen_prompt_template or "Generate a fashion outfit image: {description}"
-            image_gen_size = evo.image_gen_size or "1:1"
-            image_gen_quality = evo.image_gen_quality or "2K"
-
         try:
             # ========== 步骤 1: 视频整体理解 ==========
             _set_status(template_id, VideoAIProcessStatus.understanding)
@@ -551,124 +342,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     tpl.prompt_description = prompt_description
                     await session.commit()
 
-            # ========== 步骤 2: 提取造型描述 ==========
-            _set_status(template_id, VideoAIProcessStatus.extracting)
-            logger.info("[%s] extracting outfit descriptions started", template_id)
-
-            outfit_descriptions: list[dict] = []
-
-            if video_url and api_key:
-                raw = await _call_evolink_api(
-                    api_base_url=api_base_url,
-                    api_key=api_key,
-                    model_name=extract_model,
-                    video_url=video_url,
-                    prompt=extract_prompt,
-                    temperature=extract_temperature,
-                )
-
-                logger.info("[%s] Raw extract response: %s", template_id, raw[:1000] if len(raw) > 1000 else raw)
-
-                if extract_output_format == "json":
-                    # 解析 JSON 格式的造型列表
-                    try:
-                        clean = raw.strip()
-                        if clean.startswith("```"):
-                            lines = clean.split("\n")
-                            clean = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                        parsed = json.loads(clean)
-                        if isinstance(parsed, list):
-                            outfit_descriptions = [
-                                {"id": i + 1, "description": item.get("description", str(item))}
-                                if isinstance(item, dict) else {"id": i + 1, "description": str(item)}
-                                for i, item in enumerate(parsed)
-                            ]
-                        elif isinstance(parsed, dict):
-                            outfits = parsed.get("outfits") or parsed.get("items") or [parsed]
-                            outfit_descriptions = [
-                                {"id": i + 1, "description": item.get("description", str(item))}
-                                if isinstance(item, dict) else {"id": i + 1, "description": str(item)}
-                                for i, item in enumerate(outfits)
-                            ]
-                        else:
-                            outfit_descriptions = [{"id": 1, "description": str(parsed)}]
-                    except Exception as exc:
-                        logger.info("[%s] JSON parse failed, treating as markdown: %s", template_id, exc)
-                        # 按段落分割作为各造型描述
-                        paragraphs = [p.strip() for p in raw.split("\n\n") if p.strip()]
-                        outfit_descriptions = [{"id": i + 1, "description": p} for i, p in enumerate(paragraphs)]
-                else:
-                    # markdown 格式：按段落或列表项分割
-                    lines = [l.strip().lstrip("- *•0123456789.").strip() for l in raw.split("\n") if l.strip() and len(l.strip()) > 10]
-                    outfit_descriptions = [{"id": i + 1, "description": l} for i, l in enumerate(lines)]
-
-                logger.info("[%s] Extracted %d outfit descriptions", template_id, len(outfit_descriptions))
-
-            # 存储提取的造型描述（不含图片，等待步骤3生成）
-            initial_shots = [{"id": d["id"], "description": d["description"], "image_url": None} for d in outfit_descriptions]
-            state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.extracting))
-            state["extracted_shots"] = initial_shots
-            state["updated_at"] = _utcnow_iso()
-            _mark_dirty(template_id)
-
-            # ========== 步骤 3: 并发调用生图模型 ==========
-            if outfit_descriptions and image_gen_model:
-                _set_status(template_id, VideoAIProcessStatus.downloading)
-                logger.info("[%s] generating images for %d outfits (model=%s)", template_id, len(outfit_descriptions), image_gen_model)
-
-                async def _gen_image(outfit: dict) -> dict:
-                    desc = outfit["description"]
-                    prompt_text = image_gen_prompt_template.replace("{description}", desc)
-                    try:
-                        evolink_url = await _call_image_gen_api(
-                            api_base_url=api_base_url,
-                            api_key=api_key,
-                            model_name=image_gen_model,
-                            prompt=prompt_text,
-                            size=image_gen_size,
-                            quality=image_gen_quality,
-                        )
-                        logger.info("[%s] Generated image for outfit %s: %s", template_id, outfit["id"], evolink_url[:100] if evolink_url else "")
-                        # 下载并上传到 CDN
-                        uploaded = await _download_and_upload_images([evolink_url])
-                        cdn_url = uploaded[0]["image_url"] if uploaded else evolink_url
-                        logger.info("[%s] CDN url for outfit %s: %s", template_id, outfit["id"], cdn_url[:100] if cdn_url else "")
-                        return {"id": outfit["id"], "description": desc, "image_url": cdn_url}
-                    except Exception as exc:
-                        logger.error("[%s] Failed to generate image for outfit %s: %s", template_id, outfit["id"], exc)
-                        return {"id": outfit["id"], "description": desc, "image_url": None, "error": str(exc)}
-
-                # 并发调用，最多3个同时
-                gen_semaphore = asyncio.Semaphore(3)
-
-                async def _gen_with_sem(outfit: dict) -> dict:
-                    async with gen_semaphore:
-                        return await _gen_image(outfit)
-
-                generated_shots = await asyncio.gather(*[_gen_with_sem(o) for o in outfit_descriptions])
-
-                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.downloading))
-                state["extracted_shots"] = list(generated_shots)
-                state["updated_at"] = _utcnow_iso()
-                _mark_dirty(template_id)
-
-                # 立即持久化生成的图片到数据库
-                async with SessionLocal() as session:
-                    tpl = await session.get(VideoAITemplate, uuid_val)
-                    if tpl:
-                        tpl.extracted_shots = list(generated_shots)
-                        await session.commit()
-
-            elif outfit_descriptions:
-                # 无生图模型配置，仅存描述
-                logger.info("[%s] No image gen model configured, storing descriptions only", template_id)
-                async with SessionLocal() as session:
-                    tpl = await session.get(VideoAITemplate, uuid_val)
-                    if tpl:
-                        tpl.extracted_shots = initial_shots
-                        await session.commit()
-
-            # ========== 步骤 4: 成功 ==========
+            # ========== 步骤 2: 成功 ==========
             _set_status(template_id, VideoAIProcessStatus.success)
             logger.info("[%s] pipeline completed", template_id)
 

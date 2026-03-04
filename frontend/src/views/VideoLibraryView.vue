@@ -98,6 +98,17 @@
                 @click.stop="handleDownload(item)"
               >{{ item.download_status === 'failed' ? '重试上传' : '下载上传' }}</button>
               <button
+                v-if="templateMap[item.id]"
+                class="vc-btn vc-btn-tpl vc-btn-tpl-exists"
+                @click.stop="router.push(`/dashboard/video-ai-templates/${templateMap[item.id]}/edit`)"
+              >跳转模板</button>
+              <button
+                v-else-if="item.download_status === 'done'"
+                class="vc-btn vc-btn-tpl"
+                :class="{ loading: creatingTemplate === item.id }"
+                @click.stop="handleCreateTemplate(item)"
+              >生成模板</button>
+              <button
                 class="vc-btn vc-btn-del"
                 :class="{ loading: deleting === item.id }"
                 @click.stop="handleDelete(item)"
@@ -168,6 +179,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource } from '../api/video_sources'
+import { createVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { isDuplicateRequestError } from '../api/http'
 
 const router = useRouter()
@@ -175,11 +187,14 @@ const router = useRouter()
 const loading = ref(false)
 const deleting = ref(null)
 const downloading = ref(null)
+const creatingTemplate = ref(null)
 const items = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const stats = ref({ total: 0, youtube_count: 0, tiktok_count: 0, recent_count: 0 })
+// Map<videoSourceId, templateId> - 已有模板的视频
+const templateMap = ref({})
 const playerVisible = ref(false)
 const playerItem = ref(null)
 let pollTimer = null
@@ -226,11 +241,33 @@ async function loadData(silent = false) {
     items.value = data.items || []
     total.value = data.total || 0
     schedulePollIfNeeded()
+    // 查询已有模板的视频
+    const ids = items.value.map(i => i.id)
+    if (ids.length) {
+      templateMap.value = await fetchTemplatesByVideoSourceIds(ids)
+    }
   } catch (err) {
     if (isDuplicateRequestError(err)) return
     if (!silent) ElMessage.error(err?.response?.data?.detail || '加载失败')
   } finally {
     if (!silent) loading.value = false
+  }
+}
+
+async function handleCreateTemplate(item) {
+  creatingTemplate.value = item.id
+  try {
+    const tpl = await createVideoAITemplate({
+      title: item.video_title || item.blogger_name || '新模板',
+      description: '',
+      video_source_id: item.id,
+    })
+    templateMap.value = { ...templateMap.value, [item.id]: tpl.id }
+    router.push(`/dashboard/video-ai-templates/${tpl.id}/edit`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '创建模板失败')
+  } finally {
+    creatingTemplate.value = null
   }
 }
 
@@ -281,8 +318,7 @@ async function handleDelete(item) {
         confirmButtonText: '确认删除',
         cancelButtonText: '取消',
         type: 'warning',
-        customClass: 'vc-delete-confirm',
-        confirmButtonClass: 'el-button--danger',
+        customClass: 'premium-delete-dialog',
       }
     )
   } catch { return }
@@ -587,6 +623,30 @@ onUnmounted(() => {
   border-color: #0ea5e9;
   color: #0ea5e9;
   background: #f0f9ff;
+}
+
+.vc-btn-tpl {
+  border-color: #c7d2fe;
+  color: #4f46e5;
+  background: #eef2ff;
+}
+
+.vc-btn-tpl:hover {
+  border-color: #6366f1;
+  color: #4338ca;
+  background: #e0e7ff;
+}
+
+.vc-btn-tpl-exists {
+  border-color: #fed7aa;
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+.vc-btn-tpl-exists:hover {
+  border-color: #fb923c;
+  color: #9a3412;
+  background: #ffedd5;
 }
 
 /* Download status bar */

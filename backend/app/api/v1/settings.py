@@ -86,15 +86,6 @@ def _row_to_evolink_payload(row) -> EvoLinkSettingsPayload:
         understand_temperature=row.understand_temperature,
         understand_output_format=row.understand_output_format,
         understand_json_schema=row.understand_json_schema,
-        extract_model=row.extract_model,
-        extract_prompt=row.extract_prompt,
-        extract_temperature=row.extract_temperature,
-        extract_output_format=row.extract_output_format,
-        extract_json_schema=row.extract_json_schema,
-        image_gen_model=row.image_gen_model,
-        image_gen_prompt_template=row.image_gen_prompt_template,
-        image_gen_size=row.image_gen_size,
-        image_gen_quality=row.image_gen_quality,
     )
 
 

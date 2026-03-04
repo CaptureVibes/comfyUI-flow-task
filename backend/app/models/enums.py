@@ -20,9 +20,6 @@ class PhotoSourceType(StrEnum):
 class VideoAIProcessStatus(StrEnum):
     pending = "pending"
     understanding = "understanding"
-    extracting = "extracting"
-    downloading = "downloading"
-    uploading = "uploading"
     success = "success"
     fail = "fail"
     paused = "paused"

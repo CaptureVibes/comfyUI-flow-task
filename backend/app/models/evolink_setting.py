@@ -26,22 +26,6 @@ class EvoLinkSetting(Base):
     understand_output_format: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
     understand_json_schema: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
-    # 步骤二：造型描述提取
-    extract_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    extract_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    extract_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
-    extract_output_format: Mapped[str] = mapped_column(String(20), nullable=False, default="json")
-    extract_json_schema: Mapped[str] = mapped_column(Text, nullable=False, default="")
-
-    # 步骤三：生图（Job 轮询模式）
-    image_gen_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    image_gen_size: Mapped[str] = mapped_column(String(20), nullable=False, default="1:1")
-    image_gen_quality: Mapped[str] = mapped_column(String(10), nullable=False, default="2K")
-    image_gen_prompt_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    image_gen_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
-    image_gen_output_format: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
-    image_gen_json_schema: Mapped[str] = mapped_column(Text, nullable=False, default="")
-
     # 兼容旧字段（保留在DB中，不再暴露给前端）
     model_name: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-2.0-flash")
     image_gen_api_base_url: Mapped[str] = mapped_column(Text, nullable=False, default="")

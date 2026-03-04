@@ -35,15 +35,6 @@ async def update_evolink_settings(session: AsyncSession, payload: EvoLinkSetting
     row.understand_temperature = payload.understand_temperature
     row.understand_output_format = payload.understand_output_format
     row.understand_json_schema = payload.understand_json_schema
-    row.extract_model = payload.extract_model
-    row.extract_prompt = payload.extract_prompt
-    row.extract_temperature = payload.extract_temperature
-    row.extract_output_format = payload.extract_output_format
-    row.extract_json_schema = payload.extract_json_schema
-    row.image_gen_model = payload.image_gen_model
-    row.image_gen_prompt_template = payload.image_gen_prompt_template
-    row.image_gen_size = payload.image_gen_size
-    row.image_gen_quality = payload.image_gen_quality
     await session.commit()
     await session.refresh(row)
     return row

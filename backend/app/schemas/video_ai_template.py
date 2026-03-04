@@ -14,6 +14,10 @@ class VideoSourceSummary(BaseModel):
     blogger_name: str | None
     video_title: str | None
     source_url: str
+    thumbnail_url: str | None = None
+    local_video_url: str | None = None
+    video_url: str | None = None
+    view_count: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -59,6 +63,7 @@ class VideoAITemplateListItem(BaseModel):
     title: str
     description: str | None
     video_source_id: uuid.UUID | None
+    video_source: VideoSourceSummary | None = None
     process_status: VideoAIProcessStatus
     process_error: str | None
     created_at: datetime

@@ -65,16 +65,119 @@ body {
   transform: scale(0.97);
 }
 
-/* ── Danger delete dialog ── */
-.danger-delete-box .el-message-box__status {
-  color: var(--danger) !important;
+/* ── Common Card Buttons (used in video library & template list) ── */
+.vc-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
 }
 
-.danger-delete-box .el-button--primary {
-  --el-button-bg-color: var(--danger);
-  --el-button-border-color: var(--danger);
-  --el-button-hover-bg-color: #dc2626;
-  --el-button-hover-border-color: #dc2626;
+.vc-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.vc-btn-del {
+  border-color: #fecaca;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.vc-btn-del:hover {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.vc-btn-dl:hover {
+  border-color: #0ea5e9;
+  color: #0ea5e9;
+  background: #f0f9ff;
+}
+
+/* ── Premium Delete Dialog ── */
+.premium-delete-dialog {
+  border-radius: 16px !important;
+  padding: 24px 20px 20px !important;
+  width: 380px !important;
+  border: none !important;
+  box-shadow: 0 20px 40px -10px rgba(0,0,0,0.1), 0 10px 20px -5px rgba(0,0,0,0.05) !important;
+  background: var(--surface-primary, #ffffff) !important;
+}
+
+.premium-delete-dialog .el-message-box__header {
+  padding: 0 !important;
+  padding-bottom: 12px !important;
+  display: flex;
+  align-items: center;
+}
+
+.premium-delete-dialog .el-message-box__title {
+  font-weight: 700 !important;
+  font-size: 18px !important;
+  color: #0f172a !important;
+}
+
+.premium-delete-dialog .el-message-box__content {
+  padding: 0 0 24px 0 !important;
+  font-size: 14px !important;
+  color: #64748b !important;
+  line-height: 1.6 !important;
+}
+
+.premium-delete-dialog .el-message-box__status {
+  color: var(--danger, #ef4444) !important;
+  font-size: 28px !important;
+  margin-right: 12px !important;
+  position: relative !important;
+  transform: translateY(-2px);
+}
+
+.premium-delete-dialog .el-message-box__message {
+  padding-left: 0 !important;
+}
+
+.premium-delete-dialog .el-message-box__btns {
+  padding: 0 !important;
+  display: flex !important;
+  gap: 12px !important;
+  justify-content: flex-end !important;
+}
+
+.premium-delete-dialog .el-message-box__btns .el-button {
+  margin: 0 !important;
+  border-radius: 8px !important;
+  padding: 10px 20px !important;
+  height: auto !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.3px;
+}
+
+.premium-delete-dialog .el-button:not(.el-button--primary) {
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #475569 !important;
+}
+
+.premium-delete-dialog .el-button:not(.el-button--primary):hover {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+.premium-delete-dialog .el-button--primary {
+  --el-button-bg-color: var(--danger, #ef4444) !important;
+  --el-button-border-color: var(--danger, #ef4444) !important;
+  --el-button-hover-bg-color: #dc2626 !important;
+  --el-button-hover-border-color: #dc2626 !important;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25) !important;
 }
 
 /* ── Table refinements ── */

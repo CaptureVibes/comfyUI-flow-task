@@ -30,7 +30,7 @@
               type="primary"
               :loading="actioning === item.id + '-start'"
               @click="handleStart(item)"
-            >开始</el-button>
+            >{{ item.process_status === 'fail' ? '重试' : '开始' }}</el-button>
             <el-button
               v-if="canPause(item)"
               size="small"
@@ -44,22 +44,17 @@
               :loading="actioning === item.id + '-resume'"
               @click="handleResume(item)"
             >继续</el-button>
-            <el-button size="small" @click.stop="goToEdit(item)">编辑</el-button>
-            <el-button
-              size="small"
-              type="danger"
-              :loading="deleting === item.id"
-              @click.stop="handleDelete(item)"
-            >删除</el-button>
           </div>
         </div>
 
         <!-- Video preview -->
-        <div v-if="item.video_source" class="vt-video-section" @click.stop>
+        <div v-if="item.video_source" class="vt-video-section" @click.stop="openPlayer(item.video_source)">
           <div v-if="item.video_source.thumbnail_url" class="vt-thumb">
             <img :src="item.video_source.thumbnail_url" class="vt-thumb-img" />
             <div class="vt-thumb-overlay">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <div class="vt-play-btn">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              </div>
             </div>
           </div>
           <div v-else class="vt-thumb-placeholder">
@@ -83,10 +78,19 @@
 
           <!-- Meta info -->
           <div class="vt-meta">
-            <span class="vt-date">{{ formatDate(item.updated_at) }}</span>
-            <span v-if="item.video_source" class="vt-video-info">
-              @{{ item.video_source.blogger_name || '未知' }}
-            </span>
+            <div class="vt-meta-info">
+              <span class="vt-date">{{ formatDate(item.updated_at) }}</span>
+              <span v-if="item.video_source" class="vt-video-info">
+                @{{ item.video_source.blogger_name || '未知' }}
+              </span>
+            </div>
+            <div class="vt-footer-actions">
+              <button
+                class="vc-btn vc-btn-del"
+                :class="{ loading: deleting === item.id }"
+                @click.stop="handleDelete(item)"
+              >删除</button>
+            </div>
           </div>
         </div>
       </div>
@@ -116,7 +120,7 @@
       <div v-loading="configLoading" class="cfg-body">
         <div class="cfg-hint-bar">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          API Key 和 Base URL 在<router-link to="/dashboard/settings" @click="showConfig=false">设置页面</router-link>配置，三个步骤共用同一 EvoLink Key。
+          API Key 和 Base URL 在<router-link to="/dashboard/settings" @click="showConfig=false">设置页面</router-link>配置，与 EvoLink Key 共用。
         </div>
 
         <el-tabs v-model="configTab" type="border-card" class="cfg-tabs">
@@ -164,110 +168,6 @@
             </el-form>
           </el-tab-pane>
 
-          <!-- Step 2 -->
-          <el-tab-pane label="步骤二：造型提取" name="step2">
-            <div class="cfg-step-desc">AI 分析视频中的穿搭造型，输出每个造型的文字描述列表。每个描述将作为步骤三的生图输入。</div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="模型名称">
-                <el-input v-model="cfg.extract_model" placeholder="gemini-3.1-pro-preview（留空使用默认）" />
-              </el-form-item>
-              <el-form-item label="提示词 (Prompt)">
-                <el-input v-model="cfg.extract_prompt" type="textarea" :rows="4"
-                  placeholder="请分析视频中出现的所有不同穿搭造型，以JSON数组格式返回每个造型的文字描述。" />
-              </el-form-item>
-              <el-form-item :label="`温度 (Temperature)：${cfg.extract_temperature.toFixed(1)}`">
-                <el-slider v-model="cfg.extract_temperature" :min="0" :max="2" :step="0.1" />
-              </el-form-item>
-              <el-form-item label="输出格式">
-                <el-radio-group v-model="cfg.extract_output_format">
-                  <el-radio value="json">JSON（推荐）</el-radio>
-                  <el-radio value="markdown">Markdown</el-radio>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item v-if="cfg.extract_output_format === 'json'" label="JSON 格式定义">
-                <el-input
-                  v-model="cfg.extract_json_schema"
-                  type="textarea"
-                  :rows="6"
-                  placeholder='[\n  {\n    "id": 1,\n    "description": "穿搭造型的详细文字描述",\n    "tags": ["风格标签"]\n  }\n]'
-                  class="cfg-code-input"
-                  :class="{ 'cfg-json-invalid': jsonErrors.extract }"
-                  @input="validateJsonField('extract', cfg.extract_json_schema)"
-                />
-                <div v-if="jsonErrors.extract" class="cfg-json-error-msg">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                  {{ jsonErrors.extract }}
-                </div>
-                <div v-else-if="cfg.extract_json_schema.trim()" class="cfg-json-ok-msg">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  JSON 格式正确
-                </div>
-                <div class="cfg-field-hint">此 JSON 格式将追加到提示词末尾，要求模型严格按格式输出。</div>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
-
-          <!-- Step 3 -->
-          <el-tab-pane label="步骤三：生图配置" name="step3">
-            <div class="cfg-step-desc">
-              根据步骤二的每个造型描述，并发提交生图任务到 EvoLink，通过轮询 task_id 获取生成图片。共用设置页面中的 EvoLink Key。
-            </div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="生图模型名称">
-                <el-input v-model="cfg.image_gen_model" placeholder="例如 gemini-3.1-flash-image-preview" />
-              </el-form-item>
-              <el-form-item label="Prompt 模板">
-                <el-input
-                  v-model="cfg.image_gen_prompt_template"
-                  type="textarea"
-                  :rows="4"
-                  placeholder="Generate a fashion outfit image: {description}"
-                />
-                <div class="cfg-field-hint">使用 <code>{description}</code> 占位符引用步骤二中每个造型的文字描述。</div>
-              </el-form-item>
-              <div class="cfg-two-col">
-                <el-form-item label="图片尺寸 (size)">
-                  <el-select v-model="cfg.image_gen_size" style="width:100%">
-                    <el-option value="auto" label="auto（自动）" />
-                    <el-option value="1:1" label="1:1（正方形）" />
-                    <el-option value="2:3" label="2:3（竖版）" />
-                    <el-option value="3:2" label="3:2（横版）" />
-                    <el-option value="3:4" label="3:4（竖版）" />
-                    <el-option value="4:3" label="4:3（横版）" />
-                    <el-option value="4:5" label="4:5（竖版）" />
-                    <el-option value="5:4" label="5:4（横版）" />
-                    <el-option value="9:16" label="9:16（手机竖屏）" />
-                    <el-option value="16:9" label="16:9（宽屏）" />
-                    <el-option value="21:9" label="21:9（超宽屏）" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="图片质量 (quality)">
-                  <el-select v-model="cfg.image_gen_quality" style="width:100%">
-                    <el-option value="0.5K" label="0.5K（低）" />
-                    <el-option value="1K" label="1K（标准）" />
-                    <el-option value="2K" label="2K（高，默认）" />
-                    <el-option value="4K" label="4K（超高）" />
-                  </el-select>
-                </el-form-item>
-              </div>
-              <div class="cfg-job-flow">
-                <div class="cfg-job-step">
-                  <div class="cfg-job-step-icon">1</div>
-                  <div class="cfg-job-step-text"><code>POST /v1/images/generations</code> 提交任务 → 获取 <code>task_id</code></div>
-                </div>
-                <div class="cfg-job-arrow">↓</div>
-                <div class="cfg-job-step">
-                  <div class="cfg-job-step-icon">2</div>
-                  <div class="cfg-job-step-text"><code>GET /v1/tasks/{task_id}</code> 每 3s 轮询，直到 <code>completed</code></div>
-                </div>
-                <div class="cfg-job-arrow">↓</div>
-                <div class="cfg-job-step">
-                  <div class="cfg-job-step-icon">3</div>
-                  <div class="cfg-job-step-text">从 <code>results[0]</code> 提取图片 URL，最大等待 300s</div>
-                </div>
-              </div>
-            </el-form>
-          </el-tab-pane>
         </el-tabs>
       </div>
 
@@ -278,13 +178,43 @@
     </el-dialog>
 
     <!-- Footer pagination -->
-    <div v-if="total > pageSize" class="vai-footer">
+    <div v-if="total > 0" class="vai-footer">
       <span class="vai-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
       <div class="vai-pagination">
         <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
         <button class="pg-btn" :disabled="endIdx >= total" @click="goPage(page + 1)">下一页 →</button>
       </div>
     </div>
+
+    <!-- ── Video player dialog ── -->
+    <el-dialog
+      v-model="playerVisible"
+      :title="playerItem?.video_title || '视频播放'"
+      width="800px"
+      align-center
+      destroy-on-close
+    >
+      <div class="player-wrap">
+        <video
+          v-if="playerItem?.local_video_url || playerItem?.video_url"
+          :src="playerItem.local_video_url || playerItem.video_url"
+          controls
+          autoplay
+          class="player-video"
+        />
+        <div v-else class="player-nourl">
+          <el-empty description="暂无可播放地址" :image-size="80" />
+          <el-link :href="playerItem?.source_url" target="_blank" type="primary">前往原始链接观看</el-link>
+        </div>
+      </div>
+      <div v-if="playerItem" class="player-meta">
+        <span>@{{ playerItem.blogger_name || '-' }}</span>
+        <el-divider direction="vertical" />
+        <span>{{ platformLabel(playerItem.platform) }}</span>
+        <el-divider direction="vertical" />
+        <span v-if="playerItem.view_count != null">{{ formatCount(playerItem.view_count) }} 次播放</span>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -312,6 +242,9 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 12
 
+const playerVisible = ref(false)
+const playerItem = ref(null)
+
 // Config dialog state
 const showConfig = ref(false)
 const configTab = ref('step1')
@@ -319,30 +252,17 @@ const configLoading = ref(false)
 const configSaving = ref(false)
 
 const cfg = reactive({
-  // Step 1
   understand_model: '',
   understand_prompt: '',
   understand_temperature: 0.3,
   understand_output_format: 'text',
   understand_json_schema: '',
-  // Step 2
-  extract_model: '',
-  extract_prompt: '',
-  extract_temperature: 0.3,
-  extract_output_format: 'json',
-  extract_json_schema: '',
-  // Step 3 (EvoLink job-based: POST /v1/images/generations → GET /v1/tasks/{id})
-  image_gen_model: '',
-  image_gen_prompt_template: '',
-  image_gen_size: '1:1',
-  image_gen_quality: '2K',
-  // preserved: EvoLink connection (stays in settings page)
   api_key: '',
   api_base_url: 'https://api.evolink.ai',
 })
 
 // JSON validation errors for schema fields
-const jsonErrors = reactive({ understand: '', extract: '' })
+const jsonErrors = reactive({ understand: '' })
 
 function validateJsonField(field, value) {
   const v = (value || '').trim()
@@ -356,8 +276,7 @@ function validateJsonField(field, value) {
 }
 
 const hasJsonError = computed(() =>
-  (cfg.understand_output_format === 'json' && !!jsonErrors.understand) ||
-  (cfg.extract_output_format === 'json' && !!jsonErrors.extract)
+  cfg.understand_output_format === 'json' && !!jsonErrors.understand
 )
 
 async function openConfig() {
@@ -365,7 +284,6 @@ async function openConfig() {
   configTab.value = 'step1'
   configLoading.value = true
   jsonErrors.understand = ''
-  jsonErrors.extract = ''
   try {
     const data = await fetchEvolinkSettings()
     Object.assign(cfg, {
@@ -374,15 +292,6 @@ async function openConfig() {
       understand_temperature: data.understand_temperature ?? 0.3,
       understand_output_format: data.understand_output_format || 'text',
       understand_json_schema: data.understand_json_schema || '',
-      extract_model: data.extract_model || '',
-      extract_prompt: data.extract_prompt || '',
-      extract_temperature: data.extract_temperature ?? 0.3,
-      extract_output_format: data.extract_output_format || 'json',
-      extract_json_schema: data.extract_json_schema || '',
-      image_gen_model: data.image_gen_model || '',
-      image_gen_prompt_template: data.image_gen_prompt_template || '',
-      image_gen_size: data.image_gen_size || '1:1',
-      image_gen_quality: data.image_gen_quality || '2K',
       api_key: data.api_key || '',
       api_base_url: data.api_base_url || 'https://api.evolink.ai',
     })
@@ -408,15 +317,6 @@ async function saveConfig() {
       understand_temperature: cfg.understand_temperature,
       understand_output_format: cfg.understand_output_format,
       understand_json_schema: cfg.understand_json_schema,
-      extract_model: cfg.extract_model,
-      extract_prompt: cfg.extract_prompt,
-      extract_temperature: cfg.extract_temperature,
-      extract_output_format: cfg.extract_output_format,
-      extract_json_schema: cfg.extract_json_schema,
-      image_gen_model: cfg.image_gen_model,
-      image_gen_prompt_template: cfg.image_gen_prompt_template,
-      image_gen_size: cfg.image_gen_size,
-      image_gen_quality: cfg.image_gen_quality,
     })
     ElMessage.success('配置已保存')
     showConfig.value = false
@@ -431,11 +331,14 @@ const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageS
 const endIdx = computed(() => Math.min(page.value * pageSize, total.value))
 
 const STATUS_CONFIG = {
-  pending: { label: '待处理', type: 'info' },
-  running: { label: '处理中', type: 'warning' },
+  pending: { label: '排队中', type: 'info' },
+  understanding: { label: '理解视频', type: 'primary' },
+  extracting: { label: '提取造型', type: 'primary' },
+  downloading: { label: '下载资源', type: 'warning' },
+  uploading: { label: '回传云端', type: 'warning' },
   paused: { label: '已暂停', type: 'warning' },
-  completed: { label: '已完成', type: 'success' },
-  failed: { label: '失败', type: 'danger' },
+  success: { label: '已完成', type: 'success' },
+  fail: { label: '失败', type: 'danger' },
 }
 
 function statusType(status) {
@@ -447,11 +350,11 @@ function statusLabel(status) {
 }
 
 function canStart(item) {
-  return item.process_status === 'pending' || item.process_status === 'paused' || item.process_status === 'failed'
+  return item.process_status === 'fail'
 }
 
 function canPause(item) {
-  return item.process_status === 'running'
+  return ['pending', 'understanding', 'extracting', 'downloading', 'uploading'].includes(item.process_status)
 }
 
 function canResume(item) {
@@ -461,6 +364,13 @@ function canResume(item) {
 function platformLabel(p) {
   const labels = { youtube: 'YouTube', tiktok: 'TikTok' }
   return labels[p] || (p || '其他')
+}
+
+function formatCount(n) {
+  if (n == null) return '-'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
 }
 
 function formatDate(iso) {
@@ -485,6 +395,11 @@ async function loadData() {
 function goPage(p) {
   page.value = p
   loadData()
+}
+
+function openPlayer(item) {
+  playerItem.value = item
+  playerVisible.value = true
 }
 
 function goToDetail(item) {
@@ -543,6 +458,7 @@ async function handleDelete(item) {
         confirmButtonText: '确认删除',
         cancelButtonText: '取消',
         type: 'warning',
+        customClass: 'premium-delete-dialog',
       }
     )
   } catch { return }
@@ -890,19 +806,28 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   transition: background 0.2s;
+  pointer-events: none;
 }
 
 .vt-card:hover .vt-thumb-overlay {
   background: rgba(0,0,0,0.35);
 }
 
-.vt-thumb-overlay svg {
+.vt-play-btn {
   opacity: 0;
   transform: scale(0.8);
-  transition: all 0.2s;
+  transition: opacity 0.2s, transform 0.2s;
+  background: rgba(255,255,255,0.15);
+  border-radius: 50%;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
 }
 
-.vt-card:hover .vt-thumb-overlay svg {
+.vt-card:hover .vt-play-btn {
   opacity: 1;
   transform: scale(1);
 }
@@ -1028,6 +953,40 @@ onMounted(() => {
 .pg-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ── Player dialog ── */
+.player-wrap {
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-video {
+  width: 100%;
+  max-height: 460px;
+  display: block;
+}
+
+.player-nourl {
+  padding: 40px;
+  text-align: center;
+  background: #fff;
+  width: 100%;
+}
+
+.player-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #64748b;
+  margin-top: 14px;
+  padding: 0 2px;
 }
 
 @keyframes rise {

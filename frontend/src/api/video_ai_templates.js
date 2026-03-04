@@ -10,6 +10,22 @@ export async function fetchVideoAITemplates(params = {}) {
   return data
 }
 
+// 查询某批 video_source_id 各自是否已有模板，返回 Map<videoSourceId, templateId>
+export async function fetchTemplatesByVideoSourceIds(videoSourceIds) {
+  const map = {}
+  await Promise.all(
+    videoSourceIds.map(async (vsId) => {
+      try {
+        const data = await fetchVideoAITemplates({ video_source_id: vsId, page: 1, page_size: 1 })
+        if (data.items && data.items.length > 0) {
+          map[vsId] = data.items[0].id
+        }
+      } catch { /* ignore */ }
+    })
+  )
+  return map
+}
+
 export async function fetchVideoAITemplate(id) {
   const { data } = await http.get(`/video-ai-templates/${id}`)
   return data
@@ -41,6 +57,15 @@ export async function resumeVideoAITemplate(id) {
 
 export async function fetchVideoAITemplateState(id) {
   const { data } = await http.get(`/video-ai-templates/${id}/state`)
+  return data
+}
+
+export async function uploadShotImage(templateId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await http.post(`/video-ai-templates/${templateId}/upload-shot`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
   return data
 }
 
