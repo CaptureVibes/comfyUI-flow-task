@@ -24,38 +24,66 @@
     </div>
 
     <div class="header-right">
-      <div class="user-info">
-        <div class="user-avatar">{{ avatarLetter }}</div>
-        <span class="user-name">{{ username }}</span>
-      </div>
-      <button class="logout-btn" @click="handleLogout">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <polyline points="16 17 21 12 16 7" />
-          <line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-      </button>
+      <!-- User dropdown menu -->
+      <el-dropdown trigger="hover" @command="handleMenuCommand">
+        <div class="user-dropdown-trigger">
+          <div class="user-avatar">
+            <img v-if="userAvatar" :src="userAvatar" alt="avatar" class="avatar-img" />
+            <span v-else class="avatar-letter">{{ avatarLetter }}</span>
+          </div>
+          <span class="user-name">{{ displayName }}</span>
+          <el-icon class="dropdown-arrow"><ArrowDown /></el-icon>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="profile">
+              <el-icon><User /></el-icon>
+              <span>个人资料</span>
+            </el-dropdown-item>
+            <el-dropdown-item divided command="logout" class="logout-item">
+              <el-icon><SwitchButton /></el-icon>
+              <span>退出登录</span>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
   </header>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ArrowDown, SwitchButton, User } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+
+import { getProfile } from '../api/auth'
+import { clearToken, getUsername, isLoggedIn } from '../composables/useAuth'
+import { USERNAME_KEY } from '../utils/constants'
 
 defineEmits(['toggle-sidebar'])
 
 const route = useRoute()
 const router = useRouter()
+const username = getUsername()
 
-const username = localStorage.getItem('task_manager_username') || 'Admin'
-const avatarLetter = computed(() => (username[0] || 'A').toUpperCase())
+// User profile data (cached locally, not reactive to avoid frequent API calls)
+const userProfile = ref(null)
+
+const displayName = computed(() => userProfile.value?.display_name || username)
+
+const userAvatar = computed(() => userProfile.value?.avatar_url || null)
+
+const avatarLetter = computed(() => {
+  const name = userProfile.value?.display_name || username
+  return (name[0] || 'A').toUpperCase()
+})
 
 const menuLabels = {
   tasks: '任务列表',
   templates: '工作流模板',
-  settings: '设置'
+  settings: '设置',
+  users: '用户管理',
+  profile: '个人资料'
 }
 
 const breadcrumbs = computed(() => {
@@ -74,11 +102,40 @@ const breadcrumbs = computed(() => {
   return crumbs
 })
 
+// Load profile once on mount (silently, no error shown)
+async function loadUserProfile() {
+  if (!isLoggedIn()) return
+  try {
+    const data = await getProfile()
+    userProfile.value = data
+  } catch {
+    // Silently fail - fallback to username
+  }
+}
+
+// Initial load
+loadUserProfile()
+
+async function handleMenuCommand(command) {
+  switch (command) {
+    case 'profile':
+      router.push('/dashboard/profile')
+      break
+    case 'logout':
+      handleLogout()
+      break
+  }
+}
+
 function handleLogout() {
-  localStorage.removeItem('task_manager_token')
-  localStorage.removeItem('task_manager_username')
+  clearToken()
   router.replace('/login')
 }
+
+// Expose refresh method for external calls (e.g. after profile update)
+defineExpose({
+  refreshProfile: loadUserProfile
+})
 </script>
 
 <style scoped>
@@ -156,47 +213,98 @@ function handleLogout() {
   gap: var(--space-4);
 }
 
-.user-info {
+/* User dropdown trigger */
+.user-dropdown-trigger {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--duration-fast) ease;
+}
+
+.user-dropdown-trigger:hover {
+  background: var(--surface-tertiary);
 }
 
 .user-avatar {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-full);
+  overflow: hidden;
   background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-letter {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
 }
 
 .user-name {
   font-size: 13px;
   color: var(--text-secondary);
   font-weight: 500;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.logout-btn {
+.dropdown-arrow {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  transition: transform var(--duration-fast) ease;
+}
+
+.user-dropdown-trigger:hover .dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+/* Dropdown menu items */
+:deep(.el-dropdown-menu__item) {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: all var(--duration-fast) ease;
+  gap: var(--space-2);
+  padding: 8px 12px;
+  min-width: 140px;
 }
 
-.logout-btn:hover {
-  background: var(--danger-soft);
-  color: var(--danger);
+:deep(.el-dropdown-menu__item .el-icon) {
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+:deep(.el-dropdown-menu__item:hover .el-icon) {
+  color: var(--brand);
+}
+
+/* Logout item - light red style */
+:deep(.el-dropdown-menu__item.logout-item) {
+  color: #f87171;
+}
+
+:deep(.el-dropdown-menu__item.logout-item .el-icon) {
+  color: #f87171;
+}
+
+:deep(.el-dropdown-menu__item.logout-item:hover) {
+  background: #fef2f2;
+  color: #ef4444;
+}
+
+:deep(.el-dropdown-menu__item.logout-item:hover .el-icon) {
+  color: #ef4444;
 }
 </style>

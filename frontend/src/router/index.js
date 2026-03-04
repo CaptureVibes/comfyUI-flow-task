@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import DashboardLayout from '../layouts/DashboardLayout.vue'
 import LandingLayout from '../layouts/LandingLayout.vue'
 import LoginView from '../views/LoginView.vue'
+import { TOKEN_KEY } from '../utils/constants'
 
 const routes = [
   /* ── Landing page (public, full screen) ── */
@@ -86,6 +87,72 @@ const routes = [
         name: 'comfyui',
         component: () => import('../views/ComfyUIView.vue'),
         meta: { title: 'ComfyUI 编辑器' }
+      },
+      {
+        path: 'profile',
+        name: 'profile',
+        component: () => import('../views/ProfileView.vue'),
+        meta: { title: '个人资料' }
+      },
+      {
+        path: 'users',
+        name: 'users',
+        component: () => import('../views/UserManageView.vue'),
+        meta: { title: '用户管理' }
+      },
+      {
+        path: 'video-library',
+        name: 'video-library',
+        component: () => import('../views/VideoLibraryView.vue'),
+        meta: { title: '视频库' }
+      },
+      {
+        path: 'video-library/new',
+        name: 'video-library-create',
+        component: () => import('../views/VideoSourceFormView.vue'),
+        meta: { title: '添加视频', parent: 'video-library' }
+      },
+      {
+        path: 'video-library/:id',
+        name: 'video-detail',
+        component: () => import('../views/VideoDetailView.vue'),
+        meta: { title: '视频详情', parent: 'video-library' }
+      },
+      {
+        path: 'video-ai-templates',
+        name: 'video-ai-templates',
+        component: () => import('../views/VideoAITemplateListView.vue'),
+        meta: { title: '视频AI模板' }
+      },
+      {
+        path: 'video-ai-templates/new',
+        name: 'video-ai-template-create',
+        component: () => import('../views/VideoAITemplateFormView.vue'),
+        meta: { title: '新建视频AI模板', parent: 'video-ai-templates' }
+      },
+      {
+        path: 'video-ai-templates/:id/edit',
+        name: 'video-ai-template-edit',
+        component: () => import('../views/VideoAITemplateFormView.vue'),
+        meta: { title: '编辑视频AI模板', parent: 'video-ai-templates' }
+      },
+      {
+        path: 'accounts',
+        name: 'accounts',
+        component: () => import('../views/AccountListView.vue'),
+        meta: { title: '账号配置' }
+      },
+      {
+        path: 'accounts/new',
+        name: 'account-create',
+        component: () => import('../views/AccountFormView.vue'),
+        meta: { title: '新建账号', parent: 'accounts' }
+      },
+      {
+        path: 'accounts/:id/edit',
+        name: 'account-edit',
+        component: () => import('../views/AccountFormView.vue'),
+        meta: { title: '编辑账号', parent: 'accounts' }
       }
     ]
   },
@@ -109,7 +176,7 @@ const router = createRouter({
 router.beforeEach((to) => {
   // iframe 模式下，如果父系统传递了 token，则不需要检查
   const isInIframe = window.parent !== window
-  const token = localStorage.getItem('task_manager_token')
+  const token = localStorage.getItem(TOKEN_KEY)
   const isPublic = Boolean(to.meta?.public)
 
   // iframe 模式且有 token，或普通模式有 token，允许访问

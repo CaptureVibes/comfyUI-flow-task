@@ -32,9 +32,11 @@ def _parse_publish_at(value: object) -> datetime | None:
         return None
 
 
-async def get_template_or_404(session: AsyncSession, template_id: UUID) -> TaskTemplate:
+async def get_template_or_404(session: AsyncSession, template_id: UUID, owner_id: UUID | None = None) -> TaskTemplate:
     template = await session.scalar(select(TaskTemplate).where(TaskTemplate.id == template_id))
     if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task template not found")
+    if owner_id is not None and template.owner_id != owner_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task template not found")
     return template
 
@@ -44,6 +46,7 @@ async def list_templates(
     *,
     page: int,
     page_size: int,
+    owner_id: UUID | None = None,
 ) -> tuple[list[dict], int]:
     stmt = (
         select(
@@ -59,6 +62,10 @@ async def list_templates(
         .limit(page_size)
     )
     total_stmt = select(func.count(TaskTemplate.id))
+
+    if owner_id is not None:
+        stmt = stmt.where(TaskTemplate.owner_id == owner_id)
+        total_stmt = total_stmt.where(TaskTemplate.owner_id == owner_id)
 
     rows = (await session.execute(stmt)).all()
     total = int(await session.scalar(total_stmt) or 0)
@@ -76,8 +83,9 @@ async def list_templates(
     return items, total
 
 
-async def create_template(session: AsyncSession, payload: TaskTemplateCreate) -> TaskTemplate:
+async def create_template(session: AsyncSession, payload: TaskTemplateCreate, owner_id: UUID | None = None) -> TaskTemplate:
     template = TaskTemplate(
+        owner_id=owner_id,
         title=payload.title,
         description=payload.description,
         extra=payload.extra,
@@ -110,9 +118,13 @@ async def patch_template(
     return await get_template_or_404(session, template.id)
 
 
-async def delete_template(session: AsyncSession, template_id: UUID) -> None:
-    exists = await session.scalar(select(TaskTemplate.id).where(TaskTemplate.id == template_id))
-    if not exists:
+async def delete_template(session: AsyncSession, template_id: UUID, owner_id: UUID | None = None) -> None:
+    row = (await session.execute(
+        select(TaskTemplate.id, TaskTemplate.owner_id).where(TaskTemplate.id == template_id)
+    )).one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task template not found")
+    if owner_id is not None and row.owner_id != owner_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task template not found")
     await session.execute(delete(TaskTemplate).where(TaskTemplate.id == template_id))
     await session.commit()
@@ -123,8 +135,10 @@ async def create_task_from_template(
     *,
     template: TaskTemplate,
     payload: TaskTemplateCreateTaskRequest,
+    owner_id: UUID | None = None,
 ) -> Task:
     task = Task(
+        owner_id=owner_id,
         title=payload.title if payload.title is not None else template.title,
         description=payload.description if payload.description is not None else template.description,
         status=TaskStatus.pending,

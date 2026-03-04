@@ -3,8 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import TokenData, require_current_user
 from app.db.session import get_db
-from app.schemas.settings import ComfyUIPortStatusItem, ComfyUIPortsStatusResponse, ComfyUISettingsPayload
+from app.schemas.settings import ComfyUIPortStatusItem, ComfyUIPortsStatusResponse, ComfyUISettingsPayload, EvoLinkSettingsPayload
 from app.services.comfyui_settings_service import (
     fetch_ports_runtime_status,
     get_or_create_comfyui_settings,
@@ -12,8 +13,17 @@ from app.services.comfyui_settings_service import (
     normalize_server_ip,
     update_comfyui_settings,
 )
+from app.services.evolink_settings_service import get_or_create_evolink_settings, update_evolink_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+async def _require_admin(
+    token: TokenData = Depends(require_current_user),
+) -> TokenData:
+    if not token.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
+    return token
 
 
 @router.get("/comfyui", response_model=ComfyUISettingsPayload)
@@ -28,6 +38,7 @@ async def get_comfyui_settings(session: AsyncSession = Depends(get_db)) -> Comfy
 @router.put("/comfyui", response_model=ComfyUISettingsPayload)
 async def put_comfyui_settings(
     payload: ComfyUISettingsPayload,
+    _: str = Depends(_require_admin),
     session: AsyncSession = Depends(get_db),
 ) -> ComfyUISettingsPayload:
     try:
@@ -64,3 +75,40 @@ async def get_comfyui_port_status(session: AsyncSession = Depends(get_db)) -> Co
             for item in items
         ],
     )
+
+
+def _row_to_evolink_payload(row) -> EvoLinkSettingsPayload:
+    return EvoLinkSettingsPayload(
+        api_key=row.api_key,
+        api_base_url=row.api_base_url,
+        understand_model=row.understand_model,
+        understand_prompt=row.understand_prompt,
+        understand_temperature=row.understand_temperature,
+        understand_output_format=row.understand_output_format,
+        understand_json_schema=row.understand_json_schema,
+        extract_model=row.extract_model,
+        extract_prompt=row.extract_prompt,
+        extract_temperature=row.extract_temperature,
+        extract_output_format=row.extract_output_format,
+        extract_json_schema=row.extract_json_schema,
+        image_gen_model=row.image_gen_model,
+        image_gen_prompt_template=row.image_gen_prompt_template,
+        image_gen_size=row.image_gen_size,
+        image_gen_quality=row.image_gen_quality,
+    )
+
+
+@router.get("/evolink", response_model=EvoLinkSettingsPayload)
+async def get_evolink_settings(session: AsyncSession = Depends(get_db)) -> EvoLinkSettingsPayload:
+    row = await get_or_create_evolink_settings(session)
+    return _row_to_evolink_payload(row)
+
+
+@router.put("/evolink", response_model=EvoLinkSettingsPayload)
+async def put_evolink_settings(
+    payload: EvoLinkSettingsPayload,
+    _: str = Depends(_require_admin),
+    session: AsyncSession = Depends(get_db),
+) -> EvoLinkSettingsPayload:
+    row = await update_evolink_settings(session, payload)
+    return _row_to_evolink_payload(row)

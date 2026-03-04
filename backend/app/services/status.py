@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from fastapi import HTTPException, status
-
+from app.core.exceptions import InvalidStatusTransitionError
 from app.models.enums import TaskStatus
 
 ALLOWED_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
@@ -21,10 +20,7 @@ def can_transition(current: TaskStatus, target: TaskStatus) -> bool:
 
 def ensure_transition(current: TaskStatus, target: TaskStatus) -> None:
     if not can_transition(current, target):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status transition: {current} -> {target}",
-        )
+        raise InvalidStatusTransitionError(f"Invalid status transition: {current.value} -> {target.value}")
 
 
 def aggregate_parent_status(statuses: list[TaskStatus]) -> TaskStatus:

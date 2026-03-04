@@ -28,8 +28,10 @@ import { ElMessage } from 'element-plus'
 
 import { isDuplicateRequestError } from '../api/http'
 import { login } from '../api/auth'
+import { useAuth } from '../composables/useAuth'
 
 const router = useRouter()
+const { setToken } = useAuth()
 const submitting = ref(false)
 const form = reactive({
   username: 'admin',
@@ -46,8 +48,7 @@ async function submit() {
   submitting.value = true
   try {
     const result = await login({ username: form.username, password: form.password })
-    localStorage.setItem('task_manager_token', result.access_token)
-    localStorage.setItem('task_manager_username', result.username)
+    setToken(result.access_token, result.username, result.is_admin)
     ElMessage.success('登录成功')
     router.replace('/dashboard')
   } catch (error) {

@@ -114,6 +114,7 @@ import WorkflowUpload from '../components/WorkflowUpload.vue'
 import { isDuplicateRequestError } from '../api/http'
 import { createTaskTemplate, fetchTaskTemplate, patchTaskTemplate } from '../api/templates'
 import { renderMarkdown } from '../utils/markdown'
+import { createTemplateSubtask } from '../utils/subtask'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,19 +134,8 @@ const previewDialog = reactive({
   html: ''
 })
 
-function createSubtask() {
-  return {
-    platform: 'instagram',
-    account_name: '',
-    account_no: '',
-    publish_at: null,
-    prompts: Array.from({ length: 10 }, () => ''),
-    extra: {}
-  }
-}
-
 function addSubtask() {
-  form.subtasks.push(createSubtask())
+  form.subtasks.push(createTemplateSubtask())
 }
 
 function removeSubtask(index) {

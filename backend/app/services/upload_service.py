@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import HTTPException, status
 
 from app.core.config import settings
+from app.core.exceptions import UpstreamError, ValidationError
 
 
 @dataclass
@@ -23,14 +23,11 @@ class UploadResult:
 
 def ensure_image_constraints(content: bytes, content_type: str) -> None:
     if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image cannot be empty")
+        raise ValidationError("Image cannot be empty")
     if len(content) > settings.max_image_size_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Image too large. Max size is {settings.max_image_size_mb}MB",
-        )
+        raise ValidationError(f"Image too large. Max size is {settings.max_image_size_mb}MB")
     if not content_type.startswith("image/"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image content is allowed")
+        raise ValidationError("Only image content is allowed")
 
 
 def decode_base64_image(data: str) -> tuple[bytes, str]:
@@ -44,7 +41,7 @@ def decode_base64_image(data: str) -> tuple[bytes, str]:
     try:
         decoded = base64.b64decode(raw_data, validate=True)
     except binascii.Error as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 image") from exc
+        raise ValidationError("Invalid base64 image") from exc
 
     return decoded, content_type
 
@@ -82,31 +79,19 @@ class UpstreamImageUploadService:
                     headers={"Accept": "*/*"},
                 )
         except httpx.RequestError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Upload upstream request failed: {exc}",
-            ) from exc
+            raise UpstreamError(f"Upload upstream request failed: {exc}") from exc
 
         if response.status_code >= 400:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Upload upstream returned {response.status_code}: {response.text[:300]}",
-            )
+            raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
 
         try:
             payload = response.json()
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Upload upstream did not return JSON",
-            ) from exc
+            raise UpstreamError("Upload upstream did not return JSON") from exc
 
         url = _find_first_str(payload, {"url", "image_url", "file_url", "data", "src"})
         if not url:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Upload upstream JSON does not contain image url",
-            )
+            raise UpstreamError("Upload upstream JSON does not contain image url")
 
         object_key = _find_first_str(payload, {"object_key", "key", "path"})
         if not object_key:

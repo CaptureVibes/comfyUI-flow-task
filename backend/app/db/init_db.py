@@ -1,57 +1,35 @@
 from __future__ import annotations
 
-from sqlalchemy import text
-
 from app.db.base import Base
-from app.db.session import engine
-from app.models import comfyui_setting, generated_image, generated_video, photo, subtask, task, task_template  # noqa: F401
+from app.db.session import SessionLocal, engine
+from app.models import account, comfyui_setting, evolink_setting, generated_image, generated_video, photo, subtask, task, task_template, user, video_ai_template, video_source  # noqa: F401
 
 
 async def init_db() -> None:
+    """
+    创建所有表（如果不存在）。
+    schema 变更请使用 Alembic 迁移（alembic upgrade head），
+    此处仅作初始建表，适用于开发环境快速启动。
+    """
     async with engine.begin() as conn:
-        dialect = conn.dialect.name
         await conn.run_sync(Base.metadata.create_all)
-        # Local schema cleanup for pre-release development.
-        await conn.execute(text("ALTER TABLE subtasks ADD COLUMN IF NOT EXISTS result JSONB NOT NULL DEFAULT '{}'"))
-        await conn.execute(text("ALTER TABLE tasks DROP COLUMN IF EXISTS execution_count"))
-        await conn.execute(text("ALTER TABLE tasks DROP COLUMN IF EXISTS version"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workflow_json JSONB"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workflow_filename TEXT"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS execution_state TEXT"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_at TIMESTAMPTZ"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_time VARCHAR(5)"))
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_port INTEGER"))
-        await conn.execute(
-            text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_auto_dispatch BOOLEAN NOT NULL DEFAULT TRUE")
+
+    await _seed_admin()
+
+
+async def _seed_admin() -> None:
+    """如果 users 表为空，则创建初始 admin 账户（用户名和密码来自环境变量）。"""
+    from app.core.config import settings
+    from app.services.user_service import create_user, list_users
+
+    async with SessionLocal() as session:
+        existing = await list_users(session)
+        if existing:
+            return  # 已有用户，跳过
+
+        await create_user(
+            session,
+            username=settings.admin_username,
+            password=settings.admin_password,
+            is_admin=True,
         )
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_last_triggered_at TIMESTAMPTZ"))
-        await conn.execute(text("ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS workflow_json JSONB"))
-        if dialect == "postgresql":
-            await conn.execute(
-                text(
-                    """
-                    CREATE TABLE IF NOT EXISTS comfyui_settings (
-                        key VARCHAR(32) PRIMARY KEY,
-                        server_ip VARCHAR(255) NOT NULL,
-                        ports JSONB NOT NULL DEFAULT '[]'::jsonb,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-            )
-        else:
-            await conn.execute(
-                text(
-                    """
-                    CREATE TABLE IF NOT EXISTS comfyui_settings (
-                        key VARCHAR(32) PRIMARY KEY,
-                        server_ip VARCHAR(255) NOT NULL,
-                        ports JSON NOT NULL DEFAULT '[]',
-                        created_at DATETIME NOT NULL,
-                        updated_at DATETIME NOT NULL
-                    )
-                    """
-                )
-            )

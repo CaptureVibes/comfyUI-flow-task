@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { DUPLICATE_REQUEST_GAP_MS, TOKEN_KEY, USERNAME_KEY } from '../utils/constants.js'
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1',
@@ -7,7 +8,7 @@ const http = axios.create({
 
 const pendingRequests = new Map()
 const recentRequests = new Map()
-const DUPLICATE_GAP_MS = 800
+const DUPLICATE_GAP_MS = DUPLICATE_REQUEST_GAP_MS
 
 function stableStringify(value) {
   if (value === null || value === undefined) {
@@ -106,7 +107,7 @@ http.interceptors.request.use((config) => {
   pendingRequests.set(requestKey, now)
 
   // 优先使用 iframe token，其次使用 localStorage
-  const token = iframeToken || localStorage.getItem('task_manager_token') || ''
+  const token = iframeToken || localStorage.getItem(TOKEN_KEY) || ''
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -124,10 +125,18 @@ http.interceptors.response.use(
       return Promise.reject(error)
     }
     if (error?.response?.status === 401) {
-      localStorage.removeItem('task_manager_token')
-      localStorage.removeItem('task_manager_username')
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      // 只有在已登录状态下收到 401（token 过期/失效）才自动跳登录页
+      // 登录接口本身的 401（密码错误）由调用方自行处理，不触发跳转
+      const isLoginRequest = String(error?.config?.url || '').includes('/auth/login')
+      if (!isLoginRequest) {
+        localStorage.removeItem(TOKEN_KEY)
+        localStorage.removeItem(USERNAME_KEY)
+        localStorage.removeItem('task_manager_is_admin')
+        const base = import.meta.env.BASE_URL || '/'
+        const loginPath = base.replace(/\/$/, '') + '/login'
+        if (window.location.pathname !== loginPath) {
+          window.location.href = loginPath
+        }
       }
     }
     return Promise.reject(error)

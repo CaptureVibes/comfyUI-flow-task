@@ -5,80 +5,43 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import PhotoSourceType, TaskStatus
+from app.models.enums import TaskStatus
 
-
-class PhotoBase(BaseModel):
-    source_type: PhotoSourceType
-    url: str
-    object_key: str | None = None
-    sort_order: int = 0
-
-
-class PhotoRead(PhotoBase):
-    id: UUID
-    created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class GeneratedImageBase(BaseModel):
-    url: str
-    object_key: str | None = None
-    sort_order: int = 0
-    extra: dict = Field(default_factory=dict)
-
-
-class GeneratedImageRead(GeneratedImageBase):
-    id: UUID
-    created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class GeneratedVideoBase(BaseModel):
-    url: str
-    object_key: str | None = None
-    sort_order: int = 0
-    extra: dict = Field(default_factory=dict)
-
-
-class GeneratedVideoRead(GeneratedVideoBase):
-    id: UUID
-    created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SubTaskBase(BaseModel):
-    platform: str = Field(min_length=1, max_length=50)
-    account_name: str = Field(min_length=1, max_length=100)
-    account_no: str = Field(min_length=1, max_length=100)
-    publish_at: datetime | None = None
-    extra: dict = Field(default_factory=dict)
-
-
-class SubTaskCreate(SubTaskBase):
-    photos: list[PhotoBase] = Field(default_factory=list)
-
-
-class SubTaskUpdate(BaseModel):
-    platform: str | None = None
-    account_name: str | None = None
-    account_no: str | None = None
-    publish_at: datetime | None = None
-    extra: dict | None = None
-    photos: list[PhotoBase] | None = None
-
-
-class SubTaskRead(SubTaskBase):
-    id: UUID
-    task_id: UUID
-    status: TaskStatus
-    result: dict
-    created_at: datetime
-    updated_at: datetime
-    photos: list[PhotoRead] = Field(default_factory=list)
-    generated_images: list[GeneratedImageRead] = Field(default_factory=list)
-    generated_videos: list[GeneratedVideoRead] = Field(default_factory=list)
-    model_config = ConfigDict(from_attributes=True)
+# 重新导出其他模块的 schema，保持向后兼容
+from app.schemas.subtask import (  # noqa: F401
+    GeneratedImageBase,
+    GeneratedImageRead,
+    GeneratedVideoBase,
+    GeneratedVideoRead,
+    PhotoBase,
+    PhotoRead,
+    SubTaskBase,
+    SubTaskCreate,
+    SubTaskRead,
+    SubTaskStatusPatchRequest,
+    SubTaskStatusPatchResponse,
+    SubTaskUpdate,
+)
+from app.schemas.callback import (  # noqa: F401
+    CallbackGeneratedImageItem,
+    CallbackGeneratedVideoItem,
+    CallbackSubTaskGeneratedImagesRequest,
+    CallbackSubTaskGeneratedImagesResponse,
+    CallbackSubTaskGeneratedVideosRequest,
+    CallbackSubTaskGeneratedVideosResponse,
+    CallbackSubTaskStatusRequest,
+    CallbackSubTaskStatusResponse,
+)
+from app.schemas.template import (  # noqa: F401
+    TaskTemplateCreate,
+    TaskTemplateCreateTaskRequest,
+    TaskTemplateDeleteResponse,
+    TaskTemplateListItem,
+    TaskTemplateListResponse,
+    TaskTemplatePatch,
+    TaskTemplateRead,
+    TemplateSubTaskBase,
+)
 
 
 class TaskCreate(BaseModel):
@@ -171,131 +134,3 @@ class TaskStatusPatchResponse(BaseModel):
     id: UUID
     status: TaskStatus
     message: str | None = None
-
-
-class SubTaskStatusPatchRequest(BaseModel):
-    status: TaskStatus
-    message: str | None = Field(default=None, max_length=2000)
-    result: dict | None = None
-
-
-class SubTaskStatusPatchResponse(BaseModel):
-    id: UUID
-    task_id: UUID
-    status: TaskStatus
-    result: dict
-
-
-class CallbackSubTaskStatusRequest(BaseModel):
-    subtask_id: UUID
-    status: TaskStatus
-    message: str | None = Field(default=None, max_length=2000)
-    result: dict | None = None
-
-
-class CallbackSubTaskStatusResponse(BaseModel):
-    subtask_id: UUID
-    subtask_status: TaskStatus
-    task_id: UUID
-    task_status: TaskStatus
-    result: dict
-
-
-class CallbackGeneratedImageItem(BaseModel):
-    url: str = Field(min_length=1)
-    object_key: str | None = None
-    sort_order: int = Field(default=0, ge=0)
-    extra: dict = Field(default_factory=dict)
-
-
-class CallbackSubTaskGeneratedImagesRequest(BaseModel):
-    subtask_id: UUID
-    images: list[CallbackGeneratedImageItem] = Field(default_factory=list)
-
-
-class CallbackSubTaskGeneratedImagesResponse(BaseModel):
-    subtask_id: UUID
-    task_id: UUID
-    saved_count: int
-    images: list[GeneratedImageRead] = Field(default_factory=list)
-
-
-class CallbackGeneratedVideoItem(BaseModel):
-    url: str = Field(min_length=1)
-    object_key: str | None = None
-    sort_order: int = Field(default=0, ge=0)
-    extra: dict = Field(default_factory=dict)
-
-
-class CallbackSubTaskGeneratedVideosRequest(BaseModel):
-    subtask_id: UUID
-    videos: list[CallbackGeneratedVideoItem] = Field(default_factory=list)
-
-
-class CallbackSubTaskGeneratedVideosResponse(BaseModel):
-    subtask_id: UUID
-    task_id: UUID
-    saved_count: int
-    videos: list[GeneratedVideoRead] = Field(default_factory=list)
-
-
-class TemplateSubTaskBase(BaseModel):
-    platform: str = Field(min_length=1, max_length=50)
-    account_name: str = Field(min_length=1, max_length=100)
-    account_no: str = Field(min_length=1, max_length=100)
-    publish_at: datetime | None = None
-    extra: dict = Field(default_factory=dict)
-
-
-class TaskTemplateCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    description: str | None = None
-    extra: dict = Field(default_factory=dict)
-    subtasks: list[TemplateSubTaskBase] = Field(default_factory=list)
-    workflow_json: dict | None = None
-
-
-class TaskTemplatePatch(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = None
-    extra: dict | None = None
-    subtasks: list[TemplateSubTaskBase] | None = None
-    workflow_json: dict | None = None
-
-
-class TaskTemplateRead(BaseModel):
-    id: UUID
-    title: str
-    description: str | None
-    extra: dict
-    subtasks: list[TemplateSubTaskBase]
-    workflow_json: dict | None
-    created_at: datetime
-    updated_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class TaskTemplateListItem(BaseModel):
-    id: UUID
-    title: str
-    description: str | None
-    subtask_count: int
-    created_at: datetime
-    updated_at: datetime
-
-
-class TaskTemplateListResponse(BaseModel):
-    items: list[TaskTemplateListItem]
-    total: int
-    page: int
-    page_size: int
-
-
-class TaskTemplateDeleteResponse(BaseModel):
-    id: UUID
-
-
-class TaskTemplateCreateTaskRequest(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = None
-    extra: dict | None = None

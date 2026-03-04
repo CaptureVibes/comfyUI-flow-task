@@ -474,6 +474,11 @@ function handleMessage(message) {
       addLog('执行已取消', 'warning')
     } else {
       execStatus.value = 'completed'
+      // Ensure progress bar reaches 100% — some nodes (e.g. output/preview)
+      // never emit executed/execution_cached events, leaving completedNodes < totalNodes.
+      if (taskTotalNodes.value > 0) {
+        completedNodes.value = taskTotalNodes.value
+      }
       addLog('所有节点执行完成 ✓', 'success')
     }
     disconnectWs()

@@ -66,6 +66,7 @@ import { ElMessage } from 'element-plus'
 
 import { fetchComfyuiPortStatus } from '../api/settings'
 import { isDuplicateRequestError } from '../api/http'
+import { formatTimeShort as formatTime } from '../utils/datetime'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -127,11 +128,6 @@ function levelClass(level) {
   if (level === 'queued') return 'level-queued'
   if (level === 'overloaded') return 'level-overloaded'
   return 'level-unreachable'
-}
-
-function formatTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleTimeString()
 }
 
 async function refreshStatus() {

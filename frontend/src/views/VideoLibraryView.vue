@@ -1,0 +1,780 @@
+<template>
+  <div class="vl-page">
+    <!-- ── Header ── -->
+    <div class="vl-header">
+      <h1 class="vl-title">视频库</h1>
+      <el-button type="primary" class="vl-add-btn" @click="$router.push('/dashboard/video-library/new')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        添加视频
+      </el-button>
+    </div>
+
+    <!-- ── Stats row ── -->
+    <div class="vl-stats">
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label">总视频数</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.75"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z" fill="#6366f1" stroke="none"/></svg>
+        </div>
+        <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-sub">
+          <span class="stat-green">+{{ stats.recent_count }}</span> 本周新增
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label">YOUTUBE</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#ef4444"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.95-1.97C18.88 4 12 4 12 4s-6.88 0-8.59.45A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58 2.78 2.78 0 0 0 1.95 1.97C5.12 20 12 20 12 20s6.88 0 8.59-.45a2.78 2.78 0 0 0 1.95-1.97A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill="white"/></svg>
+        </div>
+        <div class="stat-value">{{ stats.youtube_count }}</div>
+        <div class="stat-sub">YouTube 视频</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label">TIKTOK</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#000"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.69a8.18 8.18 0 0 0 4.78 1.52V6.76a4.86 4.86 0 0 1-1.01-.07z"/></svg>
+        </div>
+        <div class="stat-value">{{ stats.tiktok_count }}</div>
+        <div class="stat-sub">TikTok 视频</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label">本周新增</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.75"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <div class="stat-value">{{ stats.recent_count }}</div>
+        <div class="stat-sub">最近 7 天</div>
+      </div>
+    </div>
+
+    <!-- ── Card grid ── -->
+    <div v-loading="loading" class="vl-grid">
+      <div v-for="item in items" :key="item.id" class="vc" @click="goToDetail(item)">
+        <!-- Thumbnail -->
+        <div class="vc-thumb" @click.stop="openPlayer(item)">
+          <img
+            v-if="item.thumbnail_url"
+            :src="item.thumbnail_url"
+            class="vc-thumb-img"
+            :alt="item.video_title"
+          />
+          <div v-else class="vc-thumb-placeholder" :style="thumbGradient(item.platform)">
+            <span class="vc-platform-icon">{{ platformEmoji(item.platform) }}</span>
+          </div>
+          <div class="vc-thumb-overlay">
+            <div class="vc-play-btn">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+          </div>
+          <div class="vc-badge">{{ platformShort(item.platform) }}</div>
+        </div>
+
+        <!-- Body -->
+        <div class="vc-body">
+          <div class="vc-title" :title="item.video_title">{{ item.video_title || '(无标题)' }}</div>
+          <div class="vc-blogger">
+            <span class="vc-at">@{{ item.blogger_name || '未知博主' }}</span>
+            <span v-if="item.view_count != null" class="vc-views">· {{ formatCount(item.view_count) }} 次播放</span>
+          </div>
+
+          <!-- Download status bar -->
+          <div v-if="item.download_status === 'downloading'" class="vc-dl-status vc-dl-ing">
+            <span class="vc-dl-spin"></span> 下载上传中...
+          </div>
+          <div v-else-if="item.download_status === 'done'" class="vc-dl-status vc-dl-done">
+            ✓ 已上传可播放
+          </div>
+          <div v-else-if="item.download_status === 'failed'" class="vc-dl-status vc-dl-fail">
+            ✗ 下载失败
+          </div>
+
+          <div class="vc-footer">
+            <span class="vc-date">{{ formatDate(item.publish_date || item.created_at) }}</span>
+            <div class="vc-actions">
+              <button
+                v-if="!item.local_video_url && item.download_status !== 'downloading'"
+                class="vc-btn vc-btn-dl"
+                :class="{ loading: downloading === item.id }"
+                @click.stop="handleDownload(item)"
+              >{{ item.download_status === 'failed' ? '重试上传' : '下载上传' }}</button>
+              <button
+                class="vc-btn vc-btn-del"
+                :class="{ loading: deleting === item.id }"
+                @click.stop="handleDelete(item)"
+              >删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add new card -->
+      <div class="vc vc-add" @click="$router.push('/dashboard/video-library/new')">
+        <div class="vc-add-inner">
+          <div class="vc-add-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </div>
+          <div class="vc-add-title">添加新视频</div>
+          <div class="vc-add-sub">粘贴链接解析入库</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Empty ── -->
+    <el-empty v-if="!loading && items.length === 0" description="视频库为空，点击「添加视频」开始" :image-size="80" />
+
+    <!-- ── Footer ── -->
+    <div v-if="total > 0" class="vl-footer">
+      <span class="vl-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+      <div class="vl-pagination">
+        <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
+        <button class="pg-btn" :disabled="endIdx >= total" @click="goPage(page + 1)">下一页 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Video player dialog ── -->
+  <el-dialog
+    v-model="playerVisible"
+    :title="playerItem?.video_title || '视频播放'"
+    width="800px"
+    align-center
+    destroy-on-close
+  >
+    <div class="player-wrap">
+      <video
+        v-if="playerItem?.local_video_url || playerItem?.video_url"
+        :src="playerItem.local_video_url || playerItem.video_url"
+        controls
+        autoplay
+        class="player-video"
+      />
+      <div v-else class="player-nourl">
+        <el-empty description="暂无可播放地址，请先点击「下载上传」" :image-size="80" />
+        <el-link :href="playerItem?.source_url" target="_blank" type="primary">前往原始链接观看</el-link>
+      </div>
+    </div>
+    <div v-if="playerItem" class="player-meta">
+      <span>@{{ playerItem.blogger_name || '-' }}</span>
+      <el-divider direction="vertical" />
+      <span>{{ platformShort(playerItem.platform) }}</span>
+      <el-divider direction="vertical" />
+      <span v-if="playerItem.view_count != null">{{ formatCount(playerItem.view_count) }} 次播放</span>
+    </div>
+  </el-dialog>
+</template>
+
+<script setup>
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource } from '../api/video_sources'
+import { isDuplicateRequestError } from '../api/http'
+
+const router = useRouter()
+
+const loading = ref(false)
+const deleting = ref(null)
+const downloading = ref(null)
+const items = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = 20
+const stats = ref({ total: 0, youtube_count: 0, tiktok_count: 0, recent_count: 0 })
+const playerVisible = ref(false)
+const playerItem = ref(null)
+let pollTimer = null
+
+const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize + 1)
+const endIdx = computed(() => Math.min(page.value * pageSize, total.value))
+
+const PLATFORM_COLORS = {
+  youtube: 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
+  tiktok: 'linear-gradient(135deg, #010101 0%, #69c9d0 100%)',
+}
+const PLATFORM_EMOJIS = { youtube: '▶', tiktok: '♪' }
+const PLATFORM_SHORTS = { youtube: 'YouTube', tiktok: 'TikTok' }
+const DEFAULT_GRAD = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+
+function thumbGradient(platform) {
+  return { background: PLATFORM_COLORS[platform] || DEFAULT_GRAD }
+}
+function platformEmoji(p) { return PLATFORM_EMOJIS[p] || '🎬' }
+function platformShort(p) { return PLATFORM_SHORTS[p] || (p || '其他') }
+
+function formatCount(n) {
+  if (n == null) return '-'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+function formatDate(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+async function loadStats() {
+  try {
+    stats.value = await fetchVideoSourceStats()
+  } catch { /* ignore */ }
+}
+
+async function loadData(silent = false) {
+  if (!silent) loading.value = true
+  try {
+    const data = await fetchVideoSources({ page: page.value, page_size: pageSize })
+    items.value = data.items || []
+    total.value = data.total || 0
+    schedulePollIfNeeded()
+  } catch (err) {
+    if (isDuplicateRequestError(err)) return
+    if (!silent) ElMessage.error(err?.response?.data?.detail || '加载失败')
+  } finally {
+    if (!silent) loading.value = false
+  }
+}
+
+function schedulePollIfNeeded() {
+  clearTimeout(pollTimer)
+  const hasDownloading = items.value.some(i => i.download_status === 'downloading')
+  if (hasDownloading) {
+    pollTimer = setTimeout(() => loadData(true), 3000)
+  }
+}
+
+function goPage(p) {
+  page.value = p
+  loadData()
+}
+
+function openPlayer(item) {
+  playerItem.value = item
+  playerVisible.value = true
+}
+
+function goToDetail(item) {
+  router.push(`/dashboard/video-library/${item.id}`)
+}
+
+async function handleDownload(item) {
+  downloading.value = item.id
+  // Optimistically update local state
+  item.download_status = 'downloading'
+  try {
+    await downloadVideoSource(item.id)
+    ElMessage.success('已开始下载，稍后自动更新状态')
+    schedulePollIfNeeded()
+  } catch (err) {
+    item.download_status = null
+    ElMessage.error(err?.response?.data?.detail || '启动下载失败')
+  } finally {
+    downloading.value = null
+  }
+}
+
+async function handleDelete(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除视频「${item.video_title || '无标题'}」？此操作不可恢复。`,
+      '删除确认',
+      {
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        customClass: 'vc-delete-confirm',
+        confirmButtonClass: 'el-button--danger',
+      }
+    )
+  } catch { return }
+
+  deleting.value = item.id
+  try {
+    await deleteVideoSource(item.id)
+    ElMessage.success('已删除')
+    await Promise.all([loadData(), loadStats()])
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '删除失败')
+  } finally {
+    deleting.value = null
+  }
+}
+
+onMounted(() => {
+  loadStats()
+  loadData()
+})
+
+onUnmounted(() => {
+  clearTimeout(pollTimer)
+})
+</script>
+
+<style scoped>
+/* ── Page layout ── */
+.vl-page {
+  padding: 28px 32px;
+  min-height: 100%;
+  animation: rise 0.3s ease;
+}
+
+.vl-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 28px;
+}
+
+.vl-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+
+.vl-add-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border: none;
+}
+
+/* ── Stats ── */
+.vl-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+}
+
+.stat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.stat-value {
+  font-size: 32px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1;
+  margin-bottom: 6px;
+  letter-spacing: -0.03em;
+}
+
+.stat-sub {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.stat-green {
+  color: #10b981;
+  font-weight: 600;
+}
+
+/* ── Card grid ── */
+.vl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+/* ── Video card ── */
+.vc {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  transition: box-shadow 0.2s, transform 0.2s;
+  cursor: pointer;
+}
+
+.vc:hover {
+  box-shadow: 0 8px 24px rgba(0,0,0,.1);
+  transform: translateY(-2px);
+}
+
+/* Thumbnail */
+.vc-thumb {
+  position: relative;
+  aspect-ratio: 16/9;
+  cursor: pointer;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.vc-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s;
+}
+
+.vc:hover .vc-thumb-img {
+  transform: scale(1.04);
+}
+
+.vc-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vc-platform-icon {
+  font-size: 36px;
+  opacity: 0.5;
+}
+
+.vc-thumb-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.vc:hover .vc-thumb-overlay {
+  background: rgba(0,0,0,0.35);
+}
+
+.vc-play-btn {
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.2s, transform 0.2s;
+  background: rgba(255,255,255,0.15);
+  border-radius: 50%;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.vc:hover .vc-play-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.vc-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+  letter-spacing: .03em;
+}
+
+/* Card body */
+.vc-body {
+  padding: 14px 16px 12px;
+}
+
+.vc-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  min-height: 2.8em;
+}
+
+.vc-blogger {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vc-at {
+  font-weight: 600;
+  color: #475569;
+}
+
+.vc-views {
+  color: #94a3b8;
+}
+
+.vc-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.vc-date {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.vc-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.vc-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.vc-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.vc-btn-del {
+  border-color: #fecaca;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.vc-btn-del:hover {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.vc-btn-dl:hover {
+  border-color: #0ea5e9;
+  color: #0ea5e9;
+  background: #f0f9ff;
+}
+
+/* Download status bar */
+.vc-dl-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vc-dl-ing {
+  background: #fef9c3;
+  color: #a16207;
+}
+
+.vc-dl-done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.vc-dl-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.vc-dl-spin {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #a16207;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.vc-btn.loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ── Add new card ── */
+.vc-add {
+  border: 2px dashed #c7d2fe;
+  background: #fafbff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.vc-add:hover {
+  border-color: #6366f1;
+  background: #eef2ff;
+  transform: none;
+  box-shadow: none;
+}
+
+.vc-add-inner {
+  text-align: center;
+}
+
+.vc-add-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #eef2ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+  transition: background 0.2s;
+}
+
+.vc-add:hover .vc-add-icon {
+  background: #c7d2fe;
+}
+
+.vc-add-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #3730a3;
+  margin-bottom: 4px;
+}
+
+.vc-add-sub {
+  font-size: 13px;
+  color: #818cf8;
+}
+
+/* ── Footer ── */
+.vl-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.vl-count-text {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.vl-pagination {
+  display: flex;
+  gap: 8px;
+}
+
+.pg-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pg-btn:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.pg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Player dialog ── */
+.player-wrap {
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-video {
+  width: 100%;
+  max-height: 460px;
+  display: block;
+}
+
+.player-nourl {
+  padding: 40px;
+  text-align: center;
+  background: #fff;
+  width: 100%;
+}
+
+.player-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #64748b;
+  margin-top: 14px;
+  padding: 0 2px;
+}
+
+/* ── Animation ── */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .vl-stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .vl-page { padding: 16px; }
+  .vl-stats { grid-template-columns: repeat(2, 1fr); }
+  .vl-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+}
+</style>

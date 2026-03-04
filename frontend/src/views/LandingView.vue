@@ -418,6 +418,7 @@ function handleMouseMove(e) {
 }
 
 function handleClick(e) {
+  if (!characterRef.value) return
   const rect = characterRef.value.getBoundingClientRect()
   const charCenterX = rect.left + rect.width / 2
   const charCenterY = rect.top + rect.height / 2

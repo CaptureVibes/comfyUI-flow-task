@@ -21,3 +21,5 @@ frontend/.env
 
 # IDE
 .idea/
+
+*.log

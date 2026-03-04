@@ -1,4 +1,5 @@
 import http from './http'
+import { TOKEN_KEY } from '../utils/constants.js'
 
 export async function uploadWorkflow(file) {
   const formData = new FormData()
@@ -17,8 +18,22 @@ export async function cancelExecutionTask(taskId) {
   return data
 }
 
-export function createExecutionWs(taskId) {
+/**
+ * 创建 WebSocket 连接
+ * @param {string} taskId
+ * @param {{ onError?: (event: Event) => void, onClose?: (event: CloseEvent) => void }} [options]
+ * @returns {WebSocket}
+ */
+export function createExecutionWs(taskId, options = {}) {
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
   const wsBase = apiBase.replace(/^http/, 'ws')
-  return new WebSocket(`${wsBase}/execution/ws/${taskId}`)
+  const token = localStorage.getItem(TOKEN_KEY) || ''
+  const ws = new WebSocket(`${wsBase}/execution/ws/${taskId}?token=${encodeURIComponent(token)}`)
+  if (options.onError) {
+    ws.addEventListener('error', options.onError)
+  }
+  if (options.onClose) {
+    ws.addEventListener('close', options.onClose)
+  }
+  return ws
 }

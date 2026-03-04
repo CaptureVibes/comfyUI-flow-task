@@ -219,6 +219,7 @@ import { cancelExecutionTask, executeTask } from '../api/execution'
 import { isDuplicateRequestError } from '../api/http'
 import { renderMarkdown } from '../utils/markdown'
 import { taskStatusType } from '../utils/status'
+import { formatTime } from '../utils/datetime'
 
 const route = useRoute()
 const router = useRouter()
@@ -267,11 +268,6 @@ const parsedExecutionState = computed(() => {
   }
   return null
 })
-
-function formatTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
-}
 
 function formatDate(value) {
   if (!value) return '-'

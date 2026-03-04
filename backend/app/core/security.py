@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import json
 import time
+import uuid
+from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,6 +14,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.config import settings
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+@dataclass
+class TokenData:
+    """Decoded token payload — no DB lookup needed."""
+    username: str
+    user_id: uuid.UUID
+    is_admin: bool
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -23,9 +33,11 @@ def _b64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + padding)
 
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, user_id: uuid.UUID, is_admin: bool) -> str:
     payload = {
         "sub": subject,
+        "uid": str(user_id),
+        "adm": is_admin,
         "exp": int(time.time()) + settings.auth_token_expire_minutes * 60,
     }
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -41,7 +53,8 @@ def create_access_token(subject: str) -> str:
     return f"{payload_part}.{sig_part}"
 
 
-def verify_access_token(token: str) -> str:
+def verify_access_token(token: str) -> TokenData:
+    """Verify token signature and expiry, return TokenData (no DB query)."""
     parts = token.split(".")
     if len(parts) != 2:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
@@ -69,17 +82,30 @@ def verify_access_token(token: str) -> str:
     if not isinstance(sub, str) or not sub:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
 
-    return sub
+    uid_raw = payload.get("uid")
+    try:
+        user_id = uuid.UUID(uid_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token user_id") from exc
+
+    is_admin = bool(payload.get("adm", False))
+
+    return TokenData(username=sub, user_id=user_id, is_admin=is_admin)
 
 
-async def require_current_user(
+def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> str:
+) -> TokenData:
+    """
+    Validate Bearer token and return TokenData — no DB query.
+    Use this as a FastAPI dependency wherever you need the current user.
+    """
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+    return verify_access_token(credentials.credentials)
 
-    username = verify_access_token(credentials.credentials)
-    if username != settings.admin_username:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user")
 
-    return username
+# ---------------------------------------------------------------------------
+# Back-compat alias — remove once all callers are migrated
+# ---------------------------------------------------------------------------
+require_current_user = get_current_user

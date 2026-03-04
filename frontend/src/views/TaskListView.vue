@@ -206,6 +206,7 @@ import { cancelExecutionTask, executeTask } from '../api/execution'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchComfyuiSettings } from '../api/settings'
 import { TASK_STATUS_OPTIONS, taskStatusType } from '../utils/status'
+import { formatTime, defaultScheduleAt, scheduleAtFromLegacyTime } from '../utils/datetime'
 
 const tableRef = ref(null)
 const expandWidth = ref('100%')
@@ -243,11 +244,6 @@ const pagination = reactive({
   total: 0
 })
 
-function formatTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
-}
-
 function formatSchedule(row) {
   const when = row.schedule_at ? formatTime(row.schedule_at) : (row.schedule_time || '--')
   if (row.schedule_auto_dispatch) {
@@ -257,24 +253,6 @@ function formatSchedule(row) {
     return `${when} :${row.schedule_port}`
   }
   return `${when} 未选端口`
-}
-
-function defaultScheduleAt() {
-  const value = new Date()
-  value.setSeconds(0, 0)
-  value.setMinutes(value.getMinutes() + 5)
-  return value
-}
-
-function scheduleAtFromLegacyTime(value) {
-  const raw = String(value || '').trim()
-  if (!raw) return null
-  const parts = raw.split(':').map((item) => Number(item))
-  if (parts.length !== 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return null
-  const dt = new Date()
-  dt.setSeconds(0, 0)
-  dt.setHours(parts[0], parts[1], 0, 0)
-  return dt
 }
 
 async function loadScheduleSettings() {

@@ -191,6 +191,8 @@ import { fetchComfyuiSettings } from '../api/settings'
 import { createTask, fetchTask, patchTask, uploadImageByFile } from '../api/tasks'
 import { fetchTaskTemplate, fetchTaskTemplates } from '../api/templates'
 import { renderMarkdown } from '../utils/markdown'
+import { createSubtask } from '../utils/subtask'
+import { defaultScheduleAt, scheduleAtFromLegacyTime } from '../utils/datetime'
 
 const route = useRoute()
 const router = useRouter()
@@ -215,18 +217,6 @@ const templateOptions = ref([])
 const selectedTemplateId = ref('')
 
 const isEdit = computed(() => Boolean(route.params.id))
-
-function createSubtask() {
-  return {
-    platform: 'instagram',
-    account_name: '',
-    account_no: '',
-    publish_at: null,
-    prompts: Array.from({ length: 10 }, () => ''),
-    photos: [],
-    extra: {}
-  }
-}
 
 function addSubtask() {
   form.subtasks.push(createSubtask())
@@ -368,24 +358,6 @@ function parseDateOnly(value) {
   const [y, m, d] = datePart.split('-').map((v) => Number(v))
   if (!y || !m || !d) return new Date(value)
   return new Date(y, m - 1, d)
-}
-
-function defaultScheduleAt() {
-  const base = new Date()
-  base.setSeconds(0, 0)
-  base.setMinutes(base.getMinutes() + 5)
-  return base
-}
-
-function scheduleAtFromLegacyTime(value) {
-  const raw = String(value || '').trim()
-  if (!raw) return null
-  const parts = raw.split(':').map((item) => Number(item))
-  if (parts.length !== 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return null
-  const dt = new Date()
-  dt.setSeconds(0, 0)
-  dt.setHours(parts[0], parts[1], 0, 0)
-  return dt
 }
 
 function handleScheduleEnabledChange(enabled) {

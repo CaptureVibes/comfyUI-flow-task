@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "sqlite+aiosqlite:///./task_manager.db"
     admin_username: str = "admin"
-    admin_password: str = "admin666"
-    auth_secret: str = "change-me-in-production"
+    admin_password: str  # 必须通过环境变量 ADMIN_PASSWORD 设置，无默认值
+    auth_secret: str  # 必须通过环境变量 AUTH_SECRET 设置，无默认值
     auth_token_expire_minutes: int = 1440
     upload_api_base_url: str = "http://api.test-hot-product.echooo.link"
     log_level: str = "INFO"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     auto_create_tables: bool = True
 
     comfyui_api_base_url: str = "http://34.59.208.230:8189"
+    video_image_upload_api_url: str = "http://api.hot-products.echooo.link/api/v1/video/upload-image"
 
     @property
     def max_image_size_bytes(self) -> int:
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
     @property
     def upload_api_url(self) -> str:
         return f"{self.upload_api_base_url.rstrip('/')}/api/v1/video/upload-image"
+
+    @property
+    def video_upload_api_url(self) -> str:
+        return f"{self.upload_api_base_url.rstrip('/')}/api/v1/video/upload-video"
 
     @property
     def comfyui_api_url(self) -> str:
@@ -44,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def video_image_upload_url(self) -> str:
+        return self.video_image_upload_api_url
 
 
 settings = Settings()

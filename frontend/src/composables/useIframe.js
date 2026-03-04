@@ -13,7 +13,13 @@ const ALLOWED_ORIGINS = [
 ]
 
 function isAllowedOrigin(origin) {
-  return ALLOWED_ORIGINS.some(allowed => origin.startsWith(allowed))
+  return ALLOWED_ORIGINS.some(allowed => {
+    try {
+      return new URL(origin).origin === new URL(allowed).origin
+    } catch {
+      return false
+    }
+  })
 }
 
 /**

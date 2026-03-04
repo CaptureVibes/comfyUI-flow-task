@@ -15,3 +15,14 @@ class PhotoSourceType(StrEnum):
     img_url = "img_url"
     upload = "upload"
     paste = "paste"
+
+
+class VideoAIProcessStatus(StrEnum):
+    pending = "pending"
+    understanding = "understanding"
+    extracting = "extracting"
+    downloading = "downloading"
+    uploading = "uploading"
+    success = "success"
+    fail = "fail"
+    paused = "paused"

@@ -13,7 +13,9 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     username: str
+    is_admin: bool = False
 
 
 class MeResponse(BaseModel):
     username: str
+    is_admin: bool = False

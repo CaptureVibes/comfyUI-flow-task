@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
 from app.models.enums import TaskStatus
 from app.schemas.task import (
@@ -32,8 +33,13 @@ logger = logging.getLogger("app.tasks")
 
 
 @router.post("", response_model=TaskRead)
-async def create_task_api(payload: TaskCreate, session: AsyncSession = Depends(get_db)) -> TaskRead:
-    task = await create_task(session, payload)
+async def create_task_api(
+    payload: TaskCreate,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> TaskRead:
+    owner_id = None if current_user.is_admin else current_user.user_id
+    task = await create_task(session, payload, owner_id=owner_id)
     return TaskRead.model_validate(task)
 
 
@@ -43,23 +49,21 @@ async def list_tasks_api(
     status: TaskStatus | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> TaskListResponse:
+    owner_id = None if current_user.is_admin else current_user.user_id
     items, total = await list_tasks(
         session,
         task_id=task_id,
         status_filter=status,
         page=page,
         page_size=page_size,
+        owner_id=owner_id,
     )
     logger.info(
-        "list_tasks filters: task_id=%s status=%s page=%s page_size=%s -> items=%s total=%s",
-        task_id,
-        status,
-        page,
-        page_size,
-        len(items),
-        total,
+        "list_tasks user=%s is_admin=%s filters: task_id=%s status=%s page=%s -> items=%s total=%s",
+        current_user.username, current_user.is_admin, task_id, status, page, len(items), total,
     )
     return TaskListResponse(
         items=[TaskListItem.model_validate(item) for item in items],
@@ -70,8 +74,13 @@ async def list_tasks_api(
 
 
 @router.get("/{task_id}", response_model=TaskRead)
-async def get_task_api(task_id: UUID, session: AsyncSession = Depends(get_db)) -> TaskRead:
-    task = await get_task_or_404(session, task_id)
+async def get_task_api(
+    task_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> TaskRead:
+    owner_id = None if current_user.is_admin else current_user.user_id
+    task = await get_task_or_404(session, task_id, owner_id=owner_id)
     return TaskRead.model_validate(task)
 
 
@@ -79,9 +88,11 @@ async def get_task_api(task_id: UUID, session: AsyncSession = Depends(get_db)) -
 async def patch_task_api(
     task_id: UUID,
     payload: TaskPatch,
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> TaskRead:
-    task = await get_task_or_404(session, task_id)
+    owner_id = None if current_user.is_admin else current_user.user_id
+    task = await get_task_or_404(session, task_id, owner_id=owner_id)
     updated = await patch_task(session, task, payload)
     return TaskRead.model_validate(updated)
 
@@ -90,9 +101,11 @@ async def patch_task_api(
 async def patch_task_status_api(
     task_id: UUID,
     payload: TaskStatusPatchRequest,
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> TaskStatusPatchResponse:
-    task = await get_task_or_404(session, task_id)
+    owner_id = None if current_user.is_admin else current_user.user_id
+    task = await get_task_or_404(session, task_id, owner_id=owner_id)
     updated = await patch_task_status(session, task=task, target=payload.status, message=payload.message)
     return TaskStatusPatchResponse(
         id=updated.id,
@@ -102,6 +115,11 @@ async def patch_task_status_api(
 
 
 @router.delete("/{task_id}", response_model=TaskDeleteResponse)
-async def delete_task_api(task_id: UUID, session: AsyncSession = Depends(get_db)) -> TaskDeleteResponse:
-    deleted_subtask_count = await delete_task(session, task_id)
+async def delete_task_api(
+    task_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> TaskDeleteResponse:
+    owner_id = None if current_user.is_admin else current_user.user_id
+    deleted_subtask_count = await delete_task(session, task_id, owner_id=owner_id)
     return TaskDeleteResponse(id=task_id, deleted_subtask_count=deleted_subtask_count)

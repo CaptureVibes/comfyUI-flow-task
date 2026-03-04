@@ -8,11 +8,14 @@
 
 <script setup>
 import { onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useIframe, sendRouteChange } from './composables/useIframe'
 import { setIframeToken } from './api/http'
+import { useAuth } from './composables/useAuth'
 
 const route = useRoute()
+const router = useRouter()
+const { setToken } = useAuth()
 
 // iframe 通信设置
 useIframe({
@@ -21,13 +24,13 @@ useIframe({
     console.log('[Iframe] Received token from parent')
     setIframeToken(token)
     // 同时保存到 localStorage，防止页面刷新后丢失
-    localStorage.setItem('task_manager_token', token)
+    setToken(token)
   },
   // 响应父系统的导航请求
   onNavigate: (path) => {
     console.log('[Iframe] Parent requested navigation to:', path)
     if (route.path !== path) {
-      route.push(path)
+      router.push(path)
     }
   }
 })

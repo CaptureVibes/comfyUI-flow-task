@@ -92,6 +92,7 @@
 <script setup>
 import { h } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuth } from '../composables/useAuth'
 
 defineProps({
   collapsed: Boolean
@@ -100,6 +101,7 @@ defineProps({
 defineEmits(['toggle'])
 
 const route = useRoute()
+const { isAdmin } = useAuth()
 
 /* ── SVG Icon components ── */
 const IconList = () => h('svg', {
@@ -147,12 +149,73 @@ const IconComfyUI = () => h('svg', {
   h('line', { x1: 12, y1: 11.5, x2: 12, y2: 16 })
 ])
 
-const menuItems = [
+const IconUsers = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('path', { d: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2' }),
+  h('circle', { cx: 9, cy: 7, r: 4 }),
+  h('path', { d: 'M23 21v-2a4 4 0 0 0-3-3.87' }),
+  h('path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' })
+])
+
+// 个人资料图标 (单人轮廓)
+const IconProfile = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('path', { d: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2' }),
+  h('circle', { cx: 12, cy: 7, r: 4 })
+])
+
+// 视频库图标 (film/play)
+const IconVideoLibrary = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('rect', { x: 2, y: 4, width: 20, height: 16, rx: 2 }),
+  h('path', { d: 'M10 9l5 3-5 3V9z', fill: 'currentColor', stroke: 'none', opacity: 0.7 }),
+  h('line', { x1: 2, y1: 8, x2: 22, y2: 8 }),
+  h('line', { x1: 2, y1: 16, x2: 22, y2: 16 })
+])
+
+// 视频AI模板图标 (sparkle/wand)
+const IconVideoAI = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('path', { d: 'M12 2l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5z' }),
+  h('path', { d: 'M5 14l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z' })
+])
+
+// 账号配置图标 (id card)
+const IconAccount = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('rect', { x: 2, y: 5, width: 20, height: 14, rx: 2 }),
+  h('circle', { cx: 8, cy: 12, r: 2.5 }),
+  h('path', { d: 'M14 9h5M14 12h4M14 15h3' })
+])
+
+const baseMenuItems = [
   { path: '/dashboard', name: 'tasks', label: '任务列表', iconComponent: IconList },
   { path: '/dashboard/templates', name: 'templates', label: '工作流模板', iconComponent: IconFlow },
   { path: '/dashboard/comfyui', name: 'comfyui', label: 'ComfyUI 编辑器', iconComponent: IconComfyUI },
+  { path: '/dashboard/video-library', name: 'video-library', label: '视频库', iconComponent: IconVideoLibrary },
+  { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: '视频AI模板', iconComponent: IconVideoAI },
+  { path: '/dashboard/accounts', name: 'accounts', label: '账号配置', iconComponent: IconAccount },
   { path: '/dashboard/settings', name: 'settings', label: '设置', iconComponent: IconSetting }
 ]
+
+const menuItems = isAdmin()
+  ? [...baseMenuItems, { path: '/dashboard/users', name: 'users', label: '用户管理', iconComponent: IconUsers }]
+  : baseMenuItems
 
 function isActive(name) {
   const routeName = route.name || ''
