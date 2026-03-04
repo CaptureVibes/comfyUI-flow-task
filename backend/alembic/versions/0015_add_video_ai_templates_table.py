@@ -23,11 +23,14 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
-    # Create enum type if not exists
-    existing_enums = {e["name"] for e in inspector.get_enums()} if hasattr(inspector, "get_enums") else set()
-    if _enum_name not in existing_enums:
-        process_status_enum = sa.Enum(*_enum_values, name=_enum_name)
-        process_status_enum.create(bind)
+    # Create enum type if not exists (use raw SQL to avoid SQLAlchemy event race)
+    values_sql = ", ".join(f"'{v}'" for v in _enum_values)
+    bind.execute(sa.text(
+        f"DO $$ BEGIN "
+        f"CREATE TYPE {_enum_name} AS ENUM ({values_sql}); "
+        f"EXCEPTION WHEN duplicate_object THEN NULL; "
+        f"END $$"
+    ))
 
     existing_tables = set(inspector.get_table_names())
     if "video_ai_templates" in existing_tables:
