@@ -2,7 +2,6 @@
 GCS JSON 文件上传脚本
 """
 
-import json
 from pathlib import Path
 
 from google.cloud import storage
@@ -36,7 +35,7 @@ def main():
 
 
 def verify(bucket):
-    """验证文件是否上传成功"""
+    """下载视频文件到本地"""
     blob = bucket.blob("jimeng/results/2026-03-03/001/video.mp4")
 
     if not blob.exists():
@@ -48,10 +47,10 @@ def verify(bucket):
     print(f"🕒 更新时间: {blob.updated}")
     print(f"🔗 公开 URL: {blob.public_url}")
 
-    # 下载并打印内容
-    content = blob.download_as_text()
-    data = json.loads(content)
-    print(f"📄 内容预览: {json.dumps(data, indent=2, ensure_ascii=False)}...")
+    # 下载视频到本地
+    local_path = Path(__file__).parent / "downloaded_video.mp4"
+    blob.download_to_filename(str(local_path))
+    print(f"✅ 下载成功: {local_path}")
 
 
 if __name__ == "__main__":
