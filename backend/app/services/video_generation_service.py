@@ -112,7 +112,7 @@ class VideoGenerationService:
 
         payload = [
             {
-                "prompt": job.prompt.replace("\n", " ").replace("\r", "").strip() if job.prompt else "",
+                "prompt": (job.prompt.replace("\n", " ").replace("\r", "").strip() if job.prompt else "")[:1990],
                 "image": _first_shot_image(job.shots),
                 "duration": job.duration,
             }
