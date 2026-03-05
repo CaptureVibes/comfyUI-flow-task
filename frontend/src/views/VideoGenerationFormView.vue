@@ -330,8 +330,18 @@ async function loadData() {
   loading.value = true
   try {
     account.value = await fetchAccount(accountId)
-    const templatesRes = await fetchVideoAITemplates({ page: 1, page_size: 100 })
-    templateList.value = templatesRes.items || []
+    // Fetch all template pages so all bloggers appear in the dropdown
+    const allTemplates = []
+    let page = 1
+    const pageSize = 100
+    while (true) {
+      const res = await fetchVideoAITemplates({ page, page_size: pageSize })
+      const items = res.items || []
+      allTemplates.push(...items)
+      if (allTemplates.length >= (res.total || 0) || items.length < pageSize) break
+      page++
+    }
+    templateList.value = allTemplates
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载初始数据失败')
   } finally {
