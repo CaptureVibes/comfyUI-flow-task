@@ -117,7 +117,12 @@
             </div>
             
             <div class="vg-preview-video">
-              <div class="vg-preview-label">原始视频</div>
+              <div class="vg-preview-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>原始视频</span>
+                <span v-if="selectedTemplate.video_source?.duration" style="font-size: 12px; color: #64748b; font-weight: normal; margin-right: 8px;">
+                  时长: {{ formatDuration(selectedTemplate.video_source.duration) }}
+                </span>
+              </div>
               <video 
                 v-if="selectedTemplate.video_source?.local_video_url" 
                 :src="selectedTemplate.video_source.local_video_url" 
@@ -235,14 +240,35 @@ function resetPrompt() {
   finalPrompt.value = `${style}${appearance}${analysis}`
 }
 
+function formatDuration(seconds) {
+  if (!seconds) return '00s'
+  let s = Math.floor(seconds)
+  if (s > 15) s = 15
+  return `${s.toString().padStart(2, '0')}s`
+}
+
 async function handleGenerate() {
   if (generating.value || !isReady.value) return
   generating.value = true
   try {
+    let image = ''
+    let duration = '00s'
+    let shots = []
+    if (selectedTemplate.value?.video_source) {
+      image = selectedTemplate.value.video_source.thumbnail_url || selectedTemplate.value.video_source.cover_url || ''
+      duration = formatDuration(selectedTemplate.value.video_source.duration)
+    }
+    if (selectedTemplate.value?.extracted_shots) {
+      shots = selectedTemplate.value.extracted_shots
+    }
+
     const payload = {
       account_id: accountId,
       template_id: selectedTemplateId.value,
-      final_prompt: finalPrompt.value
+      final_prompt: finalPrompt.value,
+      image,
+      duration,
+      shots
     }
     await createVideoGeneration(payload)
     ElMessage.success('视频生成任务已进入流水线阶段！')

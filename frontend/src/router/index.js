@@ -165,6 +165,12 @@ const routes = [
         name: 'video-generate',
         component: () => import('../views/VideoGenerationFormView.vue'),
         meta: { title: '生成视频', parent: 'accounts' }
+      },
+      {
+        path: 'daily-tasks',
+        name: 'daily-tasks',
+        component: () => import('../views/DailyTasksView.vue'),
+        meta: { title: '每日生成任务' }
       }
     ]
   },

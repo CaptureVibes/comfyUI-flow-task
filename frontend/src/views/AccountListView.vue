@@ -1,12 +1,17 @@
 <template>
   <div class="al-page">
-    <!-- Header -->
     <div class="al-header">
       <h1 class="al-title">账号配置</h1>
-      <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        新建账号
-      </el-button>
+      <div style="display: flex; gap: 12px; align-items: center;">
+        <el-button class="al-tasks-btn" @click="$router.push('/dashboard/daily-tasks')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          查看每日任务
+        </el-button>
+        <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建账号
+        </el-button>
+      </div>
     </div>
 
     <!-- Card grid -->
@@ -298,6 +303,7 @@ onMounted(loadData)
   margin-bottom: 10px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.5;
@@ -461,5 +467,30 @@ onMounted(loadData)
 @media (max-width: 640px) {
   .al-page { padding: 16px; }
   .al-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+}
+
+.al-tasks-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(99,102,241,0.2) !important;
+  background: rgba(99,102,241,0.05) !important;
+  color: #4f46e5 !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.al-tasks-btn:hover {
+  background: rgba(99,102,241,0.12) !important;
+  border-color: rgba(99,102,241,0.4) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99,102,241,0.15);
+}
+
+.al-tasks-btn:active {
+  transform: translateY(1px);
 }
 </style>

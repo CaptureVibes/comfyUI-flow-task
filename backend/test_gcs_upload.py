@@ -9,12 +9,7 @@ from google.cloud import storage
 
 
 def main():
-    # 设置必需的 scopes
-    SCOPES = ["https://www.googleapis.com/auth/devstorage.full_control"]
-
-    from google.auth import default
-    credentials, _ = default(scopes=SCOPES)
-    client = storage.Client(credentials=credentials)
+    client = storage.Client("ai-agent-461123")
 
     bucket = client.bucket("decom-objects")
 
@@ -37,7 +32,7 @@ def main():
 
 def verify(bucket):
     """验证文件是否上传成功"""
-    blob = bucket.blob("jimeng/jobs/2026-03-04.json")
+    blob = bucket.blob("jimeng/jobs/2026-03-05.json")
 
     if not blob.exists():
         print("❌ 文件不存在")
@@ -52,6 +47,26 @@ def verify(bucket):
     content = blob.download_as_text()
     data = json.loads(content)
     print(f"📄 内容预览: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    # """下载视频文件到本地"""
+    # file_path  = "jimeng/results/2026-03-05/001/video.mp4"
+    # print("文件路径: ", file_path)
+    # blob = bucket.blob(file_path)
+    #
+    # if not blob.exists():
+    #     print("❌ 文件不存在")
+    #     return
+    #
+    # print(f"📦 文件存在: {blob.name}")
+    # print(f"📏 大小: {blob.size} bytes")
+    # print(f"🕒 更新时间: {blob.updated}")
+    # print(f"🔗 公开 URL: {blob.public_url}")
+    #
+    # # 下载视频到本地
+    # local_path = Path(__file__).parent / "downloaded_video.mp4"
+    # blob.download_to_filename(str(local_path))
+    # print(f"✅ 下载成功: {local_path}")
+
 
 
 if __name__ == "__main__":

@@ -20,16 +20,22 @@ router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
 def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
+    """For queries: admin sees all (None = no filter), regular user sees own only."""
     return None if current_user.is_admin else current_user.user_id
+
+
+def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID:
+    """For writes: always bind to the actual user, even if admin."""
+    return current_user.user_id
 
 
 @router.post("", response_model=AccountRead, status_code=201)
 async def create_account_endpoint(
     payload: AccountCreate,
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountRead:
-    account = await create_account(session, payload, owner_id)
+    account = await create_account(session, payload, creator_id)
     return AccountRead.model_validate(account)
 
 

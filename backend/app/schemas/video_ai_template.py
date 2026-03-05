@@ -18,6 +18,7 @@ class VideoSourceSummary(BaseModel):
     local_video_url: str | None = None
     video_url: str | None = None
     view_count: int | None = None
+    duration: int | None = None
 
     model_config = {"from_attributes": True}
 

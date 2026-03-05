@@ -99,9 +99,9 @@
         </div>
       </div>
 
-      <!-- Published videos tabs -->
+      <!-- Videos section -->
       <div class="ad-videos-section">
-        <div class="ad-section-title">发布视频</div>
+        <div class="ad-section-title">生成视频</div>
 
         <!-- Tab bar -->
         <div class="ad-tabs">
@@ -110,7 +110,7 @@
             :key="tab.key"
             class="ad-tab"
             :class="{ active: activeTab === tab.key }"
-            @click="activeTab = tab.key"
+            @click="switchTab(tab.key)"
           >
             {{ tab.label }}
             <span v-if="tabCounts[tab.key] > 0" class="ad-tab-count">{{ tabCounts[tab.key] }}</span>
@@ -118,26 +118,80 @@
         </div>
 
         <!-- Video list -->
-        <div class="ad-video-list">
-          <template v-if="filteredVideos.length">
-            <div v-for="video in filteredVideos" :key="video.id" class="ad-video-item">
-              <div class="ad-video-thumb">
-                <img v-if="video.thumbnail_url" :src="video.thumbnail_url" class="ad-video-thumb-img" />
-                <div v-else class="ad-video-thumb-placeholder">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+        <div v-loading="videosLoading" class="ad-video-list">
+          <template v-if="videos.length">
+            <div v-for="video in videos" :key="video.id" class="ad-video-item" :class="{ 'ad-video-item--reviewing': video.status === 'reviewing' }">
+              <!-- Normal row header -->
+              <div class="ad-video-row">
+                <div class="ad-video-thumb">
+                  <img v-if="video.status === 'pending_publish' || video.status === 'published'"
+                    :src="selectedThumb(video)" class="ad-video-thumb-img" />
+                  <img v-else-if="video.result_videos && video.result_videos[0]"
+                    :src="video.result_videos[0].thumbnail_url" class="ad-video-thumb-img" />
+                  <div v-else class="ad-video-thumb-placeholder">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+                  </div>
+                </div>
+                <div class="ad-video-info">
+                  <div class="ad-video-title">{{ video.prompt ? video.prompt.slice(0, 60) + (video.prompt.length > 60 ? '…' : '') : '(无描述)' }}</div>
+                  <div class="ad-video-meta">
+                    <span class="ad-video-date">{{ formatDate(video.created_at) }}</span>
+                    <span v-if="video.duration" class="ad-video-duration">{{ video.duration }}</span>
+                    <span
+                      v-if="video.template_id"
+                      class="ad-video-template-link"
+                      @click="$router.push(`/dashboard/video-ai-templates/${video.template_id}/edit`)"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      查看模板
+                    </span>
+                  </div>
+                </div>
+                <div class="ad-video-actions">
+                  <span class="ad-status-badge" :class="`ad-status-${video.status}`">
+                    {{ statusLabel(video.status) }}
+                  </span>
+                  <!-- Publish action for pending_publish -->
+                  <button
+                    v-if="video.status === 'pending_publish'"
+                    class="ad-action-btn"
+                    @click="advanceToPublished(video)"
+                  >标记已发布</button>
                 </div>
               </div>
-              <div class="ad-video-info">
-                <div class="ad-video-title">{{ video.title || '(无标题)' }}</div>
-                <div class="ad-video-meta">
-                  <span class="ad-video-platform" :class="`ad-platform-${video.platform}`">{{ platformLabel(video.platform) }}</span>
-                  <span class="ad-video-date">{{ formatDate(video.publish_at || video.created_at) }}</span>
+
+              <!-- Reviewing: pick one of 3 candidates -->
+              <div v-if="video.status === 'reviewing'" class="ad-candidates">
+                <div class="ad-candidates-label">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                  选择最佳视频，进入待发布
                 </div>
-              </div>
-              <div class="ad-video-status">
-                <span class="ad-status-badge" :class="`ad-status-${video.publish_status}`">
-                  {{ statusLabel(video.publish_status) }}
-                </span>
+                <div v-if="video.result_videos && video.result_videos.length" class="ad-candidates-grid">
+                  <div
+                    v-for="(candidate, idx) in video.result_videos"
+                    :key="idx"
+                    class="ad-candidate"
+                    :class="{ 'ad-candidate--selected': selectedCandidates[video.id] === candidate.video_url }"
+                    @click="selectCandidate(video.id, candidate.video_url)"
+                  >
+                    <div class="ad-candidate-thumb">
+                      <img v-if="candidate.thumbnail_url" :src="candidate.thumbnail_url" class="ad-candidate-img" />
+                      <div v-else class="ad-candidate-placeholder">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+                      </div>
+                      <div class="ad-candidate-check" v-if="selectedCandidates[video.id] === candidate.video_url">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                      </div>
+                    </div>
+                    <div class="ad-candidate-label">候选 {{ idx + 1 }}</div>
+                  </div>
+                </div>
+                <div v-else class="ad-candidates-empty">暂无候选视频（等待生成结果回填）</div>
+                <button
+                  class="ad-confirm-btn"
+                  :disabled="!selectedCandidates[video.id]"
+                  @click="confirmSelection(video)"
+                >确认选择，进入待发布</button>
               </div>
             </div>
           </template>
@@ -154,8 +208,9 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount } from '../api/accounts'
+import { fetchAccountGenerations, patchGenerationStatus } from '../api/video_generations'
 
 const route = useRoute()
 const router = useRouter()
@@ -163,25 +218,30 @@ const router = useRouter()
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
 
 const VIDEO_TABS = [
-  { key: 'generating', label: '生成中' },
-  { key: 'pending',    label: '待发布' },
-  { key: 'reviewing',  label: '待审核' },
-  { key: 'published',  label: '已发布' },
+  { key: 'pending',         label: '待生成' },
+  { key: 'generating',      label: '生成中' },
+  { key: 'reviewing',       label: '待审核' },
+  { key: 'pending_publish', label: '待发布' },
+  { key: 'published',       label: '已发布' },
 ]
 
 const STATUS_LABELS = {
-  generating: '生成中',
-  pending:    '待发布',
-  reviewing:  '待审核',
-  published:  '已发布',
+  pending:         '待生成',
+  generating:      '生成中',
+  reviewing:       '待审核',
+  pending_publish: '待发布',
+  published:       '已发布',
 }
 
 const loading = ref(false)
+const videosLoading = ref(false)
 const account = ref(null)
 const activeTab = ref('pending')
+const videos = ref([])
+const allVideos = ref([])
 
-// 模拟发布视频数据（后续接入真实 API）
-const publishedVideos = ref([])
+// { [videoId]: selectedVideoUrl }
+const selectedCandidates = ref({})
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
@@ -198,15 +258,21 @@ function formatDate(iso) {
 
 function statusLabel(s) { return STATUS_LABELS[s] || s }
 
-const filteredVideos = computed(() =>
-  publishedVideos.value.filter(v => v.publish_status === activeTab.value)
-)
+function selectedThumb(video) {
+  if (!video.selected_video_url || !video.result_videos) return null
+  const match = video.result_videos.find(v => v.video_url === video.selected_video_url)
+  return match?.thumbnail_url || null
+}
+
+function selectCandidate(videoId, videoUrl) {
+  selectedCandidates.value = { ...selectedCandidates.value, [videoId]: videoUrl }
+}
 
 const tabCounts = computed(() => {
   const counts = {}
   VIDEO_TABS.forEach(t => { counts[t.key] = 0 })
-  publishedVideos.value.forEach(v => {
-    if (counts[v.publish_status] !== undefined) counts[v.publish_status]++
+  allVideos.value.forEach(v => {
+    if (counts[v.status] !== undefined) counts[v.status]++
   })
   return counts
 })
@@ -219,11 +285,68 @@ async function loadAccount() {
   loading.value = true
   try {
     account.value = await fetchAccount(route.params.id)
+    await loadAllVideos()
+    await loadVideos()
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载失败')
     router.push('/dashboard/accounts')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAllVideos() {
+  allVideos.value = await fetchAccountGenerations(route.params.id)
+}
+
+async function loadVideos() {
+  videosLoading.value = true
+  try {
+    videos.value = await fetchAccountGenerations(route.params.id, activeTab.value)
+  } catch (err) {
+    ElMessage.error('加载视频列表失败')
+  } finally {
+    videosLoading.value = false
+  }
+}
+
+async function switchTab(key) {
+  activeTab.value = key
+  await loadVideos()
+}
+
+async function confirmSelection(video) {
+  const chosenUrl = selectedCandidates.value[video.id]
+  if (!chosenUrl) return
+  try {
+    await patchGenerationStatus(video.id, {
+      status: 'pending_publish',
+      selected_video_url: chosenUrl,
+    })
+    ElMessage.success('已选择视频，进入待发布')
+    delete selectedCandidates.value[video.id]
+    await loadAllVideos()
+    await loadVideos()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败')
+  }
+}
+
+async function advanceToPublished(video) {
+  try {
+    await ElMessageBox.confirm('确定将该视频标记为「已发布」吗？', '状态更新', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      customClass: 'vc-confirm-dialog',
+    })
+    await patchGenerationStatus(video.id, { status: 'published' })
+    ElMessage.success('已标记为已发布')
+    await loadAllVideos()
+    await loadVideos()
+  } catch (cancelOrErr) {
+    if (cancelOrErr !== 'cancel') {
+      ElMessage.error(cancelOrErr?.response?.data?.detail || '操作失败')
+    }
   }
 }
 
@@ -561,8 +684,7 @@ onMounted(loadAccount)
 
 .ad-video-item {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid #f1f5f9;
@@ -571,6 +693,13 @@ onMounted(loadAccount)
 }
 
 .ad-video-item:hover { background: #eef2ff; border-color: #c7d2fe; }
+
+/* Default (non-reviewing) row is a single horizontal row */
+.ad-video-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 
 .ad-video-thumb {
   width: 72px;
@@ -626,19 +755,176 @@ onMounted(loadAccount)
   color: #94a3b8;
 }
 
-.ad-video-status { flex-shrink: 0; }
+.ad-video-duration {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ad-video-template-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6366f1;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.ad-video-template-link:hover { color: #4338ca; }
+
+.ad-video-actions { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
 
 .ad-status-badge {
   font-size: 11px;
   font-weight: 700;
   padding: 4px 10px;
   border-radius: 6px;
+  white-space: nowrap;
 }
 
-.ad-status-generating { background: #fef9c3; color: #a16207; }
-.ad-status-pending    { background: #dbeafe; color: #1d4ed8; }
-.ad-status-reviewing  { background: #fed7aa; color: #c2410c; }
-.ad-status-published  { background: #dcfce7; color: #166534; }
+.ad-status-pending         { background: #f1f5f9; color: #475569; }
+.ad-status-generating      { background: #fef9c3; color: #a16207; }
+.ad-status-reviewing       { background: #fed7aa; color: #c2410c; }
+.ad-status-pending_publish { background: #dbeafe; color: #1d4ed8; }
+.ad-status-published       { background: #dcfce7; color: #166534; }
+
+.ad-action-btn {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #6366f1;
+  background: #eef2ff;
+  color: #4338ca;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.ad-action-btn:hover { background: #e0e7ff; }
+
+/* Candidate picker */
+.ad-video-item--reviewing {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ad-video-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+
+.ad-candidates {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.ad-candidates-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6366f1;
+  margin-bottom: 12px;
+}
+
+.ad-candidates-grid {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.ad-candidate {
+  flex: 1;
+  cursor: pointer;
+  border-radius: 10px;
+  border: 2px solid #e2e8f0;
+  overflow: hidden;
+  transition: all 0.15s;
+}
+
+.ad-candidate:hover {
+  border-color: #a5b4fc;
+  transform: translateY(-2px);
+}
+
+.ad-candidate--selected {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+}
+
+.ad-candidate-thumb {
+  position: relative;
+  aspect-ratio: 9/16;
+  background: #f1f5f9;
+  overflow: hidden;
+}
+
+.ad-candidate-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ad-candidate-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-candidate-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  background: #6366f1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-candidate-label {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 6px 0;
+}
+
+.ad-candidates-empty {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 12px 0;
+}
+
+.ad-confirm-btn {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: none;
+  background: #6366f1;
+  color: white;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ad-confirm-btn:disabled {
+  background: #c7d2fe;
+  cursor: not-allowed;
+}
+
+.ad-confirm-btn:not(:disabled):hover {
+  background: #4f46e5;
+}
 
 .ad-video-empty {
   display: flex;

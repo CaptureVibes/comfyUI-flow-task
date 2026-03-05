@@ -13,7 +13,10 @@ from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
 from app.models.video_source_stat import VideoSourceStat
 
+from app.models.daily_generation import DailyGeneration
+
 __all__ = [
     "Task", "SubTask", "SubTaskPhoto", "SubTaskGeneratedImage", "TaskTemplate",
     "ComfyUISetting", "User", "VideoSource", "VideoSourceStat", "VideoAITemplate", "Account", "EvoLinkSetting",
+    "DailyGeneration",
 ]
