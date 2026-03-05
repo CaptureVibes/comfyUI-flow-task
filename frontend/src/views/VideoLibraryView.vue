@@ -4,6 +4,10 @@
     <div class="vl-header">
       <h1 class="vl-title">视频库</h1>
       <div class="vl-header-actions">
+        <el-button class="vl-dl-all-btn" :loading="batchCreatingTemplate" @click="handleBatchCreateTemplates">
+          <svg v-if="!batchCreatingTemplate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          一键生成模板
+        </el-button>
         <el-button class="vl-dl-all-btn" :loading="downloadingAll" @click="handleDownloadAll">
           <svg v-if="!downloadingAll" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           下载全部视频
@@ -208,6 +212,7 @@ const templateMap = ref({})
 const playerVisible = ref(false)
 const playerItem = ref(null)
 const downloadingAll = ref(false)
+const batchCreatingTemplate = ref(false)
 let pollTimer = null
 
 const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize + 1)
@@ -345,6 +350,55 @@ async function handleDelete(item) {
     ElMessage.error(err?.response?.data?.detail || '删除失败')
   } finally {
     deleting.value = null
+  }
+}
+
+async function handleBatchCreateTemplates() {
+  batchCreatingTemplate.value = true
+  try {
+    // Fetch all pages to find videos without templates
+    const allVideos = []
+    let p = 1
+    const ps = 100
+    while (true) {
+      const data = await fetchVideoSources({ page: p, page_size: ps })
+      const batch = data.items || []
+      allVideos.push(...batch)
+      if (allVideos.length >= (data.total || 0) || batch.length < ps) break
+      p++
+    }
+    // Get template map for all video IDs
+    const ids = allVideos.map(v => v.id)
+    const allTemplateMap = ids.length ? await fetchTemplatesByVideoSourceIds(ids) : {}
+
+    // Filter: download done, no template yet
+    const targets = allVideos.filter(v => v.download_status === 'done' && !allTemplateMap[v.id])
+    if (!targets.length) {
+      ElMessage.info('所有已上传视频都已有模板')
+      return
+    }
+    ElMessage.info(`开始为 ${targets.length} 个视频创建模板…`)
+    let successCount = 0
+    let failCount = 0
+    for (const v of targets) {
+      try {
+        const tpl = await createVideoAITemplate({
+          title: v.video_title || v.blogger_name || '新模板',
+          description: '',
+          video_source_id: v.id,
+        })
+        await startVideoAITemplate(tpl.id)
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+    ElMessage.success(`成功创建 ${successCount} 个模板${failCount > 0 ? `，${failCount} 个失败` : ''}`)
+    await Promise.all([loadData(), loadStats()])
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '批量创建模板失败')
+  } finally {
+    batchCreatingTemplate.value = false
   }
 }
 

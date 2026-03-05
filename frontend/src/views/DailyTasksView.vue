@@ -55,7 +55,7 @@
             <span class="dt-status-badge" :class="`dt-status-${job.status}`">{{ statusLabel(job.status) }}</span>
             <!-- Delete Button (Only for today's pending tasks) -->
             <el-button
-              v-if="isToday && job.status === 'pending'"
+              v-if="isToday && (job.status === 'pending' || job.status === 'generating')"
               type="danger"
               circle
               plain
