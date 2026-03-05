@@ -913,6 +913,20 @@ async def enqueue_template(template_id: str, *, clear_stages: bool = False) -> N
         template_id: 模板 ID
         clear_stages: 为 True 时清空 completed_stages，从头重跑；默认 False（断点续跑）
     """
+    # 如果内存中没有状态（如服务重启），先从 DB 的 process_state 字段恢复
+    if template_id not in video_ai_states:
+        try:
+            uuid_val = UUID(template_id)
+            async with SessionLocal() as session:
+                tpl = await session.get(VideoAITemplate, uuid_val)
+                if tpl and tpl.process_state:
+                    saved = json.loads(tpl.process_state)
+                    video_ai_states[template_id] = saved
+                    logger.info("[%s] restored state from DB: completed_stages=%s",
+                                template_id, saved.get("completed_stages", []))
+        except Exception as exc:
+            logger.warning("[%s] failed to restore state from DB: %s", template_id, exc)
+
     # 保留已有 state（保留 completed_stages 和已产出数据）
     state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
     if clear_stages:

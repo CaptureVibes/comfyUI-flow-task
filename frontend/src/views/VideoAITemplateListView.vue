@@ -508,10 +508,10 @@ async function handleBatchResume() {
       p++
     }
     const targets = allItems.filter(item =>
-      item.process_status === 'fail' || item.process_status === 'paused'
+      item.process_status === 'fail' || item.process_status === 'paused' || item.process_status === 'pending'
     )
     if (!targets.length) {
-      ElMessage.info('没有需要继续的任务（无失败或暂停的模板）')
+      ElMessage.info('没有需要继续的任务（无失败、暂停或待运行的模板）')
       return
     }
     ElMessage.info(`开始继续 ${targets.length} 个任务…`)
