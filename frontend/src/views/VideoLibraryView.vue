@@ -3,10 +3,16 @@
     <!-- ── Header ── -->
     <div class="vl-header">
       <h1 class="vl-title">视频库</h1>
-      <el-button type="primary" class="vl-add-btn" @click="$router.push('/dashboard/video-library/new')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        添加视频
-      </el-button>
+      <div class="vl-header-actions">
+        <el-button class="vl-dl-all-btn" :loading="downloadingAll" @click="handleDownloadAll">
+          <svg v-if="!downloadingAll" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          下载全部视频
+        </el-button>
+        <el-button type="primary" class="vl-add-btn" @click="$router.push('/dashboard/video-library/new')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          添加视频
+        </el-button>
+      </div>
     </div>
 
     <!-- ── Stats row ── -->
@@ -179,10 +185,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource } from '../api/video_sources'
+import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
 import { createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { isDuplicateRequestError } from '../api/http'
-import { useAuth } from '../composables/useAuth'
+import { useAuth, getToken } from '../composables/useAuth'
 
 const { isAdmin } = useAuth()
 
@@ -201,6 +207,7 @@ const stats = ref({ total: 0, youtube_count: 0, tiktok_count: 0, recent_count: 0
 const templateMap = ref({})
 const playerVisible = ref(false)
 const playerItem = ref(null)
+const downloadingAll = ref(false)
 let pollTimer = null
 
 const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize + 1)
@@ -341,6 +348,27 @@ async function handleDelete(item) {
   }
 }
 
+async function handleDownloadAll() {
+  downloadingAll.value = true
+  ElMessage.info('正在打包视频，请稍候…')
+  try {
+    const blob = await downloadAllVideosZip(getToken())
+    const blobUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = 'videos.zip'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000)
+    ElMessage.success('打包完成，已开始下载')
+  } catch (err) {
+    ElMessage.error(err?.message || '下载失败')
+  } finally {
+    downloadingAll.value = false
+  }
+}
+
 onMounted(() => {
   loadStats()
   loadData()
@@ -372,6 +400,30 @@ onUnmounted(() => {
   color: #0f172a;
   letter-spacing: -0.03em;
   margin: 0;
+}
+
+.vl-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vl-dl-all-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  background: #fff;
+}
+
+.vl-dl-all-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
 }
 
 .vl-add-btn {

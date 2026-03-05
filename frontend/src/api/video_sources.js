@@ -38,3 +38,12 @@ export async function fetchVideoSourceStatsHistory(id) {
   const { data } = await http.get(`/video-sources/${id}/stats-history`)
   return data.items || []
 }
+
+export async function downloadAllVideosZip(token) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+  const resp = await fetch(`${baseUrl}/video-sources/download-all-zip`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok) throw new Error(`下载失败: ${resp.status}`)
+  return resp.blob()
+}

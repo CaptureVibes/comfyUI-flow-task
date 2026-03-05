@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import io
+import re
 import uuid
+import zipfile
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
@@ -104,6 +110,39 @@ async def list_video_sources_endpoint(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get("/download-all-zip")
+async def download_all_zip_endpoint(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Download all videos with local_video_url as a single zip file."""
+    # Fetch all video sources (up to 1000)
+    rows, _ = await list_video_sources(session, page=1, page_size=1000, owner_id=owner_id)
+    videos = [r for r in rows if r.local_video_url]
+
+    async def generate_zip():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                for i, v in enumerate(videos, 1):
+                    try:
+                        resp = await client.get(v.local_video_url)
+                        resp.raise_for_status()
+                        safe_title = re.sub(r'[\\/*?:"<>|]', "_", v.video_title or v.blogger_name or "video")
+                        filename = f"{i:03d}_{safe_title}.mp4"
+                        zf.writestr(filename, resp.content)
+                    except Exception:
+                        pass
+        buf.seek(0)
+        yield buf.read()
+
+    return StreamingResponse(
+        generate_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="videos.zip"'},
     )
 
 
