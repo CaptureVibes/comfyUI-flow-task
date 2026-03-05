@@ -100,6 +100,25 @@
               />
             </div>
           </div>
+
+          <!-- Result Videos (reviewing status) -->
+          <div v-if="job.result_videos && job.result_videos.length > 0" class="dt-results-section">
+            <div class="dt-shots-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+              生成结果视频
+            </div>
+            <div class="dt-results-grid">
+              <div v-for="(rv, idx) in job.result_videos" :key="idx" class="dt-result-video-wrap">
+                <video
+                  :src="rv.video_url"
+                  controls
+                  class="dt-result-video"
+                  preload="metadata"
+                />
+                <div class="dt-result-label">候选 {{ idx + 1 }}</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="dt-footer-actions">
@@ -637,6 +656,42 @@ onMounted(() => {
 
 .dt-upload-large-btn:active {
   transform: translateY(1px);
+}
+
+/* Result Videos Section */
+.dt-results-section {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(226, 232, 240, 0.6);
+}
+
+.dt-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.dt-result-video-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dt-result-video {
+  width: 100%;
+  aspect-ratio: 9/16;
+  border-radius: 12px;
+  background: #0f172a;
+  object-fit: contain;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border: 1px solid rgba(226,232,240,0.8);
+}
+
+.dt-result-label {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
 }
 
 /* Status badge on cards */

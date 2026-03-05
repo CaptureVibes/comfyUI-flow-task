@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     comfyui_api_base_url: str = "http://34.59.208.230:8189"
     video_image_upload_api_url: str = "http://api.hot-products.echooo.link/api/v1/video/upload-image"
+    splitting_api_base_url: str = "http://34.21.127.95:8080"
 
     @property
     def max_image_size_bytes(self) -> int:

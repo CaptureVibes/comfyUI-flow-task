@@ -44,6 +44,12 @@
               :loading="actioning === item.id + '-resume'"
               @click="handleResume(item)"
             >继续</el-button>
+            <el-button
+              v-if="canResume(item)"
+              size="small"
+              :loading="actioning === item.id + '-restart'"
+              @click.stop="handleRestart(item)"
+            >重跑</el-button>
           </div>
         </div>
 
@@ -169,6 +175,84 @@
             </el-form>
           </el-tab-pane>
 
+          <!-- Step 2 -->
+          <el-tab-pane label="步骤二：抽帧生图" name="step2">
+            <div class="cfg-step-desc">
+              对视频（超过 15s 只取前 15s）每隔 1.5s 抽一帧，共 10 帧，将所有帧一口气传给模型，生成一张造型图，结果自动填入模板的「造型图」区域。
+            </div>
+            <el-form label-position="top" class="cfg-form">
+              <el-form-item label="生图模型">
+                <el-input v-model="cfg.imagegen_model" placeholder="gemini-3.1-flash-image-preview（留空使用默认）" />
+              </el-form-item>
+              <el-form-item label="生图提示词 (Prompt)">
+                <el-input
+                  v-model="cfg.imagegen_prompt"
+                  type="textarea"
+                  :rows="5"
+                  placeholder="根据参考图生成同款风格图片，保持人物姿态、服装和场景风格一致"
+                />
+                <div class="cfg-field-hint">所有抽取的帧截图将一起发给模型，此提示词指导生成最终造型图。</div>
+              </el-form-item>
+              <el-form-item label="图片尺寸 (Size)">
+                <el-select v-model="cfg.imagegen_size" style="width: 220px">
+                  <el-option label="9:16（竖屏）" value="9:16" />
+                  <el-option label="1:1（方形）" value="1:1" />
+                  <el-option label="3:4" value="3:4" />
+                  <el-option label="4:3" value="4:3" />
+                  <el-option label="16:9（横屏）" value="16:9" />
+                  <el-option label="4:1（超宽）" value="4:1" />
+                  <el-option label="8:1（全景宽）" value="8:1" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="图片质量 (Quality)">
+                <el-radio-group v-model="cfg.imagegen_quality">
+                  <el-radio value="0.5K">0.5K（快速）</el-radio>
+                  <el-radio value="1K">1K</el-radio>
+                  <el-radio value="2K">2K（推荐）</el-radio>
+                  <el-radio value="4K">4K（高质量）</el-radio>
+                </el-radio-group>
+              </el-form-item>
+            </el-form>
+          </el-tab-pane>
+
+          <!-- Step 3 -->
+          <el-tab-pane label="步骤三：拆分图片" name="step3">
+            <div class="cfg-step-desc">
+              调用 Segment API 对生图结果进行人物分割，将每个分割区域的图片上传 CDN，结果自动填入模板的「造型图」区域。
+            </div>
+            <el-form label-position="top" class="cfg-form">
+              <el-form-item label="Segment API 地址">
+                <el-input v-model="cfg.splitting_api_url" placeholder="http://34.21.127.95:8080（留空使用默认）" />
+                <div class="cfg-field-hint">例如：http://34.21.127.95:8080，实际请求会追加 /api/segment-models</div>
+              </el-form-item>
+            </el-form>
+          </el-tab-pane>
+
+          <!-- Step 4 -->
+          <el-tab-pane label="步骤四：去脸" name="step4">
+            <div class="cfg-step-desc">
+              对每张拆分后的图片调用去脸 API，去除人物头部，处理后的图片 URL 替换原造型图。
+            </div>
+            <el-form label-position="top" class="cfg-form">
+              <el-form-item label="去脸 API 地址">
+                <el-input v-model="cfg.face_removing_api_url" placeholder="http://34.86.216.234:8001（留空使用默认）" />
+                <div class="cfg-field-hint">实际请求会追加 /api/v1/style-outfits/processBodyShape</div>
+              </el-form-item>
+              <el-form-item label="scoreThresh（人脸检测阈值）">
+                <el-input-number v-model="cfg.face_removing_score_thresh" :min="0" :max="1" :step="0.05" :precision="2" style="width:160px" />
+                <div class="cfg-field-hint">0~1，越高越严格，默认 0.3</div>
+              </el-form-item>
+              <el-form-item label="marginScale（边距缩放）">
+                <el-input-number v-model="cfg.face_removing_margin_scale" :min="0" :max="2" :step="0.05" :precision="2" style="width:160px" />
+                <div class="cfg-field-hint">裁切头部时的边距缩放比例，默认 0.2</div>
+              </el-form-item>
+              <el-form-item label="headTopRatio（头顶比例）">
+                <el-input-number v-model="cfg.face_removing_head_top_ratio" :min="0" :max="2" :step="0.05" :precision="2" style="width:160px" />
+                <div class="cfg-field-hint">头顶额外保留比例，默认 0.7</div>
+              </el-form-item>
+            </el-form>
+          </el-tab-pane>
+
         </el-tabs>
       </div>
 
@@ -227,6 +311,7 @@ import {
   fetchVideoAITemplates,
   startVideoAITemplate,
   pauseVideoAITemplate,
+  restartVideoAITemplate,
   resumeVideoAITemplate,
   deleteVideoAITemplate,
 } from '../api/video_ai_templates'
@@ -261,6 +346,15 @@ const cfg = reactive({
   understand_temperature: 0.3,
   understand_output_format: 'text',
   understand_json_schema: '',
+  imagegen_model: 'gemini-3.1-flash-image-preview',
+  imagegen_prompt: '',
+  imagegen_size: '9:16',
+  imagegen_quality: '2K',
+  splitting_api_url: '',
+  face_removing_api_url: '',
+  face_removing_score_thresh: 0.3,
+  face_removing_margin_scale: 0.2,
+  face_removing_head_top_ratio: 0.7,
 })
 
 // JSON validation errors for schema fields
@@ -294,6 +388,15 @@ async function openConfig() {
       understand_temperature: data.understand_temperature ?? 0.3,
       understand_output_format: data.understand_output_format || 'text',
       understand_json_schema: data.understand_json_schema || '',
+      imagegen_model: data.imagegen_model || 'gemini-3.1-flash-image-preview',
+      imagegen_prompt: data.imagegen_prompt || '',
+      imagegen_size: data.imagegen_size || '9:16',
+      imagegen_quality: data.imagegen_quality || '2K',
+      splitting_api_url: data.splitting_api_url || '',
+      face_removing_api_url: data.face_removing_api_url || '',
+      face_removing_score_thresh: data.face_removing_score_thresh ?? 0.3,
+      face_removing_margin_scale: data.face_removing_margin_scale ?? 0.2,
+      face_removing_head_top_ratio: data.face_removing_head_top_ratio ?? 0.7,
     })
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
@@ -315,6 +418,15 @@ async function saveConfig() {
       understand_temperature: cfg.understand_temperature,
       understand_output_format: cfg.understand_output_format,
       understand_json_schema: cfg.understand_json_schema,
+      imagegen_model: cfg.imagegen_model,
+      imagegen_prompt: cfg.imagegen_prompt,
+      imagegen_size: cfg.imagegen_size,
+      imagegen_quality: cfg.imagegen_quality,
+      splitting_api_url: cfg.splitting_api_url,
+      face_removing_api_url: cfg.face_removing_api_url,
+      face_removing_score_thresh: cfg.face_removing_score_thresh,
+      face_removing_margin_scale: cfg.face_removing_margin_scale,
+      face_removing_head_top_ratio: cfg.face_removing_head_top_ratio,
     })
     ElMessage.success('配置已保存')
     showConfig.value = false
@@ -442,6 +554,19 @@ async function handleResume(item) {
     await loadData()
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '继续失败')
+  } finally {
+    actioning.value = null
+  }
+}
+
+async function handleRestart(item) {
+  actioning.value = item.id + '-restart'
+  try {
+    await restartVideoAITemplate(item.id)
+    ElMessage.success('已从头重新处理')
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '重跑失败')
   } finally {
     actioning.value = null
   }

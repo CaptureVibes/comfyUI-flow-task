@@ -39,3 +39,15 @@ class PipelineSettingsPayload(BaseModel):
     understand_temperature: float = 0.3
     understand_output_format: str = "text"
     understand_json_schema: str = ""
+    # 第二阶段：抽帧生图（Nano2）
+    imagegen_model: str = "gemini-3.1-flash-image-preview"
+    imagegen_prompt: str = ""
+    imagegen_size: str = "9:16"
+    imagegen_quality: str = "2K"
+    # 第三阶段：拆分图片（Segment API）
+    splitting_api_url: str = "http://34.21.127.95:8080"
+    # 第四阶段：去脸（Face Removing API）
+    face_removing_api_url: str = "http://34.86.216.234:8001"
+    face_removing_score_thresh: float = 0.3
+    face_removing_margin_scale: float = 0.2
+    face_removing_head_top_ratio: float = 0.7

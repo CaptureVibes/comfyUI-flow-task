@@ -19,7 +19,10 @@ class PhotoSourceType(StrEnum):
 
 class VideoAIProcessStatus(StrEnum):
     pending = "pending"
-    understanding = "understanding"
+    understanding = "understanding"   # 阶段1：AI 视频理解
+    imagegen = "imagegen"             # 阶段2：抽帧生图
+    splitting = "splitting"           # 阶段3：拆分图片
+    face_removing = "face_removing"   # 阶段4：消除人脸
     success = "success"
     fail = "fail"
     paused = "paused"

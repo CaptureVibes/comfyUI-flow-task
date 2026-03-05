@@ -144,14 +144,18 @@
             <p class="vtfd-progress-text">{{ progressText }}</p>
           </div>
 
-          <!-- Error State -->
-          <div v-if="templateStatus === 'fail' && errorMessage" class="vtfd-error-state">
+          <!-- Error / Paused State -->
+          <div v-if="templateStatus === 'fail' || templateStatus === 'paused'" class="vtfd-error-state" :style="templateStatus === 'paused' ? 'background:#f8fafc;border-color:#cbd5e1' : ''">
             <div class="vtfd-error-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <svg v-if="templateStatus === 'fail'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
             </div>
-            <div class="vtfd-error-title">处理失败</div>
-            <div class="vtfd-error-desc">{{ errorMessage }}</div>
-            <el-button size="small" type="primary" @click="handleRetry">重试</el-button>
+            <div class="vtfd-error-title">{{ templateStatus === 'fail' ? '处理失败' : '已暂停' }}</div>
+            <div v-if="errorMessage" class="vtfd-error-desc">{{ errorMessage }}</div>
+            <div style="display:flex;gap:8px;justify-content:center;margin-top:4px">
+              <el-button size="small" type="primary" @click="handleResume">继续（断点续跑）</el-button>
+              <el-button size="small" @click="handleRestart">从头重跑</el-button>
+            </div>
           </div>
 
           <!-- AI Understanding Section -->
@@ -188,6 +192,56 @@
           <div v-if="!isProcessing && !form.prompt_description && templateStatus !== 'fail'" class="vtfd-images-empty" style="margin: 0; padding: 20px;">
             <div class="vtfd-images-empty-text">暂无分析结果</div>
           </div>
+        </div>
+
+        <!-- Per-stage snapshot galleries -->
+        <div v-if="imagegenShots.length > 0 || splittingShots.length > 0 || faceRemovingShots.length > 0" class="vtfd-card vtfd-fw-card vtfd-shots-card">
+
+          <!-- Stage 2: Imagegen -->
+          <div v-if="imagegenShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤二生图结果</span>
+              <span class="vtfd-section-count">({{ imagegenShots.length }})</span>
+            </div>
+            <div class="vtfd-images-grid">
+              <div v-for="(shot, idx) in imagegenShots" :key="'ig-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
+                <div class="vtfd-shot-img-wrap">
+                  <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stage 3: Splitting -->
+          <div v-if="splittingShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤三拆分结果</span>
+              <span class="vtfd-section-count">({{ splittingShots.length }})</span>
+            </div>
+            <div class="vtfd-images-grid">
+              <div v-for="(shot, idx) in splittingShots" :key="'sp-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
+                <div class="vtfd-shot-img-wrap">
+                  <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stage 4: Face removing -->
+          <div v-if="faceRemovingShots.length > 0" class="vtfd-section vtfd-section-images">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤四去脸结果</span>
+              <span class="vtfd-section-count">({{ faceRemovingShots.length }})</span>
+            </div>
+            <div class="vtfd-images-grid">
+              <div v-for="(shot, idx) in faceRemovingShots" :key="'fr-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
+                <div class="vtfd-shot-img-wrap">
+                  <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
 
         <!-- Shots Section -->
@@ -314,6 +368,7 @@ import {
   fetchVideoAITemplate,
   fetchVideoAITemplateState,
   patchVideoAITemplate,
+  restartVideoAITemplate,
   resumeVideoAITemplate,
   startVideoAITemplate,
   uploadShotImage,
@@ -336,7 +391,7 @@ const fileInputRef = ref(null)
 const uploadingCount = ref(0)
 
 // Template state
-const templateStatus = ref(null) // pending, understanding, success, fail, paused
+const templateStatus = ref(null) // pending, understanding, imagegen, splitting, face_removing, success, fail, paused
 const errorMessage = ref('')
 const pollTimer = ref(null)
 
@@ -350,6 +405,7 @@ const form = reactive({
   video_source_id: null,
   prompt_description: '',
   extracted_shots: null,
+  extra: null,
 })
 
 const rules = {
@@ -361,16 +417,22 @@ const selectedVideoSource = computed(() =>
 )
 
 const extractedShots = computed(() => form.extracted_shots || [])
+const imagegenShots = computed(() => form.extra?.imagegen_shots || [])
+const splittingShots = computed(() => form.extra?.splitting_shots || [])
+const faceRemovingShots = computed(() => form.extra?.face_removing_shots || [])
 
 // Processing state
 const isProcessing = computed(() =>
-  templateStatus.value && ['pending', 'understanding'].includes(templateStatus.value)
+  templateStatus.value && ['pending', 'understanding', 'imagegen', 'splitting', 'face_removing'].includes(templateStatus.value)
 )
 
 const progressPercentage = computed(() => {
   const statusMap = {
-    pending: 20,
-    understanding: 60,
+    pending: 5,
+    understanding: 25,
+    imagegen: 50,
+    splitting: 70,
+    face_removing: 85,
     success: 100,
     fail: 0,
     paused: 0,
@@ -388,6 +450,9 @@ const progressText = computed(() => {
   const textMap = {
     pending: '等待开始处理...',
     understanding: 'AI 正在理解视频内容...',
+    imagegen: '正在抽帧生图...',
+    splitting: '正在拆分图片...',
+    face_removing: '正在消除人脸...',
     success: '分析完成！',
     fail: '处理失败',
     paused: '已暂停',
@@ -399,6 +464,9 @@ function statusLabel(status) {
   const labels = {
     pending: '排队中',
     understanding: '理解中',
+    imagegen: '生图中',
+    splitting: '拆分中',
+    face_removing: '消脸中',
     success: '成功',
     fail: '失败',
     paused: '已暂停',
@@ -451,6 +519,14 @@ async function pollState() {
       form.prompt_description = state.prompt_description
     }
 
+    if (state.extracted_shots && state.extracted_shots.length > 0) {
+      form.extracted_shots = state.extracted_shots
+    }
+
+    if (state.extra) {
+      form.extra = state.extra
+    }
+
     templateStatus.value = state.status
     errorMessage.value = state.error_message || ''
 
@@ -475,15 +551,29 @@ function stopPolling() {
   }
 }
 
-async function handleRetry() {
+async function handleResume() {
   if (!route.params.id) return
-
   try {
     await resumeVideoAITemplate(route.params.id)
     templateStatus.value = 'pending'
     errorMessage.value = ''
     startPolling()
-    ElMessage.success('已重新开始处理')
+    ElMessage.success('已从断点继续处理')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败')
+  }
+}
+
+async function handleRestart() {
+  if (!route.params.id) return
+  try {
+    await restartVideoAITemplate(route.params.id)
+    form.prompt_description = ''
+    form.extracted_shots = []
+    templateStatus.value = 'pending'
+    errorMessage.value = ''
+    startPolling()
+    ElMessage.success('已从头重新处理')
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '操作失败')
   }
@@ -561,11 +651,12 @@ async function loadData() {
       video_source_id: data.video_source_id,
       prompt_description: data.prompt_description ?? '',
       extracted_shots: data.extracted_shots,
+      extra: data.extra || null,
     })
     templateStatus.value = data.process_status
     errorMessage.value = data.process_error || ''
 
-    if (['pending', 'understanding'].includes(data.process_status)) {
+    if (['pending', 'understanding', 'imagegen', 'splitting', 'face_removing'].includes(data.process_status)) {
       startPolling()
     }
   } catch (err) {
@@ -861,6 +952,9 @@ onUnmounted(() => {
 
 .vtfd-status-pending { background: #e0f2fe; color: #0369a1; }
 .vtfd-status-understanding { background: #fef3c7; color: #b45309; }
+.vtfd-status-imagegen { background: #ede9fe; color: #7c3aed; }
+.vtfd-status-splitting { background: #e0e7ff; color: #4338ca; }
+.vtfd-status-face_removing { background: #fce7f3; color: #be185d; }
 .vtfd-status-success { background: #dcfce7; color: #15803d; }
 .vtfd-status-fail { background: #fee2e2; color: #b91c1c; }
 .vtfd-status-paused { background: #f1f5f9; color: #475569; }
@@ -947,6 +1041,21 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 12px;
+}
+
+/* Stage tag */
+.vtfd-stage-tag {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+/* Read-only shot card (no hover effect, no pointer) */
+.vtfd-shot-readonly {
+  cursor: default !important;
+}
+.vtfd-shot-readonly:hover {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  transform: none !important;
 }
 
 /* Shot Card */

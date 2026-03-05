@@ -175,10 +175,13 @@
                     @click="selectCandidate(video.id, candidate.video_url)"
                   >
                     <div class="ad-candidate-thumb">
-                      <img v-if="candidate.thumbnail_url" :src="candidate.thumbnail_url" class="ad-candidate-img" />
-                      <div v-else class="ad-candidate-placeholder">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
-                      </div>
+                      <video
+                        :src="candidate.video_url"
+                        class="ad-candidate-video"
+                        preload="metadata"
+                        controls
+                        @click.stop
+                      />
                       <div class="ad-candidate-check" v-if="selectedCandidates[video.id] === candidate.video_url">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
                       </div>
@@ -868,6 +871,14 @@ onMounted(loadAccount)
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.ad-candidate-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #0f172a;
 }
 
 .ad-candidate-placeholder {

@@ -85,6 +85,15 @@ async def get_pipeline_settings(
         understand_temperature=row.understand_temperature,
         understand_output_format=row.understand_output_format,
         understand_json_schema=row.understand_json_schema,
+        imagegen_model=row.imagegen_model,
+        imagegen_prompt=row.imagegen_prompt,
+        imagegen_size=row.imagegen_size,
+        imagegen_quality=row.imagegen_quality,
+        splitting_api_url=row.splitting_api_url,
+        face_removing_api_url=row.face_removing_api_url,
+        face_removing_score_thresh=row.face_removing_score_thresh,
+        face_removing_margin_scale=row.face_removing_margin_scale,
+        face_removing_head_top_ratio=row.face_removing_head_top_ratio,
     )
 
 
@@ -101,6 +110,15 @@ async def put_pipeline_settings(
         understand_temperature=row.understand_temperature,
         understand_output_format=row.understand_output_format,
         understand_json_schema=row.understand_json_schema,
+        imagegen_model=row.imagegen_model,
+        imagegen_prompt=row.imagegen_prompt,
+        imagegen_size=row.imagegen_size,
+        imagegen_quality=row.imagegen_quality,
+        splitting_api_url=row.splitting_api_url,
+        face_removing_api_url=row.face_removing_api_url,
+        face_removing_score_thresh=row.face_removing_score_thresh,
+        face_removing_margin_scale=row.face_removing_margin_scale,
+        face_removing_head_top_ratio=row.face_removing_head_top_ratio,
     )
 
 

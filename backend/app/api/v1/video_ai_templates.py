@@ -24,6 +24,7 @@ from app.services.video_ai_service import (
     enqueue_template,
     get_template_state,
     pause_template,
+    restart_template,
     resume_template,
 )
 
@@ -245,6 +246,18 @@ async def resume_template_endpoint(
     return await _to_read(session, tpl)
 
 
+@router.post("/{tpl_id}/restart", response_model=VideoAITemplateRead)
+async def restart_template_endpoint(
+    tpl_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> VideoAITemplateRead:
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    await restart_template(str(tpl.id))
+    await session.refresh(tpl)
+    return await _to_read(session, tpl)
+
+
 @router.get("/{tpl_id}/state")
 async def get_template_state_endpoint(
     tpl_id: uuid.UUID,
@@ -253,6 +266,7 @@ async def get_template_state_endpoint(
 ) -> dict:
     tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
     state = get_template_state(str(tpl.id))
+    extra = tpl.extra or {}
     if state is None:
         # Return DB state
         return {
@@ -261,8 +275,9 @@ async def get_template_state_endpoint(
             "error_message": tpl.process_error or "",
             "prompt_description": tpl.prompt_description or "",
             "extracted_shots": tpl.extracted_shots or [],
+            "extra": extra,
         }
-    return state
+    return {**state, "extra": extra}
 
 
 @router.post("/{tpl_id}/upload-shot")

@@ -241,10 +241,10 @@ function resetPrompt() {
 }
 
 function formatDuration(seconds) {
-  if (!seconds) return '00s'
+  if (!seconds) return '0s'
   let s = Math.floor(seconds)
   if (s > 15) s = 15
-  return `${s.toString().padStart(2, '0')}s`
+  return `${s}s`
 }
 
 async function handleGenerate() {
@@ -252,14 +252,15 @@ async function handleGenerate() {
   generating.value = true
   try {
     let image = ''
-    let duration = '00s'
+    let duration = '0s'
     let shots = []
     if (selectedTemplate.value?.video_source) {
       image = selectedTemplate.value.video_source.thumbnail_url || selectedTemplate.value.video_source.cover_url || ''
       duration = formatDuration(selectedTemplate.value.video_source.duration)
     }
     if (selectedTemplate.value?.extracted_shots) {
-      shots = selectedTemplate.value.extracted_shots
+      // 去掉 image_base64，只传 image_url/description 等展示字段
+      shots = selectedTemplate.value.extracted_shots.map(({ image_base64, ...rest }) => rest)
     }
 
     const payload = {
