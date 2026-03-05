@@ -12,18 +12,20 @@ export async function fetchVideoAITemplates(params = {}) {
 
 // 查询某批 video_source_id 各自是否已有模板，返回 Map<videoSourceId, templateId>
 export async function fetchTemplatesByVideoSourceIds(videoSourceIds) {
-  const map = {}
-  await Promise.all(
-    videoSourceIds.map(async (vsId) => {
-      try {
-        const data = await fetchVideoAITemplates({ video_source_id: vsId, page: 1, page_size: 1 })
-        if (data.items && data.items.length > 0) {
-          map[vsId] = data.items[0].id
-        }
-      } catch { /* ignore */ }
-    })
-  )
-  return map
+  if (!videoSourceIds || videoSourceIds.length === 0) return {}
+  // Batch in chunks of 100 to stay within URL length limits
+  const chunkSize = 100
+  const result = {}
+  for (let i = 0; i < videoSourceIds.length; i += chunkSize) {
+    const chunk = videoSourceIds.slice(i, i + chunkSize)
+    try {
+      const { data } = await http.get('/video-ai-templates/by-video-source-ids', {
+        params: { ids: chunk.join(',') },
+      })
+      Object.assign(result, data)
+    } catch { /* ignore */ }
+  }
+  return result
 }
 
 export async function fetchVideoAITemplate(id) {

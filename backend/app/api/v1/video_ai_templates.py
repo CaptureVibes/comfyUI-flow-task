@@ -162,6 +162,38 @@ async def list_templates(
     )
 
 
+@router.get("/by-video-source-ids", response_model=dict[str, str])
+async def get_templates_by_video_source_ids(
+    ids: str = Query(..., description="Comma-separated video_source_id list"),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Return {video_source_id: template_id} for all given video_source_ids that have a template."""
+    from sqlalchemy import func
+
+    try:
+        vs_ids = [uuid.UUID(s.strip()) for s in ids.split(",") if s.strip()]
+    except ValueError:
+        return {}
+    if not vs_ids:
+        return {}
+
+    stmt = select(VideoAITemplate.video_source_id, VideoAITemplate.id).where(
+        VideoAITemplate.video_source_id.in_(vs_ids)
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
+
+    rows = (await session.execute(stmt)).all()
+    # If multiple templates per video_source, return the first (latest by default order)
+    result: dict[str, str] = {}
+    for vs_id, tpl_id in rows:
+        key = str(vs_id)
+        if key not in result:
+            result[key] = str(tpl_id)
+    return result
+
+
 @router.get("/{tpl_id}", response_model=VideoAITemplateRead)
 async def get_template(
     tpl_id: uuid.UUID,
