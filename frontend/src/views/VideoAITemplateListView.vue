@@ -5,8 +5,8 @@
       <h1 class="vai-title">视频AI模板</h1>
       <div class="vai-header-actions">
         <el-button class="vai-config-btn" :loading="batchResuming" @click="handleBatchResume">
-          <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"/><line x1="19" y1="3" x2="19" y2="21"/></svg>
-          一键继续
+          <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+          一键重试
         </el-button>
         <el-button class="vai-config-btn" @click="openConfig">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -496,7 +496,7 @@ function formatDate(iso) {
 async function handleBatchResume() {
   batchResuming.value = true
   try {
-    // Fetch all pages to find failed/paused templates
+    // Fetch all pages to find non-success templates
     const allItems = []
     let p = 1
     const ps = 100
@@ -507,28 +507,26 @@ async function handleBatchResume() {
       if (allItems.length >= (data.total || 0) || batch.length < ps) break
       p++
     }
-    const targets = allItems.filter(item =>
-      item.process_status === 'fail' || item.process_status === 'paused' || item.process_status === 'pending'
-    )
+    const targets = allItems.filter(item => item.process_status !== 'success')
     if (!targets.length) {
-      ElMessage.info('没有需要继续的任务（无失败、暂停或待运行的模板）')
+      ElMessage.info('所有模板均已完成，无需重试')
       return
     }
-    ElMessage.info(`开始继续 ${targets.length} 个任务…`)
+    ElMessage.info(`开始重试 ${targets.length} 个任务…`)
     let successCount = 0
     let failCount = 0
     for (const item of targets) {
       try {
-        await resumeVideoAITemplate(item.id)
+        await restartVideoAITemplate(item.id)
         successCount++
       } catch {
         failCount++
       }
     }
-    ElMessage.success(`成功继续 ${successCount} 个任务${failCount > 0 ? `，${failCount} 个失败` : ''}`)
+    ElMessage.success(`成功触发 ${successCount} 个任务重试${failCount > 0 ? `，${failCount} 个失败` : ''}`)
     await loadData()
   } catch (err) {
-    ElMessage.error(err?.response?.data?.detail || '批量继续失败')
+    ElMessage.error(err?.response?.data?.detail || '批量重试失败')
   } finally {
     batchResuming.value = false
   }
