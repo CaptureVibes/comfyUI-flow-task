@@ -35,7 +35,7 @@ _queue_processor_task: asyncio.Task | None = None
 _persist_worker_task: asyncio.Task | None = None
 
 # 并发数：同时处理的最大任务数
-_CONCURRENCY = 10
+_CONCURRENCY = 50
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
 _PERSIST_INTERVAL = 2.0
 
