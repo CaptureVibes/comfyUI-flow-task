@@ -328,15 +328,19 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             logger.info("[%s] understanding started", template_id)
 
             prompt_description = ""
-            if video_url and api_key:
-                prompt_description = await _call_evolink_api(
-                    api_base_url=api_base_url,
-                    api_key=api_key,
-                    model_name=understand_model,
-                    video_url=video_url,
-                    prompt=understand_prompt,
-                    temperature=understand_temperature,
-                )
+            if not video_url:
+                raise ValueError("视频地址不可用，请确保已选择有效的视频源。")
+            if not api_key:
+                raise ValueError("系统未配置 EvoLink API Key，请前往【系统设置】进行配置。")
+                
+            prompt_description = await _call_evolink_api(
+                api_base_url=api_base_url,
+                api_key=api_key,
+                model_name=understand_model,
+                video_url=video_url,
+                prompt=understand_prompt,
+                temperature=understand_temperature,
+            )
             state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.understanding))
             state["prompt_description"] = prompt_description
             state["updated_at"] = _utcnow_iso()

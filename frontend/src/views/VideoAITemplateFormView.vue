@@ -450,9 +450,6 @@ async function pollState() {
     if (!isPromptEdited.value && state.prompt_description && state.prompt_description !== form.prompt_description) {
       form.prompt_description = state.prompt_description
     }
-    if (state.extracted_shots && JSON.stringify(state.extracted_shots) !== JSON.stringify(form.extracted_shots)) {
-      form.extracted_shots = state.extracted_shots
-    }
 
     templateStatus.value = state.status
     errorMessage.value = state.error_message || ''
@@ -562,7 +559,7 @@ async function loadData() {
       title: data.title,
       description: data.description,
       video_source_id: data.video_source_id,
-      prompt_description: data.prompt_description,
+      prompt_description: data.prompt_description ?? '',
       extracted_shots: data.extracted_shots,
     })
     templateStatus.value = data.process_status
