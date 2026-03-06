@@ -37,8 +37,6 @@ class PipelineSettingsPayload(BaseModel):
     understand_model: str = ""
     understand_prompt: str = ""
     understand_temperature: float = 0.3
-    understand_output_format: str = "text"
-    understand_json_schema: str = ""
     # 第二阶段：抽帧生图（Nano2）
     imagegen_model: str = "gemini-3.1-flash-image-preview"
     imagegen_prompt: str = ""

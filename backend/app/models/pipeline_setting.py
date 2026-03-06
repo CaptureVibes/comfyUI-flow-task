@@ -23,8 +23,6 @@ class PipelineSetting(Base):
     understand_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     understand_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     understand_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
-    understand_output_format: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
-    understand_json_schema: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # 第二阶段：抽帧生图（Nano2）
     imagegen_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")

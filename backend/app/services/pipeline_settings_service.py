@@ -30,8 +30,6 @@ async def update_pipeline_settings(session: AsyncSession, owner_id: uuid.UUID, p
     row.understand_model = payload.understand_model
     row.understand_prompt = payload.understand_prompt
     row.understand_temperature = payload.understand_temperature
-    row.understand_output_format = payload.understand_output_format
-    row.understand_json_schema = payload.understand_json_schema
     row.imagegen_model = payload.imagegen_model
     row.imagegen_prompt = payload.imagegen_prompt
     row.imagegen_size = payload.imagegen_size

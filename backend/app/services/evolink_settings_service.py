@@ -32,8 +32,6 @@ async def update_evolink_settings(session: AsyncSession, owner_id: uuid.UUID, pa
     row.understand_model = payload.understand_model
     row.understand_prompt = payload.understand_prompt
     row.understand_temperature = payload.understand_temperature
-    row.understand_output_format = payload.understand_output_format
-    row.understand_json_schema = payload.understand_json_schema
     await session.commit()
     await session.refresh(row)
     return row

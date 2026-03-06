@@ -201,162 +201,184 @@
     <el-empty v-if="!loading && items.length === 0" description="暂无模板，点击「新建模板」开始" :image-size="80" />
 
     <!-- Pipeline Config Dialog -->
-    <el-dialog
-      v-model="showConfig"
-      title="AI 处理流程配置"
-      width="760px"
-      :close-on-click-modal="false"
-    >
-      <div v-loading="configLoading" class="cfg-body">
-        <div class="cfg-hint-bar">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          API Key 和 Base URL 由管理员在<router-link to="/dashboard/settings" @click="showConfig=false">系统设置</router-link>中配置，此处为你的个人流程参数。
+    <div v-if="showConfig" class="vt-dialog-overlay" @click.self="showConfig = false">
+      <div class="vt-dialog-content" style="width: 760px;">
+        <div class="vt-dialog-header">
+          <h2 class="vt-dialog-title">AI 处理流程配置</h2>
+          <button class="vt-dialog-close" @click="showConfig = false">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
 
-        <el-tabs v-model="configTab" type="border-card" class="cfg-tabs">
-          <!-- Step 1 -->
-          <el-tab-pane label="步骤一：视频理解" name="step1">
-            <div class="cfg-step-desc">AI 理解视频全局内容，输出整体文字描述。此结果将作为背景信息展示在模板详情中。</div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="模型名称">
-                <el-input v-model="cfg.understand_model" placeholder="gemini-3.1-pro-preview（留空使用默认）" />
-              </el-form-item>
-              <el-form-item label="提示词 (Prompt)">
-                <el-input v-model="cfg.understand_prompt" type="textarea" :rows="4"
-                  placeholder="请描述这个视频的内容，包括场景、人物、服装风格等。" />
-              </el-form-item>
-              <el-form-item :label="`温度 (Temperature)：${cfg.understand_temperature.toFixed(1)}`">
-                <el-slider v-model="cfg.understand_temperature" :min="0" :max="2" :step="0.1" />
-              </el-form-item>
-              <el-form-item label="输出格式">
-                <el-radio-group v-model="cfg.understand_output_format">
-                  <el-radio value="text">纯文本</el-radio>
-                  <el-radio value="json">JSON</el-radio>
-                  <el-radio value="markdown">Markdown</el-radio>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item v-if="cfg.understand_output_format === 'json'" label="JSON 格式定义">
-                <el-input
-                  v-model="cfg.understand_json_schema"
-                  type="textarea"
-                  :rows="5"
-                  placeholder='{\n  "overall_style": "...",\n  "color_palette": ["..."],\n  "theme": "..."\n}'
-                  class="cfg-code-input"
-                  :class="{ 'cfg-json-invalid': jsonErrors.understand }"
-                  @input="validateJsonField('understand', cfg.understand_json_schema)"
-                />
-                <div v-if="jsonErrors.understand" class="cfg-json-error-msg">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                  {{ jsonErrors.understand }}
+        <div v-loading="configLoading" class="vt-dialog-body cfg-body">
+          <div class="cfg-hint-bar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            API Key 和 Base URL 由管理员在<router-link to="/dashboard/settings" @click="showConfig=false">系统设置</router-link>中配置，此处为你的个人流程参数。
+          </div>
+
+          <div class="vt-tabs">
+            <button
+              v-for="tab in [
+                { key: 'step1', label: '① 视频理解' },
+                { key: 'step2', label: '② 抽帧生图' },
+                { key: 'step3', label: '③ 拆分图片' },
+                { key: 'step4', label: '④ 消除人脸' },
+                { key: 'step5', label: '⑤ 图片超分' }
+              ]"
+              :key="tab.key"
+              class="vt-tab-btn"
+              :class="{ 'vt-tab-active': configTab === tab.key }"
+              @click="configTab = tab.key"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+
+          <div class="vt-tab-content">
+            <!-- Step 1 -->
+            <div v-if="configTab === 'step1'">
+              <div class="cfg-step-desc">AI 理解视频全局内容，输出整体文字描述。此结果将作为背景信息展示在模板详情中。</div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">模型名称</label>
+                  <input type="text" v-model="cfg.understand_model" class="vt-input" placeholder="gemini-3.1-pro-preview（留空使用默认）" />
                 </div>
-                <div v-else-if="cfg.understand_json_schema.trim()" class="cfg-json-ok-msg">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  JSON 格式正确
+                <div class="vt-form-item">
+                  <label class="vt-label">提示词 (Prompt)</label>
+                  <textarea v-model="cfg.understand_prompt" class="vt-textarea" rows="4" placeholder="请描述这个视频的内容，包括场景、人物、服装风格等。"></textarea>
                 </div>
-                <div class="cfg-field-hint">此 JSON 格式将追加到提示词末尾，要求模型严格按格式输出。</div>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
-
-          <!-- Step 2 -->
-          <el-tab-pane label="步骤二：抽帧生图" name="step2">
-            <div class="cfg-step-desc">
-              对视频（超过 15s 只取前 15s）每隔 1.5s 抽一帧，共 10 帧，将所有帧一口气传给模型，生成一张造型图，结果自动填入模板的「造型图」区域。
+                <div class="vt-form-item">
+                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.understand_temperature).toFixed(1) }}</label>
+                  <input type="range" v-model.number="cfg.understand_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+              </div>
             </div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="生图模型">
-                <el-input v-model="cfg.imagegen_model" placeholder="gemini-3.1-flash-image-preview（留空使用默认）" />
-              </el-form-item>
-              <el-form-item label="生图提示词 (Prompt)">
-                <el-input
-                  v-model="cfg.imagegen_prompt"
-                  type="textarea"
-                  :rows="5"
-                  placeholder="根据参考图生成同款风格图片，保持人物姿态、服装和场景风格一致"
-                />
-                <div class="cfg-field-hint">所有抽取的帧截图将一起发给模型，此提示词指导生成最终造型图。</div>
-              </el-form-item>
-              <el-form-item label="图片尺寸 (Size)">
-                <el-select v-model="cfg.imagegen_size" style="width: 220px">
-                  <el-option label="9:16（竖屏）" value="9:16" />
-                  <el-option label="1:1（方形）" value="1:1" />
-                  <el-option label="3:4" value="3:4" />
-                  <el-option label="4:3" value="4:3" />
-                  <el-option label="16:9（横屏）" value="16:9" />
-                  <el-option label="4:1（超宽）" value="4:1" />
-                  <el-option label="8:1（全景宽）" value="8:1" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="图片质量 (Quality)">
-                <el-radio-group v-model="cfg.imagegen_quality">
-                  <el-radio value="0.5K">0.5K（快速）</el-radio>
-                  <el-radio value="1K">1K</el-radio>
-                  <el-radio value="2K">2K（推荐）</el-radio>
-                  <el-radio value="4K">4K（高质量）</el-radio>
-                </el-radio-group>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
 
-          <!-- Step 3 -->
-          <el-tab-pane label="步骤三：拆分图片" name="step3">
-            <div class="cfg-step-desc">
-              调用 Segment API 对生图结果进行人物分割，将每个分割区域的图片上传 CDN，结果自动填入模板的「造型图」区域。
+            <!-- Step 2 -->
+            <div v-if="configTab === 'step2'">
+              <div class="cfg-step-desc">
+                对视频（超过 15s 只取前 15s）每隔 1.5s 抽一帧，共 10 帧，将所有帧一口气传给模型，生成一张造型图，结果自动填入模板的「造型图」区域。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">生图模型</label>
+                  <input type="text" v-model="cfg.imagegen_model" class="vt-input" placeholder="gemini-3.1-flash-image-preview（留空使用默认）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">生图提示词 (Prompt)</label>
+                  <textarea v-model="cfg.imagegen_prompt" class="vt-textarea" rows="5" placeholder="根据参考图生成同款风格图片，保持人物姿态、服装和场景风格一致"></textarea>
+                  <div class="cfg-field-hint">所有抽取的帧截图将一起发给模型，此提示词指导生成最终造型图。</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">图片尺寸 (Size)</label>
+                  <div class="vt-select-wrapper" style="width: 220px">
+                    <select v-model="cfg.imagegen_size" class="vt-select">
+                      <option value="9:16">9:16（竖屏）</option>
+                      <option value="1:1">1:1（方形）</option>
+                      <option value="3:4">3:4</option>
+                      <option value="4:3">4:3</option>
+                      <option value="16:9">16:9（横屏）</option>
+                      <option value="4:1">4:1（超宽）</option>
+                      <option value="8:1">8:1（全景宽）</option>
+                    </select>
+                    <div class="vt-select-arrow">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                  </div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">图片质量 (Quality)</label>
+                  <div class="vt-radio-group">
+                    <label class="vt-radio-label">
+                      <input type="radio" value="0.5K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
+                      <span class="vt-radio-circle"></span>0.5K（快速）
+                    </label>
+                    <label class="vt-radio-label">
+                      <input type="radio" value="1K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
+                      <span class="vt-radio-circle"></span>1K
+                    </label>
+                    <label class="vt-radio-label">
+                      <input type="radio" value="2K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
+                      <span class="vt-radio-circle"></span>2K（推荐）
+                    </label>
+                    <label class="vt-radio-label">
+                      <input type="radio" value="4K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
+                      <span class="vt-radio-circle"></span>4K（高质量）
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="Segment API 地址">
-                <el-input v-model="cfg.splitting_api_url" placeholder="http://34.21.127.95:8080（留空使用默认）" />
-                <div class="cfg-field-hint">例如：http://34.21.127.95:8080，实际请求会追加 /api/segment-models</div>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
 
-          <!-- Step 4 -->
-          <el-tab-pane label="步骤四：去脸" name="step4">
-            <div class="cfg-step-desc">
-              对每张拆分后的图片调用去脸 API，去除人物头部，处理后的图片 URL 替换原造型图。
+            <!-- Step 3 -->
+            <div v-if="configTab === 'step3'">
+              <div class="cfg-step-desc">
+                调用 Segment API 对生图结果进行人物分割，将每个分割区域的图片上传 CDN，结果自动填入模板的「造型图」区域。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">Segment API 地址</label>
+                  <input type="text" v-model="cfg.splitting_api_url" class="vt-input" placeholder="http://34.21.127.95:8080（留空使用默认）" />
+                  <div class="cfg-field-hint">例如：http://34.21.127.95:8080，实际请求会追加 /api/segment-models</div>
+                </div>
+              </div>
             </div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="去脸 API 地址">
-                <el-input v-model="cfg.face_removing_api_url" placeholder="http://34.86.216.234:8001（留空使用默认）" />
-                <div class="cfg-field-hint">实际请求会追加 /api/v1/style-outfits/processBodyShape</div>
-              </el-form-item>
-              <el-form-item label="scoreThresh（人脸检测阈值）">
-                <el-input-number v-model="cfg.face_removing_score_thresh" :min="0" :max="1" :step="0.05" :precision="2" style="width:160px" />
-                <div class="cfg-field-hint">0~1，越高越严格，默认 0.3</div>
-              </el-form-item>
-              <el-form-item label="marginScale（边距缩放）">
-                <el-input-number v-model="cfg.face_removing_margin_scale" :min="0" :max="2" :step="0.05" :precision="2" style="width:160px" />
-                <div class="cfg-field-hint">裁切头部时的边距缩放比例，默认 0.2</div>
-              </el-form-item>
-              <el-form-item label="headTopRatio（头顶比例）">
-                <el-input-number v-model="cfg.face_removing_head_top_ratio" :min="0" :max="2" :step="0.05" :precision="2" style="width:160px" />
-                <div class="cfg-field-hint">头顶额外保留比例，默认 0.7</div>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
 
-          <!-- Step 5 -->
-          <el-tab-pane label="步骤五：图片超分" name="step5">
-            <div class="cfg-step-desc">
-              使用 Pillow LANCZOS 算法将去脸后的每张图片缩放到指定长边像素。超分后的图片为最终造型图。
+            <!-- Step 4 -->
+            <div v-if="configTab === 'step4'">
+              <div class="cfg-step-desc">
+                对每张拆分后的图片调用去脸 API，去除人物头部，处理后的图片 URL 替换原造型图。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">去脸 API 地址</label>
+                  <input type="text" v-model="cfg.face_removing_api_url" class="vt-input" placeholder="http://34.86.216.234:8001（留空使用默认）" />
+                  <div class="cfg-field-hint">实际请求会追加 /api/v1/style-outfits/processBodyShape</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">scoreThresh（人脸检测阈值）</label>
+                  <input type="number" v-model.number="cfg.face_removing_score_thresh" min="0" max="1" step="0.05" class="vt-input" style="width:160px" />
+                  <div class="cfg-field-hint">0~1，越高越严格，默认 0.3</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">marginScale（边距缩放）</label>
+                  <input type="number" v-model.number="cfg.face_removing_margin_scale" min="0" max="2" step="0.05" class="vt-input" style="width:160px" />
+                  <div class="cfg-field-hint">裁切头部时的边距缩放比例，默认 0.2</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">headTopRatio（头顶比例）</label>
+                  <input type="number" v-model.number="cfg.face_removing_head_top_ratio" min="0" max="2" step="0.05" class="vt-input" style="width:160px" />
+                  <div class="cfg-field-hint">头顶额外保留比例，默认 0.7</div>
+                </div>
+              </div>
             </div>
-            <el-form label-position="top" class="cfg-form">
-              <el-form-item label="目标长边像素（scale）">
-                <el-input-number v-model="cfg.upscaling_scale" :min="256" :max="4096" :step="256" style="width:160px" />
-                <div class="cfg-field-hint">目标长边像素，例如 1024 = 1K，2048 = 2K，默认 1024。若原图已达目标尺寸则跳过。</div>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
 
-        </el-tabs>
+            <!-- Step 5 -->
+            <div v-if="configTab === 'step5'">
+              <div class="cfg-step-desc">
+                使用 Pillow LANCZOS 算法将去脸后的每张图片缩放到指定长边像素。超分后的图片为最终造型图。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">目标长边像素（scale）</label>
+                  <input type="number" v-model.number="cfg.upscaling_scale" min="256" max="4096" step="256" class="vt-input" style="width:160px" />
+                  <div class="cfg-field-hint">目标长边像素，例如 1024 = 1K，2048 = 2K，默认 1024。若原图已达目标尺寸则跳过。</div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="vt-dialog-footer">
+          <button class="vt-btn vt-btn-cancel" @click="showConfig = false">取消</button>
+          <button class="vt-btn vt-btn-primary" :class="{ 'is-loading': configSaving }" :disabled="hasJsonError" @click="saveConfig">
+            <svg v-if="configSaving" class="vt-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+            保存配置
+          </button>
+        </div>
       </div>
-
-      <template #footer>
-        <el-button @click="showConfig = false">取消</el-button>
-        <el-button type="primary" :loading="configSaving" :disabled="hasJsonError" @click="saveConfig">保存配置</el-button>
-      </template>
-    </el-dialog>
+    </div>
 
     <!-- Footer pagination -->
     <div v-if="total > 0" class="vai-footer">
@@ -452,8 +474,6 @@ const cfg = reactive({
   understand_model: '',
   understand_prompt: '',
   understand_temperature: 0.3,
-  understand_output_format: 'text',
-  understand_json_schema: '',
   imagegen_model: 'gemini-3.1-flash-image-preview',
   imagegen_prompt: '',
   imagegen_size: '9:16',
@@ -466,37 +486,18 @@ const cfg = reactive({
   upscaling_scale: 1024,
 })
 
-// JSON validation errors for schema fields
-const jsonErrors = reactive({ understand: '' })
-
-function validateJsonField(field, value) {
-  const v = (value || '').trim()
-  if (!v) { jsonErrors[field] = ''; return }
-  try {
-    JSON.parse(v)
-    jsonErrors[field] = ''
-  } catch (e) {
-    jsonErrors[field] = e.message
-  }
-}
-
-const hasJsonError = computed(() =>
-  cfg.understand_output_format === 'json' && !!jsonErrors.understand
-)
+const hasJsonError = computed(() => false)
 
 async function openConfig() {
   showConfig.value = true
   configTab.value = 'step1'
   configLoading.value = true
-  jsonErrors.understand = ''
   try {
     const data = await fetchPipelineSettings()
     Object.assign(cfg, {
       understand_model: data.understand_model || '',
       understand_prompt: data.understand_prompt || '',
       understand_temperature: data.understand_temperature ?? 0.3,
-      understand_output_format: data.understand_output_format || 'text',
-      understand_json_schema: data.understand_json_schema || '',
       imagegen_model: data.imagegen_model || 'gemini-3.1-flash-image-preview',
       imagegen_prompt: data.imagegen_prompt || '',
       imagegen_size: data.imagegen_size || '9:16',
@@ -526,8 +527,6 @@ async function saveConfig() {
       understand_model: cfg.understand_model,
       understand_prompt: cfg.understand_prompt,
       understand_temperature: cfg.understand_temperature,
-      understand_output_format: cfg.understand_output_format,
-      understand_json_schema: cfg.understand_json_schema,
       imagegen_model: cfg.imagegen_model,
       imagegen_prompt: cfg.imagegen_prompt,
       imagegen_size: cfg.imagegen_size,
@@ -1318,6 +1317,7 @@ onMounted(() => {
   margin-bottom: 8px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.4;
@@ -1329,6 +1329,7 @@ onMounted(() => {
   margin-bottom: 12px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.5;
@@ -1477,5 +1478,313 @@ onMounted(() => {
   .vai-header { flex-direction: column; gap: 12px; align-items: stretch; }
   .vai-header-actions { flex-wrap: wrap; }
   .vt-actions { flex-wrap: wrap; }
+}
+
+/* ── Custom Dialog ── */
+.vt-dialog-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+
+.vt-dialog-content {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  animation: dialogSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.vt-dialog-header {
+  padding: 20px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.vt-dialog-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.vt-dialog-close {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt-dialog-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.vt-dialog-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.vt-dialog-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: #fafbfc;
+}
+
+.vt-btn {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.vt-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vt-btn-cancel {
+  background: #fff;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+.vt-btn-cancel:hover:not(:disabled) {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.vt-btn-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(99, 102, 241, 0.2);
+}
+
+.vt-btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.vt-btn-primary.is-loading {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+/* ── Custom Tabs ── */
+.vt-tabs {
+  display: flex;
+  gap: 4px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+.vt-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.vt-tab-btn:hover {
+  color: #0f172a;
+}
+
+.vt-tab-active {
+  background: #fff;
+  color: #4f46e5;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+/* ── Custom Forms ── */
+.vt-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.vt-form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vt-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.vt-input, .vt-textarea, .vt-select {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: #0f172a;
+  transition: all 0.2s;
+  outline: none;
+  font-family: inherit;
+}
+
+.vt-input:focus, .vt-textarea:focus, .vt-select:focus {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.vt-input::placeholder, .vt-textarea::placeholder {
+  color: #94a3b8;
+}
+
+.vt-textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+}
+
+.vt-input-error {
+  border-color: #f56565 !important;
+  box-shadow: 0 0 0 3px rgba(245, 101, 101, 0.1) !important;
+}
+
+.vt-select-wrapper {
+  position: relative;
+}
+
+.vt-select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+.vt-select-arrow {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+}
+
+.vt-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
+.vt-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #475569;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vt-radio-input {
+  display: none;
+}
+
+.vt-radio-circle {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid #cbd5e1;
+  background: #fff;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.vt-radio-input:checked + .vt-radio-circle {
+  border-color: #6366f1;
+}
+
+.vt-radio-input:checked + .vt-radio-circle::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  background: #6366f1;
+  border-radius: 50%;
+}
+
+.vt-range {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  outline: none;
+}
+
+.vt-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #6366f1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: transform 0.1s;
+}
+
+.vt-range::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dialogSlideIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 </style>
