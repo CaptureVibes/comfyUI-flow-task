@@ -302,14 +302,30 @@ async function loadAllVideos() {
   allVideos.value = await fetchAccountGenerations(route.params.id)
 }
 
+let activeAbortController = null
+
 async function loadVideos() {
+  if (activeAbortController) {
+    activeAbortController.abort()
+  }
+  const controller = new AbortController()
+  activeAbortController = controller
+
   videosLoading.value = true
   try {
-    videos.value = await fetchAccountGenerations(route.params.id, activeTab.value)
+    videos.value = await fetchAccountGenerations(route.params.id, activeTab.value, {
+      signal: controller.signal
+    })
   } catch (err) {
+    if (err?.__isCanceled || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED' || err?.message === 'canceled') {
+      return
+    }
     ElMessage.error('加载视频列表失败')
   } finally {
-    videosLoading.value = false
+    if (activeAbortController === controller) {
+      videosLoading.value = false
+      activeAbortController = null
+    }
   }
 }
 

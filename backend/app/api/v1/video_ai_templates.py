@@ -235,6 +235,77 @@ async def batch_create_and_start(
     return {"status": "accepted"}
 
 
+@router.get("/all-available", response_model=list[VideoAITemplateListItem])
+async def list_all_available_templates(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[VideoAITemplateListItem]:
+    """获取所有可用的视频 AI 模板（无分页），用于批量生成选择。"""
+    stmt = (
+        select(VideoAITemplate)
+        .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
+        .order_by(VideoAITemplate.created_at.desc())
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
+
+    rows = (await session.execute(stmt)).scalars().all()
+
+    owner_ids = list({r.owner_id for r in rows if r.owner_id is not None})
+    username_map: dict[uuid.UUID, str] = {}
+    if owner_ids:
+        users = (await session.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
+        for u in users:
+            username_map[u.id] = u.display_name or u.username
+
+    vs_ids = list({r.video_source_id for r in rows if r.video_source_id is not None})
+    vs_map: dict[uuid.UUID, VideoSource] = {}
+    if vs_ids:
+        video_sources = (await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))).scalars().all()
+        for v in video_sources:
+            vs_map[v.id] = v
+
+    items_read = []
+    for r in rows:
+        vs = None
+        if r.video_source_id and r.video_source_id in vs_map:
+            vs = VideoSourceSummary.model_validate(vs_map[r.video_source_id])
+        items_read.append(VideoAITemplateListItem(
+            id=r.id,
+            owner_id=r.owner_id,
+            owner_username=username_map.get(r.owner_id) if r.owner_id else None,
+            title=r.title,
+            description=r.description,
+            video_source_id=r.video_source_id,
+            video_source=vs,
+            process_status=r.process_status,
+            process_error=r.process_error,
+            is_used=r.is_used,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        ))
+
+    return items_read
+
+
+@router.get("/stats", response_model=dict[str, int])
+async def get_template_stats(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Return count per process_status."""
+    from sqlalchemy import func, text
+
+    stmt = select(
+        VideoAITemplate.process_status,
+        func.count(VideoAITemplate.id).label("cnt"),
+    ).group_by(VideoAITemplate.process_status)
+    if owner_id is not None:
+        stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
+    rows = (await session.execute(stmt)).all()
+    return {str(row[0].value if hasattr(row[0], "value") else row[0]): row[1] for row in rows}
+
+
 @router.get("/by-video-source-ids", response_model=dict[str, str])
 async def get_templates_by_video_source_ids(
     ids: str = Query(..., description="Comma-separated video_source_id list"),

@@ -4,7 +4,7 @@
     <div class="vl-header">
       <h1 class="vl-title">视频库</h1>
       <div class="vl-header-actions">
-        <el-button class="vl-dl-all-btn" :loading="batchCreatingTemplate" @click="handleBatchCreateTemplates">
+        <el-button class="vl-create-tpl-btn" :loading="batchCreatingTemplate" @click="handleBatchCreateTemplates">
           <svg v-if="!batchCreatingTemplate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
           一键生成模板
         </el-button>
@@ -129,16 +129,6 @@
         </div>
       </div>
 
-      <!-- Add new card -->
-      <div class="vc vc-add" @click="$router.push('/dashboard/video-library/new')">
-        <div class="vc-add-inner">
-          <div class="vc-add-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </div>
-          <div class="vc-add-title">添加新视频</div>
-          <div class="vc-add-sub">粘贴链接解析入库</div>
-        </div>
-      </div>
     </div>
 
     <!-- ── Empty ── -->
@@ -146,7 +136,16 @@
 
     <!-- ── Footer ── -->
     <div v-if="total > 0" class="vl-footer">
-      <span class="vl-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+      <div class="vl-pagination-left">
+        <span class="vl-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+        <select v-model="pageSize" @change="handleSizeChange(pageSize)" class="vl-simple-select">
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+          <option :value="100">100</option>
+          <option :value="200">200</option>
+          <option :value="500">500</option>
+        </select>
+      </div>
       <div class="vl-pagination">
         <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
         <button class="pg-btn" :disabled="endIdx >= total" @click="goPage(page + 1)">下一页 →</button>
@@ -205,7 +204,7 @@ const creatingTemplate = ref(null)
 const items = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const stats = ref({ total: 0, youtube_count: 0, tiktok_count: 0, recent_count: 0 })
 // Map<videoSourceId, templateId> - 已有模板的视频
 const templateMap = ref({})
@@ -215,8 +214,8 @@ const downloadingAll = ref(false)
 const batchCreatingTemplate = ref(false)
 let pollTimer = null
 
-const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize + 1)
-const endIdx = computed(() => Math.min(page.value * pageSize, total.value))
+const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1)
+const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value))
 
 const PLATFORM_COLORS = {
   youtube: 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
@@ -253,7 +252,7 @@ async function loadStats() {
 async function loadData(silent = false) {
   if (!silent) loading.value = true
   try {
-    const data = await fetchVideoSources({ page: page.value, page_size: pageSize })
+    const data = await fetchVideoSources({ page: page.value, page_size: pageSize.value })
     items.value = data.items || []
     total.value = data.total || 0
     schedulePollIfNeeded()
@@ -299,6 +298,12 @@ function schedulePollIfNeeded() {
 
 function goPage(p) {
   page.value = p
+  loadData()
+}
+
+function handleSizeChange(val) {
+  pageSize.value = val
+  page.value = 1
   loadData()
 }
 
@@ -441,6 +446,23 @@ onUnmounted(() => {
   border-color: #6366f1;
   color: #6366f1;
   background: #eef2ff;
+}
+
+.vl-create-tpl-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  border: 1px solid #a7f3d0;
+  color: #059669;
+  background: #ecfdf5;
+}
+
+.vl-create-tpl-btn:hover {
+  background: #d1fae5;
+  border-color: #34d399;
 }
 
 .vl-add-btn {
@@ -847,9 +869,30 @@ onUnmounted(() => {
   border-top: 1px solid #f1f5f9;
 }
 
+.vl-pagination-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .vl-count-text {
   font-size: 13px;
   color: #94a3b8;
+}
+
+.vl-simple-select {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding: 0 4px;
+}
+
+.vl-simple-select:hover {
+  color: #64748b;
 }
 
 .vl-pagination {

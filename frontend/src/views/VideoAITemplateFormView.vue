@@ -145,16 +145,26 @@
           </div>
 
           <!-- Error / Paused State -->
-          <div v-if="templateStatus === 'fail' || templateStatus === 'paused'" class="vtfd-error-state" :style="templateStatus === 'paused' ? 'background:#f8fafc;border-color:#cbd5e1' : ''">
-            <div class="vtfd-error-icon">
-              <svg v-if="templateStatus === 'fail'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-              <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
+          <div v-if="templateStatus === 'fail' || templateStatus === 'paused'" class="vtfd-error-state" :class="templateStatus === 'paused' ? 'vtfd-error-state-paused' : ''">
+            <div class="vtfd-error-header">
+              <div class="vtfd-error-icon-wrap" :class="templateStatus === 'paused' ? 'vtfd-error-icon-paused' : 'vtfd-error-icon-fail'">
+                <svg v-if="templateStatus === 'fail'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              </div>
+              <div>
+                <div class="vtfd-error-title">{{ templateStatus === 'fail' ? '处理失败' : '已暂停' }}</div>
+                <div v-if="errorMessage" class="vtfd-error-desc">{{ errorMessage }}</div>
+              </div>
             </div>
-            <div class="vtfd-error-title">{{ templateStatus === 'fail' ? '处理失败' : '已暂停' }}</div>
-            <div v-if="errorMessage" class="vtfd-error-desc">{{ errorMessage }}</div>
-            <div style="display:flex;gap:8px;justify-content:center;margin-top:4px">
-              <el-button size="small" type="primary" @click="handleResume">继续（断点续跑）</el-button>
-              <el-button size="small" @click="handleRestart">从头重跑</el-button>
+            <div class="vtfd-error-actions">
+              <button class="vtfd-act-btn vtfd-act-resume" @click="handleResume">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                {{ templateStatus === 'fail' ? '从断点继续' : '继续处理' }}
+              </button>
+              <button class="vtfd-act-btn vtfd-act-restart" @click="handleRestart">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+                从头重跑
+              </button>
             </div>
           </div>
 
@@ -206,7 +216,7 @@
             <div class="vtfd-images-grid">
               <div v-for="(shot, idx) in imagegenShots" :key="'ig-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
                 <div class="vtfd-shot-img-wrap">
-                  <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="imagegenShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
                 </div>
               </div>
             </div>
@@ -221,7 +231,7 @@
             <div class="vtfd-images-grid">
               <div v-for="(shot, idx) in splittingShots" :key="'sp-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
                 <div class="vtfd-shot-img-wrap">
-                  <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="splittingShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
                 </div>
               </div>
             </div>
@@ -236,7 +246,7 @@
             <div class="vtfd-images-grid">
               <div v-for="(shot, idx) in faceRemovingShots" :key="'fr-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
                 <div class="vtfd-shot-img-wrap">
-                  <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="faceRemovingShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
                 </div>
               </div>
             </div>
@@ -262,7 +272,7 @@
                       class="vtfd-shot-card"
                     >
                       <div class="vtfd-shot-img-wrap">
-                        <img v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" />
+                        <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="[shot.image_url]" fit="cover" preview-teleported hide-on-click-modal />
                         <div v-else class="vtfd-shot-no-img">
                           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                         </div>
@@ -959,34 +969,105 @@ onUnmounted(() => {
 .vtfd-status-fail { background: #fee2e2; color: #b91c1c; }
 .vtfd-status-paused { background: #f1f5f9; color: #475569; }
 
-/* Error State */
+/* Error / Paused State */
 .vtfd-error-state {
-  text-align: center;
-  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
   background: #fef2f2;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid #fecaca;
   margin-bottom: 16px;
 }
 
-.vtfd-error-icon {
+.vtfd-error-state-paused {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.vtfd-error-header {
   display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.vtfd-error-icon-wrap {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
+}
+
+.vtfd-error-icon-fail {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.vtfd-error-icon-paused {
+  background: #e2e8f0;
+  color: #475569;
 }
 
 .vtfd-error-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #b91c1c;
-  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 2px;
 }
 
 .vtfd-error-desc {
   font-size: 12px;
-  color: #ef4444;
-  margin-bottom: 12px;
+  color: #64748b;
   white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.vtfd-error-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.vtfd-act-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.vtfd-act-resume {
+  background: #6366f1;
+  color: #fff;
+  border-color: #6366f1;
+}
+.vtfd-act-resume:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.vtfd-act-restart {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #e2e8f0;
+}
+.vtfd-act-restart:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
 }
 
 /* Section Style */

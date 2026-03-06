@@ -15,9 +15,9 @@ export async function uploadDailyGenerations(dateStr) {
   return data
 }
 
-export async function fetchAccountGenerations(accountId, status = null) {
+export async function fetchAccountGenerations(accountId, status = null, config = {}) {
   const params = status ? { status } : {}
-  const { data } = await http.get(`/video-generations/accounts/${accountId}`, { params })
+  const { data } = await http.get(`/video-generations/accounts/${accountId}`, { params, ...config })
   return data
 }
 

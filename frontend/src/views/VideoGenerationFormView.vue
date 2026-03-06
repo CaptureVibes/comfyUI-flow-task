@@ -7,16 +7,17 @@
         <div class="vtfd-subtitle">合并账号配置与AI分析，生成最终的高质量视频</div>
       </div>
       <div class="vtfd-header-actions">
-        <el-button @click="$router.push(`/dashboard/accounts/${accountId}`)">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="batchGenerating"
+        <button class="vg-btn vg-btn-cancel" @click="$router.push(`/dashboard/accounts/${accountId}`)">取消</button>
+        <button
+          class="vg-btn vg-btn-primary"
+          :class="{ 'is-loading': batchGenerating }"
+          :disabled="!batchIsReady || batchGenerating"
           @click="handleBatchGenerate"
-          :disabled="!batchIsReady"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <svg v-if="!batchGenerating" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <svg v-else class="vg-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
           批量生成 {{ batchSelected.length > 0 ? `(${batchSelected.length})` : '' }}
-        </el-button>
+        </button>
       </div>
     </div>
 
@@ -77,13 +78,19 @@
               <div class="batch-step-label" style="display: flex; justify-content: space-between; align-items: center;">
                 <span>② 选择视频模板</span>
                 <div style="display: flex; gap: 8px; align-items: center;">
-                  <el-button size="small" @click="selectUnused">一键选未用</el-button>
-                  <el-checkbox
-                    :model-value="isAllSelected"
-                    :indeterminate="isSomeSelected"
-                    @change="toggleSelectAll"
-                  >全选</el-checkbox>
-                  <span style="font-size: 12px; color: #94a3b8;">已选 {{ batchSelected.length }} / {{ bloggerTemplates.length }}</span>
+                  <button class="vg-btn vg-btn-small" @click="selectUnused">一键选未用</button>
+                  <label class="vg-checkbox-wrapper">
+                    <input 
+                      type="checkbox" 
+                      class="vg-checkbox-input"
+                      :checked="isAllSelected"
+                      :indeterminate="isSomeSelected"
+                      @change="e => toggleSelectAll(e.target.checked)"
+                    />
+                    <span class="vg-checkbox-box" :class="{ 'is-indeterminate': isSomeSelected }"></span>
+                    <span class="vg-checkbox-label">全选</span>
+                  </label>
+                  <span style="font-size: 13px; color: #64748b; margin-left: 4px;">已选 <strong style="color:#0f172a">{{ batchSelected.length }}</strong> / {{ bloggerTemplates.length }}</span>
                 </div>
               </div>
 
@@ -98,11 +105,15 @@
                   }"
                   @click="toggleBatchItem(item.tpl.id)"
                 >
-                  <el-checkbox
-                    :model-value="batchSelected.includes(item.tpl.id)"
-                    @click.stop
-                    @change="toggleBatchItem(item.tpl.id)"
-                  />
+                  <label class="vg-checkbox-wrapper" @click.stop>
+                    <input 
+                      type="checkbox" 
+                      class="vg-checkbox-input"
+                      :checked="batchSelected.includes(item.tpl.id)"
+                      @change="toggleBatchItem(item.tpl.id)"
+                    />
+                    <span class="vg-checkbox-box"></span>
+                  </label>
                   <img
                     v-if="item.tpl.video_source?.thumbnail_url"
                     :src="item.tpl.video_source.thumbnail_url"
@@ -143,7 +154,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccount } from '../api/accounts'
-import { fetchVideoAITemplates, fetchVideoAITemplate, markTemplateUsed } from '../api/video_ai_templates'
+import { fetchVideoAITemplates, fetchAllAvailableVideoAITemplates, fetchVideoAITemplate, markTemplateUsed } from '../api/video_ai_templates'
 import { createVideoGeneration } from '../api/video_generations'
 
 const route = useRoute()
@@ -181,15 +192,8 @@ async function loadData() {
   loading.value = true
   try {
     account.value = await fetchAccount(accountId)
-    const allTemplates = []
-    let page = 1
-    while (true) {
-      const res = await fetchVideoAITemplates({ page, page_size: 100 })
-      const items = res.items || []
-      allTemplates.push(...items)
-      if (allTemplates.length >= (res.total || 0) || items.length < 100) break
-      page++
-    }
+    // 直接一次性获取所有博主的可用模板
+    const allTemplates = await fetchAllAvailableVideoAITemplates()
     templateList.value = allTemplates
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载初始数据失败')
@@ -206,13 +210,12 @@ function formatDuration(seconds) {
 }
 
 function buildPromptForTemplate(tpl) {
-  const style = account.value?.style_description ? `【风格描述】\n${account.value.style_description}\n\n` : ''
-  const appearance = account.value?.model_appearance ? `【模特长相描述】\n${account.value.model_appearance}\n\n` : ''
-  const analysis = tpl.prompt_description ? `【动作与分镜画面】\n${tpl.prompt_description}` : ''
-  return `${style}${appearance}${analysis}`
+  return tpl.prompt_description || ''
 }
 
-async function handleBloggerChange(blogger) {
+async function handleBloggerChange(e) {
+  const blogger = typeof e === 'string' ? e : e.target.value
+  selectedBlogger.value = blogger
   batchSelected.value = []
   bloggerTemplates.value = []
   if (!blogger) return
@@ -523,5 +526,157 @@ onMounted(loadData)
   color: #94a3b8;
   padding: 32px 0;
   font-size: 14px;
+}
+
+/* ── Custom UI Elements ── */
+.vg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+  font-family: inherit;
+}
+
+.vg-btn-small {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+}
+
+.vg-btn-small:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.vg-btn-cancel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.vg-btn-cancel:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  transform: translateY(-1px);
+}
+
+.vg-btn-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border: none;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+}
+
+.vg-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
+  transform: translateY(-1px);
+}
+
+.vg-btn-primary:disabled {
+  background: #c7d2fe;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.is-loading {
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.vg-spinner {
+  animation: vg-spin 1s linear infinite;
+}
+
+@keyframes vg-spin {
+  100% { transform: rotate(360deg); }
+}
+
+/* Custom Checkbox */
+.vg-checkbox-wrapper {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vg-checkbox-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.vg-checkbox-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 2px solid #cbd5e1;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.vg-checkbox-input:checked + .vg-checkbox-box {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+.vg-checkbox-input:checked + .vg-checkbox-box::after {
+  content: '';
+  position: absolute;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  top: 2px;
+}
+
+.vg-checkbox-box.is-indeterminate {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+.vg-checkbox-box.is-indeterminate::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 2px;
+  background: white;
+  border: none;
+  transform: none;
+  top: 6px;
+}
+
+.vg-checkbox-label {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+}
+
+.vg-checkbox-wrapper:hover .vg-checkbox-box:not(.is-indeterminate) {
+  border-color: #94a3b8;
+}
+.vg-checkbox-input:checked + .vg-checkbox-box:hover {
+  border-color: #4f46e5;
+  background: #4f46e5;
 }
 </style>

@@ -10,6 +10,11 @@ export async function fetchVideoAITemplates(params = {}) {
   return data
 }
 
+export async function fetchAllAvailableVideoAITemplates() {
+  const { data } = await http.get('/video-ai-templates/all-available')
+  return data
+}
+
 // 查询某批 video_source_id 各自是否已有模板，返回 Map<videoSourceId, templateId>
 export async function fetchTemplatesByVideoSourceIds(videoSourceIds) {
   if (!videoSourceIds || videoSourceIds.length === 0) return {}
@@ -89,6 +94,11 @@ export async function analyzeVideo(videoSourceId) {
   const { data } = await http.post('/video-ai-templates/analyze-video', null, {
     params: { video_source_id: videoSourceId }
   })
+  return data
+}
+
+export async function fetchTemplateStats() {
+  const { data } = await http.get('/video-ai-templates/stats')
   return data
 }
 

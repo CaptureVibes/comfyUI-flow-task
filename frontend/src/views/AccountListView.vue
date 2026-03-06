@@ -70,33 +70,32 @@
         </div>
       </div>
 
-      <!-- Add new card -->
-      <div class="ac ac-add" @click="$router.push('/dashboard/accounts/new')">
-        <div class="ac-add-inner">
-          <div class="ac-add-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </div>
-          <div class="ac-add-title">新建账号</div>
-          <div class="ac-add-sub">绑定 TikTok / YouTube 平台</div>
-        </div>
-      </div>
     </div>
 
     <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" :image-size="80" />
 
     <!-- Footer pagination -->
-    <div v-if="total > pageSize" class="al-footer">
-      <span class="al-count-text">共 {{ total }} 个账号</span>
+    <div v-if="total > 0" class="al-footer">
+      <div class="al-pagination-left">
+        <span class="al-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+        <select v-model="pageSize" @change="handleSizeChange(pageSize)" class="al-simple-select">
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+          <option :value="100">100</option>
+          <option :value="200">200</option>
+          <option :value="500">500</option>
+        </select>
+      </div>
       <div class="al-pagination">
         <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
-        <button class="pg-btn" :disabled="page * pageSize >= total" @click="goPage(page + 1)">下一页 →</button>
+        <button class="pg-btn" :disabled="endIdx >= total" @click="goPage(page + 1)">下一页 →</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccounts, deleteAccount } from '../api/accounts'
@@ -112,7 +111,10 @@ const deleting = ref(null)
 const items = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
+
+const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1)
+const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value))
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 function platformIcon(p) { return PLATFORM_ICONS[p] || '●' }
@@ -124,7 +126,7 @@ function goToDetail(item) {
 async function loadData() {
   loading.value = true
   try {
-    const data = await fetchAccounts({ page: page.value, page_size: pageSize })
+    const data = await fetchAccounts({ page: page.value, page_size: pageSize.value })
     items.value = data.items || []
     total.value = data.total || 0
   } catch (err) {
@@ -137,6 +139,12 @@ async function loadData() {
 
 function goPage(p) {
   page.value = p
+  loadData()
+}
+
+function handleSizeChange(val) {
+  pageSize.value = val
+  page.value = 1
   loadData()
 }
 
@@ -346,6 +354,7 @@ onMounted(loadData)
 .ac-actions {
   display: flex;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .ac-btn {
@@ -358,6 +367,12 @@ onMounted(loadData)
   color: #475569;
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ac-btn-edit:hover {
@@ -383,49 +398,6 @@ onMounted(loadData)
   pointer-events: none;
 }
 
-/* Add card */
-.ac-add {
-  border: 2px dashed #c7d2fe;
-  background: #fafbff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 220px;
-}
-
-.ac-add:hover {
-  border-color: #6366f1;
-  background: #eef2ff;
-  transform: none;
-  box-shadow: none;
-}
-
-.ac-add-inner { text-align: center; }
-
-.ac-add-icon {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: #eef2ff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 12px;
-  transition: background 0.2s;
-}
-
-.ac-add:hover .ac-add-icon { background: #c7d2fe; }
-
-.ac-add-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #3730a3;
-  margin-bottom: 4px;
-}
-
-.ac-add-sub { font-size: 13px; color: #818cf8; }
-
 /* Footer */
 .al-footer {
   display: flex;
@@ -435,9 +407,36 @@ onMounted(loadData)
   border-top: 1px solid #f1f5f9;
 }
 
-.al-count-text { font-size: 13px; color: #94a3b8; }
+.al-pagination-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 
-.al-pagination { display: flex; gap: 8px; }
+.al-count-text {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.al-simple-select {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding: 0 4px;
+}
+
+.al-simple-select:hover {
+  color: #64748b;
+}
+
+.al-pagination {
+  display: flex;
+  gap: 8px;
+}
 
 .pg-btn {
   font-size: 13px;

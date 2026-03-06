@@ -4,7 +4,7 @@
     <div class="vai-header">
       <h1 class="vai-title">视频AI模板</h1>
       <div class="vai-header-actions">
-        <el-button class="vai-config-btn" :loading="batchResuming" @click="handleBatchResume">
+        <el-button class="vai-retry-btn" :loading="batchResuming" @click="handleBatchResume">
           <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
           一键重试
         </el-button>
@@ -19,41 +19,123 @@
       </div>
     </div>
 
+    <!-- Stats row -->
+    <div class="vai-stats">
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">排队中</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.pending || 0 }}</div>
+        <div class="vai-stat-sub">pending</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">理解视频</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.understanding || 0 }}</div>
+        <div class="vai-stat-sub">understanding</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">图片生成</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.imagegen || 0 }}</div>
+        <div class="vai-stat-sub">imagegen</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">拆分图片</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.splitting || 0 }}</div>
+        <div class="vai-stat-sub">splitting</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">消除人脸</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><line x1="17" y1="3" x2="21" y2="7"/><line x1="21" y1="3" x2="17" y2="7"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.face_removing || 0 }}</div>
+        <div class="vai-stat-sub">face_removing</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">成功</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.success || 0 }}</div>
+        <div class="vai-stat-sub">success</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">失败</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.fail || 0 }}</div>
+        <div class="vai-stat-sub">fail</div>
+      </div>
+    </div>
+
     <!-- Card grid -->
     <div v-loading="loading" class="vai-grid">
       <div v-for="item in items" :key="item.id" class="vt-card" @click="goToDetail(item)">
         <!-- Header with status -->
         <div class="vt-header">
-          <el-tag size="small" :type="statusType(item.process_status)" class="vt-status-tag">
+          <el-tag
+            size="small"
+            :type="statusType(item.process_status)"
+            class="vt-status-tag"
+            :style="statusStyle(item.process_status)"
+          >
             {{ statusLabel(item.process_status) }}
           </el-tag>
           <div class="vt-actions" @click.stop>
-            <el-button
-              v-if="canStart(item)"
-              size="small"
-              type="primary"
-              :loading="actioning === item.id + '-start'"
+            <!-- fail: retry button -->
+            <button
+              v-if="item.process_status === 'fail'"
+              class="vt-action-btn vt-action-retry"
+              :disabled="!!actioning"
               @click="handleStart(item)"
-            >{{ item.process_status === 'fail' ? '重试' : '开始' }}</el-button>
-            <el-button
+            >
+              <svg v-if="actioning !== item.id + '-start'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+              <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              重试
+            </button>
+            <!-- paused: resume + restart -->
+            <template v-if="canResume(item)">
+              <button
+                class="vt-action-btn vt-action-resume"
+                :disabled="!!actioning"
+                @click="handleResume(item)"
+              >
+                <svg v-if="actioning !== item.id + '-resume'" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                继续
+              </button>
+              <button
+                class="vt-action-btn vt-action-restart"
+                :disabled="!!actioning"
+                @click.stop="handleRestart(item)"
+              >
+                <svg v-if="actioning !== item.id + '-restart'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+                <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                重跑
+              </button>
+            </template>
+            <!-- understanding-only: pause -->
+            <button
               v-if="canPause(item)"
-              size="small"
-              :loading="actioning === item.id + '-pause'"
+              class="vt-action-btn vt-action-pause"
+              :disabled="!!actioning"
               @click="handlePause(item)"
-            >暂停</el-button>
-            <el-button
-              v-if="canResume(item)"
-              size="small"
-              type="success"
-              :loading="actioning === item.id + '-resume'"
-              @click="handleResume(item)"
-            >继续</el-button>
-            <el-button
-              v-if="canResume(item)"
-              size="small"
-              :loading="actioning === item.id + '-restart'"
-              @click.stop="handleRestart(item)"
-            >重跑</el-button>
+            >
+              <svg v-if="actioning !== item.id + '-pause'" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              暂停
+            </button>
           </div>
         </div>
 
@@ -103,17 +185,6 @@
               >删除</button>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- Add new card -->
-      <div class="vt-card vt-add" @click="$router.push('/dashboard/video-ai-templates/new')">
-        <div class="vt-add-inner">
-          <div class="vt-add-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </div>
-          <div class="vt-add-title">新建模板</div>
-          <div class="vt-add-sub">关联视频源，AI自动处理</div>
         </div>
       </div>
     </div>
@@ -268,7 +339,16 @@
 
     <!-- Footer pagination -->
     <div v-if="total > 0" class="vai-footer">
-      <span class="vai-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+      <div class="vai-pagination-left">
+        <span class="vai-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+        <select v-model="pageSize" @change="handleSizeChange(pageSize)" class="vai-simple-select">
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+          <option :value="100">100</option>
+          <option :value="200">200</option>
+          <option :value="500">500</option>
+        </select>
+      </div>
       <div class="vai-pagination">
         <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
         <button class="pg-btn" :disabled="endIdx >= total" @click="goPage(page + 1)">下一页 →</button>
@@ -313,6 +393,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchVideoAITemplates,
+  fetchTemplateStats,
   startVideoAITemplate,
   pauseVideoAITemplate,
   restartVideoAITemplate,
@@ -334,7 +415,8 @@ const batchResuming = ref(false)
 const items = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 12
+const pageSize = ref(20)
+const templateStats = ref({})
 
 const playerVisible = ref(false)
 const playerItem = ref(null)
@@ -442,22 +524,34 @@ async function saveConfig() {
   }
 }
 
-const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize + 1)
-const endIdx = computed(() => Math.min(page.value * pageSize, total.value))
+const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1)
+const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value))
 
 const STATUS_CONFIG = {
   pending: { label: '排队中', type: 'info' },
   understanding: { label: '理解视频', type: 'primary' },
-  extracting: { label: '提取造型', type: 'primary' },
-  downloading: { label: '下载资源', type: 'warning' },
-  uploading: { label: '回传云端', type: 'warning' },
-  paused: { label: '已暂停', type: 'warning' },
+  imagegen: { label: '图片生成', type: '', customColor: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' }, // Purple
+  splitting: { label: '拆分图片', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' }, // Pink
+  face_removing: { label: '消除人脸', type: '', customColor: '#f59e0b', bg: '#fffbeb', border: '#fde68a' }, // Orange
+  paused: { label: '已暂停', type: 'info' },
   success: { label: '已完成', type: 'success' },
   fail: { label: '失败', type: 'danger' },
 }
 
 function statusType(status) {
-  return STATUS_CONFIG[status]?.type || 'info'
+  return STATUS_CONFIG[status]?.type ?? 'info'
+}
+
+function statusStyle(status) {
+  const config = STATUS_CONFIG[status]
+  if (config && config.customColor) {
+    return {
+      backgroundColor: config.bg,
+      color: config.customColor,
+      borderColor: config.border
+    }
+  }
+  return {}
 }
 
 function statusLabel(status) {
@@ -469,7 +563,7 @@ function canStart(item) {
 }
 
 function canPause(item) {
-  return ['pending', 'understanding', 'extracting', 'downloading', 'uploading'].includes(item.process_status)
+  return ['pending', 'understanding'].includes(item.process_status)
 }
 
 function canResume(item) {
@@ -535,9 +629,10 @@ async function handleBatchResume() {
 async function loadData() {
   loading.value = true
   try {
-    const data = await fetchVideoAITemplates({ page: page.value, page_size: pageSize })
+    const data = await fetchVideoAITemplates({ page: page.value, page_size: pageSize.value })
     items.value = data.items || []
     total.value = data.total || 0
+    loadStats()
   } catch (err) {
     if (isDuplicateRequestError(err)) return
     ElMessage.error(err?.response?.data?.detail || '加载失败')
@@ -548,6 +643,12 @@ async function loadData() {
 
 function goPage(p) {
   page.value = p
+  loadData()
+}
+
+function handleSizeChange(val) {
+  pageSize.value = val
+  page.value = 1
   loadData()
 }
 
@@ -642,8 +743,15 @@ async function handleDelete(item) {
   }
 }
 
+async function loadStats() {
+  try {
+    templateStats.value = await fetchTemplateStats()
+  } catch { /* ignore */ }
+}
+
 onMounted(() => {
   loadData()
+  loadStats()
 })
 </script>
 
@@ -691,6 +799,23 @@ onMounted(() => {
 .vai-config-btn:hover {
   background: #e0e7ff;
   border-color: #6366f1;
+}
+
+.vai-retry-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+.vai-retry-btn:hover {
+  background: #ffedd5;
+  border-color: #fb923c;
 }
 
 .vai-add-btn {
@@ -845,6 +970,52 @@ onMounted(() => {
   line-height: 1;
 }
 
+/* Stats row */
+.vai-stats {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.vai-stat-card {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+}
+
+.vai-stat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.vai-stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.vai-stat-value {
+  font-size: 30px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1;
+  margin-bottom: 5px;
+  letter-spacing: -0.03em;
+}
+
+.vai-stat-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: monospace;
+}
+
 /* Card grid */
 .vai-grid {
   display: grid;
@@ -936,7 +1107,76 @@ onMounted(() => {
 
 .vt-actions {
   display: flex;
-  gap: 6px;
+  gap: 5px;
+}
+
+.vt-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.vt-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vt-action-retry {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+.vt-action-retry:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.vt-action-resume {
+  background: #f0fdf4;
+  color: #16a34a;
+  border-color: #bbf7d0;
+}
+.vt-action-resume:hover:not(:disabled) {
+  background: #dcfce7;
+  border-color: #4ade80;
+}
+
+.vt-action-restart {
+  background: #f8fafc;
+  color: #475569;
+  border-color: #e2e8f0;
+}
+.vt-action-restart:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.vt-action-pause {
+  background: #fffbeb;
+  color: #d97706;
+  border-color: #fde68a;
+}
+.vt-action-pause:hover:not(:disabled) {
+  background: #fef3c7;
+  border-color: #fbbf24;
+}
+
+.vt-spin {
+  animation: vt-spin 0.8s linear infinite;
+}
+
+@keyframes vt-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Video section */
@@ -1114,9 +1354,30 @@ onMounted(() => {
   border-top: 1px solid #f1f5f9;
 }
 
+.vai-pagination-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .vai-count-text {
   font-size: 13px;
   color: #94a3b8;
+}
+
+.vai-simple-select {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding: 0 4px;
+}
+
+.vai-simple-select:hover {
+  color: #64748b;
 }
 
 .vai-pagination {

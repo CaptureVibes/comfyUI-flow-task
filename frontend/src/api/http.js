@@ -120,7 +120,18 @@ http.interceptors.response.use(
     return response
   },
   (error) => {
+    // Determine if it was aborted
+    const isCanceled = axios.isCancel(error) || error?.code === 'ERR_CANCELED'
+
+    // If it was cancelled, we still need to release the request key
     releaseRequest(error?.config)
+
+    // For cancelled requests, immediately reject without triggering global auth handlers
+    if (isCanceled) {
+      error.__isCanceled = true
+      return Promise.reject(error)
+    }
+
     if (isDuplicateRequestError(error)) {
       return Promise.reject(error)
     }
