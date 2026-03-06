@@ -345,7 +345,8 @@ async def _download_video_yt_dlp(source_url: str, out_path: str) -> str:
 
 
 async def _do_download_and_upload(vs_id: UUID) -> None:
-    """Background coroutine: download + upload, then persist result."""
+    """Background coroutine: download + upload, then persist result. Retries up to 3 times."""
+    max_attempts = 3
     async with SessionLocal() as session:
         vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
         if not vs:
@@ -355,26 +356,32 @@ async def _do_download_and_upload(vs_id: UUID) -> None:
         safe_title = (vs.video_title or str(vs_id))[:60].replace("/", "_").replace("\\", "_")
         filename = f"{safe_title}.mp4"
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_template = os.path.join(tmpdir, "video")
-            try:
-                actual_path = await _download_video_yt_dlp(vs.source_url, out_template)
-                # yt-dlp might produce e.g. /tmp/xxx/video.mp4 or /tmp/xxx/video
-                if not os.path.exists(actual_path):
-                    # try with .mp4
-                    alt = out_template + ".mp4"
-                    actual_path = alt if os.path.exists(alt) else actual_path
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                out_template = os.path.join(tmpdir, "video")
+                try:
+                    actual_path = await _download_video_yt_dlp(vs.source_url, out_template)
+                    # yt-dlp might produce e.g. /tmp/xxx/video.mp4 or /tmp/xxx/video
+                    if not os.path.exists(actual_path):
+                        alt = out_template + ".mp4"
+                        actual_path = alt if os.path.exists(alt) else actual_path
 
-                permanent_url = await _upload_video_file(actual_path, filename)
+                    permanent_url = await _upload_video_file(actual_path, filename)
 
-                vs.local_video_url = permanent_url
-                vs.download_status = "done"
-                await session.commit()
-                logger.info("Video %s downloaded and uploaded: %s", vs_id, permanent_url)
-            except Exception as exc:
-                logger.warning("Video download/upload failed for %s: %s", vs_id, exc)
-                vs.download_status = "failed"
-                await session.commit()
+                    vs.local_video_url = permanent_url
+                    vs.download_status = "done"
+                    await session.commit()
+                    logger.info("Video %s downloaded and uploaded (attempt %d): %s", vs_id, attempt, permanent_url)
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning("Video download/upload failed for %s (attempt %d/%d): %s", vs_id, attempt, max_attempts, exc)
+
+        # All attempts exhausted
+        logger.error("Video %s permanently failed after %d attempts: %s", vs_id, max_attempts, last_exc)
+        vs.download_status = "failed"
+        await session.commit()
 
 
 async def trigger_download_and_upload(
