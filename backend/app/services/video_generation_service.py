@@ -15,6 +15,7 @@ import httpx
 
 from app.core.config import settings
 from app.models.daily_generation import DailyGeneration
+from app.models.video_ai_template import VideoAITemplate
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,11 @@ class VideoGenerationService:
                 cdn_url = await self._upload_gcs_video_to_cdn(blob, filename)
                 job.result_videos = [{"video_url": cdn_url, "thumbnail_url": ""}]
                 job.status = "reviewing"
+                # 视频成功保存，同步标记关联模板为已使用
+                if job.template_id:
+                    tpl = await self.db.get(VideoAITemplate, job.template_id)
+                    if tpl and not tpl.is_used:
+                        tpl.is_used = True
                 updated += 1
             except Exception as exc:
                 logger.warning("Failed to upload GCS video %s to CDN: %s", object_key, exc)

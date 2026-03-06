@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum as SAEnum, JSON, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -31,6 +31,7 @@ class VideoAITemplate(Base):
     prompt_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     extracted_shots: Mapped[list | None] = mapped_column(JSON, nullable=True)
     process_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

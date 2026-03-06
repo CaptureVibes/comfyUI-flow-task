@@ -52,6 +52,7 @@ class VideoAITemplateRead(BaseModel):
     process_error: str | None
     prompt_description: str | None
     extracted_shots: list | None
+    is_used: bool = False
     extra: dict | None
     created_at: datetime
     updated_at: datetime
@@ -69,6 +70,7 @@ class VideoAITemplateListItem(BaseModel):
     video_source: VideoSourceSummary | None = None
     process_status: VideoAIProcessStatus
     process_error: str | None
+    is_used: bool = False
     created_at: datetime
     updated_at: datetime
 

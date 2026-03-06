@@ -80,6 +80,11 @@ export async function batchCreateAndStartTemplates() {
   await http.post('/video-ai-templates/batch-create-and-start')
 }
 
+export async function markTemplateUsed(id) {
+  const { data } = await http.post(`/video-ai-templates/${id}/mark-used`)
+  return data
+}
+
 export async function analyzeVideo(videoSourceId) {
   const { data } = await http.post('/video-ai-templates/analyze-video', null, {
     params: { video_source_id: videoSourceId }

@@ -155,6 +155,7 @@ async def list_templates(
             video_source=vs,
             process_status=r.process_status,
             process_error=r.process_error,
+            is_used=r.is_used,
             created_at=r.created_at,
             updated_at=r.updated_at,
         ))
@@ -382,6 +383,20 @@ async def get_template_state_endpoint(
             "extra": extra,
         }
     return {**state, "extra": extra}
+
+
+@router.post("/{tpl_id}/mark-used", response_model=VideoAITemplateRead)
+async def mark_template_used(
+    tpl_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> VideoAITemplateRead:
+    """标记模板为已使用。"""
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    tpl.is_used = True
+    await session.commit()
+    await session.refresh(tpl)
+    return await _to_read(session, tpl)
 
 
 @router.post("/{tpl_id}/upload-shot")
