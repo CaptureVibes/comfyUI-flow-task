@@ -190,7 +190,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
-import { createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
+import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { isDuplicateRequestError } from '../api/http'
 import { useAuth, getToken } from '../composables/useAuth'
 
@@ -356,45 +356,8 @@ async function handleDelete(item) {
 async function handleBatchCreateTemplates() {
   batchCreatingTemplate.value = true
   try {
-    // Fetch all pages to find videos without templates
-    const allVideos = []
-    let p = 1
-    const ps = 100
-    while (true) {
-      const data = await fetchVideoSources({ page: p, page_size: ps })
-      const batch = data.items || []
-      allVideos.push(...batch)
-      if (allVideos.length >= (data.total || 0) || batch.length < ps) break
-      p++
-    }
-    // Get template map for all video IDs
-    const ids = allVideos.map(v => v.id)
-    const allTemplateMap = ids.length ? await fetchTemplatesByVideoSourceIds(ids) : {}
-
-    // Filter: download done, no template yet
-    const targets = allVideos.filter(v => v.download_status === 'done' && !allTemplateMap[v.id])
-    if (!targets.length) {
-      ElMessage.info('所有已上传视频都已有模板')
-      return
-    }
-    ElMessage.info(`开始为 ${targets.length} 个视频创建模板…`)
-    let successCount = 0
-    let failCount = 0
-    for (const v of targets) {
-      try {
-        const tpl = await createVideoAITemplate({
-          title: v.video_title || v.blogger_name || '新模板',
-          description: '',
-          video_source_id: v.id,
-        })
-        await startVideoAITemplate(tpl.id)
-        successCount++
-      } catch {
-        failCount++
-      }
-    }
-    ElMessage.success(`成功创建 ${successCount} 个模板${failCount > 0 ? `，${failCount} 个失败` : ''}`)
-    await Promise.all([loadData(), loadStats()])
+    await batchCreateAndStartTemplates()
+    ElMessage.success('已触发批量生成模板，后台处理中…')
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '批量创建模板失败')
   } finally {

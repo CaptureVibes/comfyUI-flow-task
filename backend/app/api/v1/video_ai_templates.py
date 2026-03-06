@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+
+logger = logging.getLogger("app.video_ai_templates")
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.models.enums import VideoAIProcessStatus
 from app.models.user import User
 from app.models.video_ai_template import VideoAITemplate
@@ -160,6 +165,73 @@ async def list_templates(
         page=page,
         page_size=page_size,
     )
+
+
+async def _do_batch_create_and_start(creator_id: uuid.UUID, owner_id: uuid.UUID | None) -> None:
+    """后台异步：查询所有 download_status=done 且无模板的视频，批量创建模板并入队。"""
+    try:
+        async with SessionLocal() as session:
+            # 1. 查所有 done 视频
+            vs_stmt = select(VideoSource).where(VideoSource.download_status == "done")
+            if owner_id is not None:
+                vs_stmt = vs_stmt.where(VideoSource.owner_id == owner_id)
+            all_vs = list((await session.execute(vs_stmt)).scalars().all())
+
+            if not all_vs:
+                logger.info("batch_create_and_start: no done videos found")
+                return
+
+            vs_ids = [vs.id for vs in all_vs]
+
+            # 2. 查已有模板的 video_source_id
+            existing_stmt = select(VideoAITemplate.video_source_id).where(
+                VideoAITemplate.video_source_id.in_(vs_ids)
+            )
+            if owner_id is not None:
+                existing_stmt = existing_stmt.where(VideoAITemplate.owner_id == owner_id)
+            existing_ids = set((await session.execute(existing_stmt)).scalars().all())
+
+            # 3. 批量创建
+            vs_map = {vs.id: vs for vs in all_vs}
+            new_tpls: list[VideoAITemplate] = []
+            for vsid in vs_ids:
+                if vsid in existing_ids:
+                    continue
+                vs = vs_map[vsid]
+                tpl = VideoAITemplate(
+                    owner_id=creator_id,
+                    title=vs.video_title or vs.blogger_name or "新模板",
+                    description="",
+                    video_source_id=vsid,
+                    process_status=VideoAIProcessStatus.pending,
+                )
+                session.add(tpl)
+                new_tpls.append(tpl)
+
+            await session.commit()
+            for tpl in new_tpls:
+                await session.refresh(tpl)
+
+        # 4. 批量入队（在 session 关闭后，enqueue 使用自己的 session）
+        for tpl in new_tpls:
+            await enqueue_template(str(tpl.id))
+
+        logger.info(
+            "batch_create_and_start done: created=%d skipped=%d",
+            len(new_tpls), len(existing_ids),
+        )
+    except Exception as exc:
+        logger.error("batch_create_and_start failed: %s", exc)
+
+
+@router.post("/batch-create-and-start", status_code=status.HTTP_202_ACCEPTED)
+async def batch_create_and_start(
+    creator_id: uuid.UUID = Depends(_get_creator_id),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict[str, str]:
+    """触发后台批量创建模板，立即返回 202。"""
+    asyncio.create_task(_do_batch_create_and_start(creator_id, owner_id))
+    return {"status": "accepted"}
 
 
 @router.get("/by-video-source-ids", response_model=dict[str, str])
