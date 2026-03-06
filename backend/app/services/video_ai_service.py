@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -620,6 +621,73 @@ async def _run_face_removing_stage(
     return result_shots
 
 
+async def _run_upscaling_stage(
+    *,
+    template_id: str,
+    shots: list[dict],
+    upscaling_scale: int = 1024,
+) -> list[dict]:
+    """
+    第五阶段：用 Pillow LANCZOS 将每张 shot 图片缩放到目标长边像素，上传 CDN 后替换 image_url。
+    """
+    from PIL import Image
+    from app.services.upload_service import UpstreamImageUploadService
+
+    upload_svc = UpstreamImageUploadService()
+    logger.info("[%s] Upscaling: processing %d shots, target_long_side=%d", template_id, len(shots), upscaling_scale)
+
+    result_shots = []
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for i, shot in enumerate(shots):
+            image_url = shot.get("image_url", "")
+            if not image_url:
+                result_shots.append(shot)
+                continue
+
+            last_exc: Exception | None = None
+            cdn_url: str | None = None
+            for attempt in range(1, 4):
+                try:
+                    # 下载原图
+                    dl_resp = await client.get(image_url)
+                    dl_resp.raise_for_status()
+                    img = Image.open(io.BytesIO(dl_resp.content))
+
+                    w, h = img.size
+                    long_side = max(w, h)
+                    if long_side >= upscaling_scale:
+                        logger.info("[%s] Upscaling shot[%d]: already %dx%d >= %d, skip", template_id, i, w, h, upscaling_scale)
+                        cdn_url = image_url  # 无需缩放，保留原 URL
+                        break
+
+                    scale_factor = upscaling_scale / long_side
+                    new_w = round(w * scale_factor)
+                    new_h = round(h * scale_factor)
+                    img_up = img.resize((new_w, new_h), Image.LANCZOS)
+                    logger.info("[%s] Upscaling shot[%d]: %dx%d -> %dx%d", template_id, i, w, h, new_w, new_h)
+
+                    buf = io.BytesIO()
+                    img_up.save(buf, format="PNG")
+                    buf.seek(0)
+
+                    upload_result = await upload_svc.upload_image(buf.read(), "image/png", f"upscaled_{i}.png")
+                    cdn_url = upload_result.url
+                    logger.info("[%s] Upscaling shot[%d] uploaded to CDN: %s", template_id, i, cdn_url[:80])
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning("[%s] Upscaling shot[%d] attempt %d/3 failed: %s", template_id, i, attempt, exc)
+
+            if last_exc is not None:
+                raise ValueError(f"Upscaling shot[{i}] failed after 3 attempts: {last_exc}") from last_exc
+
+            result_shots.append({**shot, "image_url": cdn_url})
+
+    logger.info("[%s] Upscaling stage done: %d shots", template_id, len(result_shots))
+    return result_shots
+
+
 # =============================================================================
 # 处理管道（Pipeline）
 # =============================================================================
@@ -721,6 +789,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     face_removing_score_thresh = pipeline_cfg.face_removing_score_thresh
                     face_removing_margin_scale = pipeline_cfg.face_removing_margin_scale
                     face_removing_head_top_ratio = pipeline_cfg.face_removing_head_top_ratio
+                    upscaling_scale = pipeline_cfg.upscaling_scale or 1024
                 else:
                     understand_model = "gemini-3.1-pro-preview"
                     understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
@@ -734,6 +803,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     face_removing_score_thresh = 0.3
                     face_removing_margin_scale = 0.2
                     face_removing_head_top_ratio = 0.7
+                    upscaling_scale = 1024
             # 获取当前 state（可能带有已完成阶段信息）
             state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
             completed_stages: list[str] = state.get("completed_stages") or []
@@ -923,6 +993,44 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         tpl.extra = extra
                         await session.commit()
                 logger.info("[%s] face_removing stage completed, %d shots saved", template_id, len(final_shots))
+
+            # ========== 步骤 5: 图片超分（失败则删除模板和视频源）==========
+            if "upscaling" in completed_stages:
+                upscaled_shots = state.get("extracted_shots") or final_shots
+                logger.info("[%s] upscaling skipped (already completed), %d shots", template_id, len(upscaled_shots))
+            else:
+                _set_status(template_id, VideoAIProcessStatus.upscaling)
+                logger.info("[%s] upscaling stage started, %d shots", template_id, len(final_shots))
+                try:
+                    upscaled_shots = await _run_upscaling_stage(
+                        template_id=template_id,
+                        shots=final_shots,
+                        upscaling_scale=upscaling_scale,
+                    )
+                except Exception as exc:
+                    logger.error("[%s] upscaling failed, deleting template and video source: %s", template_id, exc)
+                    await _delete_template_and_video_source(template_id, uuid_val)
+                    video_ai_states.pop(template_id, None)
+                    video_ai_worker_tasks.pop(template_id, None)
+                    return
+
+                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.upscaling))
+                state["extracted_shots"] = upscaled_shots
+                state["updated_at"] = _utcnow_iso()
+                if "upscaling" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("upscaling")
+                _mark_dirty(template_id)
+
+                # 持久化到数据库，超分后的图为最终造型图，快照到 extra.upscaling_shots
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        tpl.extracted_shots = upscaled_shots
+                        extra = dict(tpl.extra or {})
+                        extra["upscaling_shots"] = upscaled_shots
+                        tpl.extra = extra
+                        await session.commit()
+                logger.info("[%s] upscaling stage completed, %d shots saved", template_id, len(upscaled_shots))
 
             # ========== 步骤 N: 成功 ==========
             _set_status(template_id, VideoAIProcessStatus.success)

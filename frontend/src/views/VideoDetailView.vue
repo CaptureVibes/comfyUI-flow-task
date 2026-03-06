@@ -415,39 +415,7 @@ async function loadData() {
 
 async function loadStats() {
   try {
-    let items = await fetchVideoSourceStatsHistory(videoId)
-    // If no real data, generate mock data for demo
-    if (items.length === 0 && video.value) {
-      const baseView = video.value.view_count || 10000
-      const baseLike = video.value.like_count || 500
-      const baseComment = video.value.comment_count || 100
-      const baseFavorite = video.value.favorite_count || 50
-      const baseShare = video.value.share_count || 20
-      const now = new Date()
-      items = []
-      for (let i = 14; i >= 0; i--) {
-        const date = new Date(now)
-        date.setDate(date.getDate() - i)
-        date.setHours(0, 0, 0, 0)
-        // Add some random variation
-        const viewVariation = Math.floor((i / 14) * baseView * 0.3) + Math.floor(Math.random() * baseView * 0.1)
-        const likeVariation = Math.floor((i / 14) * baseLike * 0.25) + Math.floor(Math.random() * baseLike * 0.08)
-        const commentVariation = Math.floor((i / 14) * baseComment * 0.2) + Math.floor(Math.random() * baseComment * 0.05)
-        const favoriteVariation = Math.floor((i / 14) * baseFavorite * 0.15) + Math.floor(Math.random() * baseFavorite * 0.04)
-        const shareVariation = Math.floor((i / 14) * baseShare * 0.2) + Math.floor(Math.random() * baseShare * 0.06)
-        items.push({
-          id: `mock-${i}`,
-          video_source_id: videoId,
-          collected_at: date.toISOString(),
-          view_count: baseView - viewVariation,
-          like_count: baseLike - likeVariation,
-          comment_count: baseComment - commentVariation,
-          favorite_count: baseFavorite - favoriteVariation,
-          share_count: baseShare - shareVariation,
-        })
-      }
-    }
-    statsItems.value = items
+    statsItems.value = await fetchVideoSourceStatsHistory(videoId)
   } catch { /* ignore */ }
 }
 
@@ -569,7 +537,7 @@ const shareYLabels = computed(() => {
 // X-axis labels (dates) - show at most 7 labels
 const maxLabels = 7
 const labelStep = computed(() => Math.max(1, Math.floor(statsItems.value.length / maxLabels)))
-const xStep = computed(() => statsItems.value.length > 1 ? (chartRight - chartLeft) / (statsItems.value.length - 1) : 0)
+const xStep = computed(() => statsItems.value.length > 1 ? (chartRight - chartLeft) / (statsItems.value.length - 1) : (chartRight - chartLeft) / 2)
 
 const viewXLabels = computed(() => {
   return statsItems.value
@@ -600,11 +568,12 @@ function formatDateShort(iso) {
 }
 
 function calcPoints(data, minVal, maxVal) {
-  if (data.length < 2) return []
+  if (data.length === 0) return []
   const range = maxVal - minVal || 1
 
   return data.map((val, i) => {
-    const x = chartLeft + i * xStep.value
+    // single point: center it horizontally
+    const x = data.length === 1 ? (chartLeft + chartRight) / 2 : chartLeft + i * xStep.value
     const normalized = (val - minVal) / range
     const y = chartBottom - normalized * chartHeight
     return { x, y }

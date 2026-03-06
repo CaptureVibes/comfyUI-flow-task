@@ -94,6 +94,7 @@ async def get_pipeline_settings(
         face_removing_score_thresh=row.face_removing_score_thresh,
         face_removing_margin_scale=row.face_removing_margin_scale,
         face_removing_head_top_ratio=row.face_removing_head_top_ratio,
+        upscaling_scale=row.upscaling_scale,
     )
 
 
@@ -119,6 +120,7 @@ async def put_pipeline_settings(
         face_removing_score_thresh=row.face_removing_score_thresh,
         face_removing_margin_scale=row.face_removing_margin_scale,
         face_removing_head_top_ratio=row.face_removing_head_top_ratio,
+        upscaling_scale=row.upscaling_scale,
     )
 
 

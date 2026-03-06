@@ -41,6 +41,9 @@ class PipelineSetting(Base):
     face_removing_margin_scale: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
     face_removing_head_top_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
 
+    # 第五阶段：图片超分（Pillow LANCZOS）
+    upscaling_scale: Mapped[int] = mapped_column(nullable=False, default=1024)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

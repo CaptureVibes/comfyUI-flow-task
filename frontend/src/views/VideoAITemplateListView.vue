@@ -63,6 +63,14 @@
       </div>
       <div class="vai-stat-card">
         <div class="vai-stat-top">
+          <span class="vai-stat-label">图片超分</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.upscaling || 0 }}</div>
+        <div class="vai-stat-sub">upscaling</div>
+      </div>
+      <div class="vai-stat-card">
+        <div class="vai-stat-top">
           <span class="vai-stat-label">成功</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         </div>
@@ -328,6 +336,19 @@
             </el-form>
           </el-tab-pane>
 
+          <!-- Step 5 -->
+          <el-tab-pane label="步骤五：图片超分" name="step5">
+            <div class="cfg-step-desc">
+              使用 Pillow LANCZOS 算法将去脸后的每张图片缩放到指定长边像素。超分后的图片为最终造型图。
+            </div>
+            <el-form label-position="top" class="cfg-form">
+              <el-form-item label="目标长边像素（scale）">
+                <el-input-number v-model="cfg.upscaling_scale" :min="256" :max="4096" :step="256" style="width:160px" />
+                <div class="cfg-field-hint">目标长边像素，例如 1024 = 1K，2048 = 2K，默认 1024。若原图已达目标尺寸则跳过。</div>
+              </el-form-item>
+            </el-form>
+          </el-tab-pane>
+
         </el-tabs>
       </div>
 
@@ -442,6 +463,7 @@ const cfg = reactive({
   face_removing_score_thresh: 0.3,
   face_removing_margin_scale: 0.2,
   face_removing_head_top_ratio: 0.7,
+  upscaling_scale: 1024,
 })
 
 // JSON validation errors for schema fields
@@ -484,6 +506,7 @@ async function openConfig() {
       face_removing_score_thresh: data.face_removing_score_thresh ?? 0.3,
       face_removing_margin_scale: data.face_removing_margin_scale ?? 0.2,
       face_removing_head_top_ratio: data.face_removing_head_top_ratio ?? 0.7,
+      upscaling_scale: data.upscaling_scale ?? 1024,
     })
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
@@ -514,6 +537,7 @@ async function saveConfig() {
       face_removing_score_thresh: cfg.face_removing_score_thresh,
       face_removing_margin_scale: cfg.face_removing_margin_scale,
       face_removing_head_top_ratio: cfg.face_removing_head_top_ratio,
+      upscaling_scale: cfg.upscaling_scale,
     })
     ElMessage.success('配置已保存')
     showConfig.value = false
@@ -533,6 +557,7 @@ const STATUS_CONFIG = {
   imagegen: { label: '图片生成', type: '', customColor: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' }, // Purple
   splitting: { label: '拆分图片', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' }, // Pink
   face_removing: { label: '消除人脸', type: '', customColor: '#f59e0b', bg: '#fffbeb', border: '#fde68a' }, // Orange
+  upscaling: { label: '图片超分', type: '', customColor: '#0ea5e9', bg: '#f0f9ff', border: '#bae6fd' }, // Sky blue
   paused: { label: '已暂停', type: 'info' },
   success: { label: '已完成', type: 'success' },
   fail: { label: '失败', type: 'danger' },
@@ -973,7 +998,7 @@ onMounted(() => {
 /* Stats row */
 .vai-stats {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 14px;
   margin-bottom: 28px;
 }

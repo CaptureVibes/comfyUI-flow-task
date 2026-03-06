@@ -51,3 +51,5 @@ class PipelineSettingsPayload(BaseModel):
     face_removing_score_thresh: float = 0.3
     face_removing_margin_scale: float = 0.2
     face_removing_head_top_ratio: float = 0.7
+    # 第五阶段：图片超分（Pillow LANCZOS）
+    upscaling_scale: int = 1024

@@ -433,7 +433,7 @@ const faceRemovingShots = computed(() => form.extra?.face_removing_shots || [])
 
 // Processing state
 const isProcessing = computed(() =>
-  templateStatus.value && ['pending', 'understanding', 'imagegen', 'splitting', 'face_removing'].includes(templateStatus.value)
+  templateStatus.value && ['pending', 'understanding', 'imagegen', 'splitting', 'face_removing', 'upscaling'].includes(templateStatus.value)
 )
 
 const progressPercentage = computed(() => {
@@ -442,7 +442,8 @@ const progressPercentage = computed(() => {
     understanding: 25,
     imagegen: 50,
     splitting: 70,
-    face_removing: 85,
+    face_removing: 80,
+    upscaling: 92,
     success: 100,
     fail: 0,
     paused: 0,
@@ -463,6 +464,7 @@ const progressText = computed(() => {
     imagegen: '正在抽帧生图...',
     splitting: '正在拆分图片...',
     face_removing: '正在消除人脸...',
+    upscaling: '正在图片超分...',
     success: '分析完成！',
     fail: '处理失败',
     paused: '已暂停',
@@ -477,6 +479,7 @@ function statusLabel(status) {
     imagegen: '生图中',
     splitting: '拆分中',
     face_removing: '消脸中',
+    upscaling: '超分中',
     success: '成功',
     fail: '失败',
     paused: '已暂停',
@@ -666,7 +669,7 @@ async function loadData() {
     templateStatus.value = data.process_status
     errorMessage.value = data.process_error || ''
 
-    if (['pending', 'understanding', 'imagegen', 'splitting', 'face_removing'].includes(data.process_status)) {
+    if (['pending', 'understanding', 'imagegen', 'splitting', 'face_removing', 'upscaling'].includes(data.process_status)) {
       startPolling()
     }
   } catch (err) {
@@ -965,6 +968,7 @@ onUnmounted(() => {
 .vtfd-status-imagegen { background: #ede9fe; color: #7c3aed; }
 .vtfd-status-splitting { background: #e0e7ff; color: #4338ca; }
 .vtfd-status-face_removing { background: #fce7f3; color: #be185d; }
+.vtfd-status-upscaling { background: #f0f9ff; color: #0369a1; }
 .vtfd-status-success { background: #dcfce7; color: #15803d; }
 .vtfd-status-fail { background: #fee2e2; color: #b91c1c; }
 .vtfd-status-paused { background: #f1f5f9; color: #475569; }
