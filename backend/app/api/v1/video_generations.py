@@ -113,6 +113,17 @@ async def patch_job_status_endpoint(
     return DailyGenerationRead.model_validate(job)
 
 
+@router.post("/{job_id}/rollback", response_model=DailyGenerationRead)
+async def rollback_job_status_endpoint(
+    job_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+) -> DailyGenerationRead:
+    service = VideoGenerationService(db=session)
+    job = await service.rollback_status(job_id, owner_id=owner_id)
+    return DailyGenerationRead.model_validate(job)
+
+
 @router.delete("/{job_id}")
 async def delete_daily_job_endpoint(
     job_id: uuid.UUID,

@@ -53,6 +53,19 @@
             <div class="dt-card-badge">{{ index + 1 }}</div>
             <!-- Status Badge -->
             <span class="dt-status-badge" :class="`dt-status-${job.status}`">{{ statusLabel(job.status) }}</span>
+            <!-- Rollback Button -->
+            <el-button
+              v-if="canRollback(job)"
+              size="small"
+              plain
+              class="dt-rollback-btn"
+              :loading="rollbacking === job.id"
+              @click="handleRollback(job)"
+              :title="PREV_STATUS_LABEL[job.status]"
+            >
+              <svg v-if="rollbacking !== job.id" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+              {{ PREV_STATUS_LABEL[job.status] }}
+            </el-button>
             <!-- Delete Button (Only for today's pending tasks) -->
             <el-button
               v-if="isToday && (job.status === 'pending' || job.status === 'generating')"
@@ -140,13 +153,14 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchDailyGenerations, uploadDailyGenerations, deleteDailyGeneration, fetchDailyResults } from '../api/video_generations.js'
+import { fetchDailyGenerations, uploadDailyGenerations, deleteDailyGeneration, fetchDailyResults, rollbackGenerationStatus } from '../api/video_generations.js'
 import { renderMarkdown } from '../utils/markdown'
 
 /** STATE **/
 const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
+const rollbacking = ref(null)   // job.id being rolled back
 const targetDate = ref('')
 const jobs = ref([])
 
@@ -168,7 +182,40 @@ const STATUS_LABELS = {
   published:       '已发布',
 }
 
+const PREV_STATUS_LABEL = {
+  generating:      '回退到待生成',
+  reviewing:       '回退到生成中',
+  pending_publish: '回退到待审核',
+  published:       '回退到待发布',
+}
+
 function statusLabel(s) { return STATUS_LABELS[s] || s }
+
+function canRollback(job) {
+  return job.status in PREV_STATUS_LABEL
+}
+
+async function handleRollback(job) {
+  const label = PREV_STATUS_LABEL[job.status]
+  try {
+    await ElMessageBox.confirm(
+      `确定将此任务「${label}」吗？`,
+      '回退状态',
+      { confirmButtonText: '确认回退', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  rollbacking.value = job.id
+  try {
+    const updated = await rollbackGenerationStatus(job.id)
+    const idx = jobs.value.findIndex(j => j.id === job.id)
+    if (idx >= 0) jobs.value[idx] = updated
+    ElMessage.success(`已${label}`)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '回退失败')
+  } finally {
+    rollbacking.value = null
+  }
+}
 
 /** Computed Formatting **/
 function formatDuration(secondsStr) {
@@ -455,6 +502,35 @@ onMounted(() => {
 .dt-card:hover .dt-card-badge {
   transform: rotate(0) scale(1.05);
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.dt-rollback-btn {
+  position: absolute;
+  top: 24px;
+  right: 68px;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background: white;
+  border-color: #fcd34d;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  height: auto;
+  display: flex;
+  align-items: center;
+}
+
+.dt-rollback-btn:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.dt-card:hover .dt-rollback-btn {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .dt-delete-btn {

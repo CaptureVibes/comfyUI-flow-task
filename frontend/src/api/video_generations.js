@@ -32,6 +32,11 @@ export async function fetchDailyResults(dateStr) {
   return data
 }
 
+export async function rollbackGenerationStatus(jobId) {
+  const { data } = await http.post(`/video-generations/${jobId}/rollback`)
+  return data
+}
+
 export async function deleteDailyGeneration(jobId) {
   const { data } = await http.delete(`/video-generations/${jobId}`)
   return data

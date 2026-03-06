@@ -261,6 +261,30 @@ class VideoGenerationService:
         await self.db.commit()
         return {"updated": updated, "skipped": skipped, "errors": errors}
 
+    async def rollback_status(self, job_id: uuid.UUID, owner_id: uuid.UUID | None) -> DailyGeneration:
+        """Roll back a job to the previous status in the pipeline."""
+        PREV_STATUS: dict[str, str] = {
+            "generating":      "pending",
+            "reviewing":       "generating",
+            "pending_publish": "reviewing",
+            "published":       "pending_publish",
+        }
+        q = select(DailyGeneration).where(DailyGeneration.id == job_id)
+        q = _apply_owner_filter(q, owner_id)
+        job = (await self.db.execute(q)).scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+        prev = PREV_STATUS.get(job.status)
+        if not prev:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"状态 {job.status} 无法回退",
+            )
+        job.status = prev
+        await self.db.commit()
+        await self.db.refresh(job)
+        return job
+
     async def delete_daily_job(self, job_id: uuid.UUID, owner_id: uuid.UUID | None) -> bool:
         q = select(DailyGeneration).where(DailyGeneration.id == job_id)
         q = _apply_owner_filter(q, owner_id)
