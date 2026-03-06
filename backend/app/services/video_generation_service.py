@@ -1,4 +1,7 @@
+import asyncio
 import logging
+import os
+import tempfile
 import uuid
 import json
 from datetime import date
@@ -8,6 +11,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from google.cloud import storage
 
+import httpx
+
+from app.core.config import settings
 from app.models.daily_generation import DailyGeneration
 
 logger = logging.getLogger(__name__)
@@ -179,9 +185,37 @@ class VideoGenerationService:
         await self.db.refresh(job)
         return job
 
+    async def _upload_gcs_video_to_cdn(self, blob, filename: str) -> str:
+        """Download a GCS blob to a temp file and upload to CDN. Returns CDN URL."""
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            # Download from GCS in a thread (sync SDK)
+            await asyncio.to_thread(blob.download_to_filename, tmp_path)
+
+            # Upload to CDN
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                with open(tmp_path, "rb") as f:
+                    response = await client.post(
+                        settings.video_upload_api_url,
+                        files={"file": (filename, f, "video/mp4")},
+                        headers={"Accept": "*/*"},
+                    )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Upload API returned {response.status_code}: {response.text[:300]}")
+            payload = response.json()
+            cdn_url = payload.get("data", {}).get("url") if isinstance(payload.get("data"), dict) else None
+            if not cdn_url:
+                raise RuntimeError(f"Upload API response missing data.url: {payload}")
+            return cdn_url
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
     async def fetch_daily_results(self, target_date: date, owner_id: uuid.UUID | None) -> dict:
         """
-        Read result videos from GCS for the given date and update jobs.
+        Read result videos from GCS for the given date, upload to CDN, and update jobs.
         GCS path pattern: jimeng/results/{YYYY-MM-DD}/{NNN}/video.mp4
         Jobs are matched by sort_order (1-based → 001, 002, …).
         Only jobs in 'generating' status are updated.
@@ -208,15 +242,21 @@ class VideoGenerationService:
                 raise RuntimeError("GCS bucket not initialized")
 
             blob = self.bucket.blob(object_key)
-            if not blob.exists():
+            if not await asyncio.to_thread(blob.exists):
                 errors.append(f"{folder}/video.mp4 not found in GCS")
                 skipped += 1
                 continue
 
-            video_url = f"https://storage.googleapis.com/{self.bucket_name}/{object_key}"
-            job.result_videos = [{"video_url": video_url, "thumbnail_url": ""}]
-            job.status = "reviewing"
-            updated += 1
+            try:
+                filename = f"{date_str}_{folder}.mp4"
+                cdn_url = await self._upload_gcs_video_to_cdn(blob, filename)
+                job.result_videos = [{"video_url": cdn_url, "thumbnail_url": ""}]
+                job.status = "reviewing"
+                updated += 1
+            except Exception as exc:
+                logger.warning("Failed to upload GCS video %s to CDN: %s", object_key, exc)
+                errors.append(f"{folder}: upload failed - {exc}")
+                skipped += 1
 
         await self.db.commit()
         return {"updated": updated, "skipped": skipped, "errors": errors}
