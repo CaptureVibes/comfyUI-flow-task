@@ -118,26 +118,80 @@
         </div>
 
         <!-- Video list -->
-        <div v-loading="videosLoading" class="ad-video-list">
+        <div v-loading="videosLoading" class="ad-video-list" :class="{ 'ad-video-list--grid': activeTab === 'pending_publish' || activeTab === 'published' }">
           <template v-if="videos.length">
-            <div v-for="video in videos" :key="video.id" class="ad-video-item" :class="{ 'ad-video-item--reviewing': video.status === 'reviewing' }">
-              <!-- Normal row header -->
-              <div class="ad-video-row">
-                <div class="ad-video-thumb">
-                  <img v-if="video.status === 'pending_publish' || video.status === 'published'"
-                    :src="selectedThumb(video)" class="ad-video-thumb-img" />
-                  <img v-else-if="video.result_videos && video.result_videos[0]"
-                    :src="video.result_videos[0].thumbnail_url" class="ad-video-thumb-img" />
-                  <div v-else class="ad-video-thumb-placeholder">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+            <div v-for="video in videos" :key="video.id" class="ad-video-item" :class="{ 'ad-video-item--reviewing': video.status === 'reviewing', 'ad-video-item--grid': activeTab === 'pending_publish' || activeTab === 'published' }">
+              
+              <!-- GRID MODE (pending_publish / published) -->
+              <template v-if="activeTab === 'pending_publish' || activeTab === 'published'">
+                <div class="ad-grid-thumb-wrapper">
+                  <video
+                    v-if="video.selected_video_url"
+                    :src="video.selected_video_url"
+                    class="ad-grid-video"
+                    controls
+                    preload="metadata"
+                    @click.stop
+                  />
+                  <img
+                    v-else-if="selectedThumb(video)"
+                    :src="selectedThumb(video)"
+                    class="ad-grid-img"
+                  />
+                  <div v-else class="ad-grid-placeholder">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+                  </div>
+                  <div class="ad-grid-status" :class="`ad-status-${video.status}`">
+                    <template v-if="video.status === 'pending_publish'">
+                      <span>待发布</span>
+                    </template>
+                    <template v-else>
+                      <span>已发布</span>
+                    </template>
                   </div>
                 </div>
-                <div class="ad-video-info">
-                  <div class="ad-video-title">{{ video.prompt ? video.prompt.slice(0, 60) + (video.prompt.length > 60 ? '…' : '') : '(无描述)' }}</div>
-                  <div class="ad-video-meta">
+                
+                <div class="ad-grid-content">
+                  <div class="ad-grid-title" :title="video.prompt">
+                    {{ video.prompt ? video.prompt.slice(0, 60) + (video.prompt.length > 60 ? '…' : '') : '(无描述)' }}
+                  </div>
+                  <div class="ad-grid-meta">
                     <span class="ad-video-date">{{ formatDate(video.created_at) }}</span>
-                    <span v-if="video.duration" class="ad-video-duration">{{ video.duration }}</span>
                     <span
+                      v-if="video.template_id"
+                      class="ad-video-template-link"
+                      @click="$router.push(`/dashboard/video-ai-templates/${video.template_id}/edit`)"
+                    >
+                      查看模板
+                    </span>
+                  </div>
+                  <button
+                    v-if="video.status === 'pending_publish'"
+                    class="ad-grid-btn"
+                    @click="advanceToPublished(video)"
+                  >标记为已发布</button>
+                </div>
+              </template>
+
+              <!-- LIST MODE (pending / generating / reviewing) -->
+              <template v-else>
+                <!-- Normal row header -->
+                <div class="ad-video-row">
+                  <div class="ad-video-thumb">
+                    <img v-if="video.result_videos && video.result_videos[0]"
+                      :src="video.result_videos[0].thumbnail_url" class="ad-video-thumb-img" />
+                    <img v-else-if="video.thumbnail_url"
+                      :src="video.thumbnail_url" class="ad-video-thumb-img" />
+                    <div v-else class="ad-video-thumb-placeholder">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+                    </div>
+                  </div>
+                  <div class="ad-video-info">
+                    <div class="ad-video-title">{{ video.prompt ? video.prompt.slice(0, 60) + (video.prompt.length > 60 ? '…' : '') : '(无描述)' }}</div>
+                    <div class="ad-video-meta">
+                      <span class="ad-video-date">{{ formatDate(video.created_at) }}</span>
+                      <span v-if="video.duration" class="ad-video-duration">{{ video.duration }}</span>
+                      <span
                       v-if="video.template_id"
                       class="ad-video-template-link"
                       @click="$router.push(`/dashboard/video-ai-templates/${video.template_id}/edit`)"
@@ -151,12 +205,6 @@
                   <span class="ad-status-badge" :class="`ad-status-${video.status}`">
                     {{ statusLabel(video.status) }}
                   </span>
-                  <!-- Publish action for pending_publish -->
-                  <button
-                    v-if="video.status === 'pending_publish'"
-                    class="ad-action-btn"
-                    @click="advanceToPublished(video)"
-                  >标记已发布</button>
                 </div>
               </div>
 
@@ -196,6 +244,7 @@
                   @click="confirmSelection(video)"
                 >确认选择，进入待发布</button>
               </div>
+              </template>
             </div>
           </template>
           <div v-else class="ad-video-empty">
@@ -697,8 +746,14 @@ onMounted(loadAccount)
 .ad-video-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   min-height: 160px;
+}
+
+.ad-video-list--grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
 }
 
 .ad-video-item {
@@ -708,10 +763,109 @@ onMounted(loadAccount)
   border-radius: 10px;
   border: 1px solid #f1f5f9;
   background: #fafbff;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .ad-video-item:hover { background: #eef2ff; border-color: #c7d2fe; }
+
+/* Grid Card mode */
+.ad-video-item--grid {
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.ad-video-item--grid:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+  border-color: #cbd5e1;
+  background: #fff;
+}
+
+.ad-grid-thumb-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9/16;
+  background: #0f172a;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.ad-grid-video,
+.ad-grid-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.ad-grid-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+}
+
+.ad-grid-status {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ad-grid-content {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ad-grid-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ad-grid-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ad-grid-btn {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 0;
+  width: 100%;
+  text-align: center;
+  border-radius: 8px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #4338ca;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ad-grid-btn:hover { background: #e0e7ff; border-color: #a5b4fc; }
 
 /* Default (non-reviewing) row is a single horizontal row */
 .ad-video-row {
@@ -734,6 +888,14 @@ onMounted(loadAccount)
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.ad-video-thumb-player {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #0f172a;
 }
 
 .ad-video-thumb-placeholder {
@@ -851,13 +1013,13 @@ onMounted(loadAccount)
 }
 
 .ad-candidates-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-bottom: 14px;
 }
 
 .ad-candidate {
-  flex: 1;
   cursor: pointer;
   border-radius: 10px;
   border: 2px solid #e2e8f0;

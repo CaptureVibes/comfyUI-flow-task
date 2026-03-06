@@ -39,13 +39,19 @@ def _apply_owner_filter(q, owner_id: uuid.UUID | None):
 class VideoGenerationService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        try:
-            self.storage_client = storage.Client(project="ai-agent-461123")
-            self.bucket_name = "decom-objects"
-            self.bucket = self.storage_client.bucket(self.bucket_name)
-        except Exception as e:
-            logger.warning(f"Could not initialize GCS client: {e}")
-            self.bucket = None
+        self.bucket_name = "decom-objects"
+        self._storage_client = None
+        self._bucket = None
+
+    @property
+    def bucket(self):
+        if self._bucket is None:
+            try:
+                self._storage_client = storage.Client(project="ai-agent-461123")
+                self._bucket = self._storage_client.bucket(self.bucket_name)
+            except Exception as e:
+                logger.warning(f"Could not initialize GCS client: {e}")
+        return self._bucket
 
     async def start_generation(
         self,
