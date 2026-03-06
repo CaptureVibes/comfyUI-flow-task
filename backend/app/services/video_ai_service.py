@@ -468,7 +468,7 @@ async def _run_imagegen_stage(
     # 4. 轮询结果
     result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
 
-    # 5. 下载 Nano2 结果图并上传到我们的 CDN
+    # 5. 下载 Nano2 结果图并上传到我们的 CDN（upload_image 内部自动重试 3 次）
     from app.services.upload_service import UpstreamImageUploadService
     cdn_url = result_url
     try:
@@ -625,6 +625,26 @@ async def _run_face_removing_stage(
 # =============================================================================
 
 
+async def _delete_template_and_video_source(template_id: str, uuid_val: UUID) -> None:
+    """删除模板及其关联的视频源（用于阶段3/4不可恢复失败时的清理）。"""
+    try:
+        async with SessionLocal() as session:
+            tpl = await session.get(VideoAITemplate, uuid_val)
+            if tpl:
+                video_source_id = tpl.video_source_id
+                await session.delete(tpl)
+                await session.flush()
+                if video_source_id:
+                    from app.models.video_source import VideoSource
+                    vs = await session.get(VideoSource, video_source_id)
+                    if vs:
+                        await session.delete(vs)
+                await session.commit()
+                logger.info("[%s] template and video source deleted after unrecoverable failure", template_id)
+    except Exception as exc:
+        logger.error("[%s] failed to delete template/video source: %s", template_id, exc)
+
+
 async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
     """
     执行视频 AI 处理管道
@@ -721,7 +741,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             if not api_key:
                 raise ValueError("系统未配置 EvoLink API Key，请前往【系统设置】进行配置。")
 
-            # ========== 步骤 1: 视频整体理解 ==========
+            # ========== 步骤 1: 视频整体理解（最多重试 3 次）==========
             if "understanding" in completed_stages:
                 prompt_description = state.get("prompt_description") or ""
                 logger.info("[%s] understanding skipped (already completed), prompt_description=%d chars",
@@ -730,14 +750,26 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 _set_status(template_id, VideoAIProcessStatus.understanding)
                 logger.info("[%s] understanding started", template_id)
 
-                prompt_description = await _call_evolink_api(
-                    api_base_url=api_base_url,
-                    api_key=api_key,
-                    model_name=understand_model,
-                    video_url=video_url,
-                    prompt=understand_prompt,
-                    temperature=understand_temperature,
-                )
+                last_exc: Exception | None = None
+                prompt_description = ""
+                for attempt in range(1, 4):
+                    try:
+                        prompt_description = await _call_evolink_api(
+                            api_base_url=api_base_url,
+                            api_key=api_key,
+                            model_name=understand_model,
+                            video_url=video_url,
+                            prompt=understand_prompt,
+                            temperature=understand_temperature,
+                        )
+                        last_exc = None
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        logger.warning("[%s] understanding attempt %d/3 failed: %s", template_id, attempt, exc)
+                if last_exc is not None:
+                    raise last_exc
+
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.understanding))
                 state["prompt_description"] = prompt_description
                 state["updated_at"] = _utcnow_iso()
@@ -752,23 +784,36 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         tpl.prompt_description = prompt_description
                         await session.commit()
 
-            # ========== 步骤 2: 抽帧生图 ==========
+            # ========== 步骤 2: 抽帧生图（最多重试 3 次）==========
             if "imagegen" in completed_stages:
                 shots = state.get("extracted_shots") or []
                 logger.info("[%s] imagegen skipped (already completed), %d shots", template_id, len(shots))
             else:
                 _set_status(template_id, VideoAIProcessStatus.imagegen)
                 logger.info("[%s] imagegen stage started", template_id)
-                shots = await _run_imagegen_stage(
-                    template_id=template_id,
-                    video_url=video_url,
-                    api_base_url=api_base_url,
-                    api_key=api_key,
-                    model=imagegen_model,
-                    prompt=imagegen_prompt,
-                    size=imagegen_size,
-                    quality=imagegen_quality,
-                )
+
+                last_exc = None
+                shots = []
+                for attempt in range(1, 4):
+                    try:
+                        shots = await _run_imagegen_stage(
+                            template_id=template_id,
+                            video_url=video_url,
+                            api_base_url=api_base_url,
+                            api_key=api_key,
+                            model=imagegen_model,
+                            prompt=imagegen_prompt,
+                            size=imagegen_size,
+                            quality=imagegen_quality,
+                        )
+                        last_exc = None
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        logger.warning("[%s] imagegen attempt %d/3 failed: %s", template_id, attempt, exc)
+                if last_exc is not None:
+                    raise last_exc
+
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.imagegen))
                 state["extracted_shots"] = shots
                 state["updated_at"] = _utcnow_iso()
@@ -787,7 +832,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] imagegen stage completed, %d shots saved", template_id, len(shots))
 
-            # ========== 步骤 3: 拆分图片 ==========
+            # ========== 步骤 3: 拆分图片（失败则删除模板和视频源）==========
             if "splitting" in completed_stages:
                 split_shots = state.get("extracted_shots") or []
                 logger.info("[%s] splitting skipped (already completed), %d shots", template_id, len(split_shots))
@@ -798,11 +843,26 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 if not imagegen_image_url:
                     raise ValueError("imagegen 未产出图片，无法进行拆分")
                 logger.info("[%s] splitting stage started, image=%s", template_id, imagegen_image_url[:80])
-                split_shots = await _run_splitting_stage(
-                    template_id=template_id,
-                    image_url=imagegen_image_url,
-                    splitting_api_url=splitting_api_url,
-                )
+                try:
+                    split_shots = await _run_splitting_stage(
+                        template_id=template_id,
+                        image_url=imagegen_image_url,
+                        splitting_api_url=splitting_api_url,
+                    )
+                except Exception as exc:
+                    logger.error("[%s] splitting failed, deleting template and video source: %s", template_id, exc)
+                    await _delete_template_and_video_source(template_id, uuid_val)
+                    video_ai_states.pop(template_id, None)
+                    video_ai_worker_tasks.pop(template_id, None)
+                    return
+
+                if not split_shots:
+                    logger.error("[%s] splitting returned no shots, deleting template and video source", template_id)
+                    await _delete_template_and_video_source(template_id, uuid_val)
+                    video_ai_states.pop(template_id, None)
+                    video_ai_worker_tasks.pop(template_id, None)
+                    return
+
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.splitting))
                 state["extracted_shots"] = split_shots  # 内存保留 base64 供步骤4使用
                 state["updated_at"] = _utcnow_iso()
@@ -823,21 +883,29 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] splitting stage completed, %d shots saved", template_id, len(split_shots))
 
-            # ========== 步骤 4: 去脸 ==========
+            # ========== 步骤 4: 去脸（失败则删除模板和视频源）==========
             if "face_removing" in completed_stages:
                 final_shots = state.get("extracted_shots") or split_shots
                 logger.info("[%s] face_removing skipped (already completed), %d shots", template_id, len(final_shots))
             else:
                 _set_status(template_id, VideoAIProcessStatus.face_removing)
                 logger.info("[%s] face_removing stage started, %d shots", template_id, len(split_shots))
-                final_shots = await _run_face_removing_stage(
-                    template_id=template_id,
-                    shots=split_shots,
-                    face_removing_api_url=face_removing_api_url,
-                    score_thresh=face_removing_score_thresh,
-                    margin_scale=face_removing_margin_scale,
-                    head_top_ratio=face_removing_head_top_ratio,
-                )
+                try:
+                    final_shots = await _run_face_removing_stage(
+                        template_id=template_id,
+                        shots=split_shots,
+                        face_removing_api_url=face_removing_api_url,
+                        score_thresh=face_removing_score_thresh,
+                        margin_scale=face_removing_margin_scale,
+                        head_top_ratio=face_removing_head_top_ratio,
+                    )
+                except Exception as exc:
+                    logger.error("[%s] face_removing failed, deleting template and video source: %s", template_id, exc)
+                    await _delete_template_and_video_source(template_id, uuid_val)
+                    video_ai_states.pop(template_id, None)
+                    video_ai_worker_tasks.pop(template_id, None)
+                    return
+
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.face_removing))
                 state["extracted_shots"] = final_shots
                 state["updated_at"] = _utcnow_iso()

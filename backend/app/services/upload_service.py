@@ -71,15 +71,26 @@ class UpstreamImageUploadService:
         extension = mimetypes.guess_extension(content_type) or ".png"
         safe_name = filename or f"upload-{uuid.uuid4().hex}{extension}"
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    settings.upload_api_url,
-                    files={"file": (safe_name, content, content_type)},
-                    headers={"Accept": "*/*"},
-                )
-        except httpx.RequestError as exc:
-            raise UpstreamError(f"Upload upstream request failed: {exc}") from exc
+        last_exc: Exception | None = None
+        response = None
+        for attempt in range(1, 4):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(
+                        settings.upload_api_url,
+                        files={"file": (safe_name, content, content_type)},
+                        headers={"Accept": "*/*"},
+                    )
+                last_exc = None
+                break
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if attempt < 3:
+                    import asyncio
+                    await asyncio.sleep(attempt)
+
+        if last_exc is not None:
+            raise UpstreamError(f"Upload upstream request failed after 3 attempts: {last_exc}") from last_exc
 
         if response.status_code >= 400:
             raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
