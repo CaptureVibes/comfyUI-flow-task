@@ -4,7 +4,7 @@ import logging
 import os
 import tempfile
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Any
 
 import httpx
@@ -96,7 +96,7 @@ class VideoTaskService:
         target_date: date | None = None,
     ) -> VideoTask:
         if target_date is None:
-            target_date = date.today()
+            target_date = date.today() + timedelta(days=1)
 
         task = VideoTask(
             owner_id=user_id,
