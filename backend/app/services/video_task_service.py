@@ -209,12 +209,13 @@ class VideoTaskService:
         payload = []
         for task in tasks:
             image_urls = _extract_image_urls(task.shots)
+            display_image_urls = image_urls[:1]  # 目前只传第一个
             prompt_text = (task.prompt.replace("\n", " ").replace("\r", "").strip() if task.prompt else "")[:1990]
             for sub in task.sub_tasks:
                 sub_prompt = f"video_id: {sub.id}\n{prompt_text}"
                 payload.append({
                     "prompt": sub_prompt,
-                    "image_urls": image_urls,
+                    "image_urls": display_image_urls,
                     "duration": task.duration,
                     "video_id": str(sub.id),
                 })
