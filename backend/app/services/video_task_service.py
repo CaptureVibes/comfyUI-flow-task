@@ -319,7 +319,9 @@ class VideoTaskService:
                 successfully_uploaded.append((task, sub, cdn_url))
                 logger.info("Sub-task %s uploaded, starting AI scoring", sub.id)
 
-        # Commit so frontend can see abandoned / scoring statuses immediately
+        # Recompute parent statuses and commit so frontend can see abandoned / scoring statuses immediately
+        for task in valid_tasks:
+            task.status = _compute_parent_status(task.sub_tasks)
         await self.db.commit()
 
         if not successfully_uploaded:
@@ -343,14 +345,17 @@ class VideoTaskService:
             scoring_result = await self._score_video(sub, cdn_url, config=config, sys_cfg=sys_cfg)
             return task, sub, scoring_result
 
-        score_coros = [_score_task(t, s, url) for t, s, url in successfully_uploaded]
-        score_results = await asyncio.gather(*score_coros)
+        # Use as_completed so each result is processed and committed immediately
+        score_futures = [
+            asyncio.ensure_future(_score_task(t, s, url))
+            for t, s, url in successfully_uploaded
+        ]
 
-        # 5. Process scoring results — save scores on each subtask first
-        # Group scored subtasks by parent task for later auto-selection
+        # 5. Process each scoring result as it completes — commit after each one
         task_scored_subs: dict[uuid.UUID, list] = {}  # task.id → [(sub, score)]
 
-        for task, sub, scoring_result in score_results:
+        for coro in asyncio.as_completed(score_futures):
+            task, sub, scoring_result = await coro
             logger.info("_score_video returned for sub-task %s: %s", sub.id, "success" if scoring_result else "None")
             if scoring_result:
                 final_score, round1_score, round2_score, round1_reason, round2_reason = scoring_result
@@ -368,6 +373,10 @@ class VideoTaskService:
                 sub.status = "abandoned"
                 updated += 1
                 logger.warning("Sub-task %s AI scoring failed, abandoned", sub.id)
+
+            # Immediately recompute parent status and commit
+            task.status = _compute_parent_status(task.sub_tasks)
+            await self.db.commit()
 
         # 6. For each parent task, auto-select the best subtask
         any_reviewed_template_ids = set()
@@ -397,7 +406,7 @@ class VideoTaskService:
                 other_sub.status = "abandoned"
                 logger.info("Sub-task %s abandoned (not the best)", other_sub.id)
 
-        # 7. Update parent task statuses
+        # 7. Update parent task statuses after auto-selection
         for task in valid_tasks:
             task.status = _compute_parent_status(task.sub_tasks)
 
