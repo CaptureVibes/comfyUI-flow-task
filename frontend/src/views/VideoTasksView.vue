@@ -47,6 +47,58 @@
       </div>
     </div>
 
+    <!-- Stats row -->
+    <div class="vt-stats">
+      <div class="vt-stat-card">
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">待处理</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.pending || 0 }}</div>
+        <div class="vt-stat-sub">pending</div>
+      </div>
+      <div class="vt-stat-card">
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">生成中</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.generating || 0 }}</div>
+        <div class="vt-stat-sub">generating</div>
+      </div>
+      <div class="vt-stat-card">
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">待审核</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#854d0e" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.reviewing || 0 }}</div>
+        <div class="vt-stat-sub">reviewing</div>
+      </div>
+      <div class="vt-stat-card">
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">待发布</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.pending_publish || 0 }}</div>
+        <div class="vt-stat-sub">pending_publish</div>
+      </div>
+      <div class="vt-stat-card">
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">已发布</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.published || 0 }}</div>
+        <div class="vt-stat-sub">published</div>
+      </div>
+      <div class="vt-stat-card">
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">已废弃</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.abandoned || 0 }}</div>
+        <div class="vt-stat-sub">abandoned</div>
+      </div>
+    </div>
+
     <div v-loading="loading" class="vt-content">
       <div v-if="!loading && tasks.length === 0" class="vt-empty">
         <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -138,7 +190,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults } from '../api/video_tasks.js'
+import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats } from '../api/video_tasks.js'
 import { isDuplicateRequestError } from '../api/http.js'
 
 const STATUS_LABELS = {
@@ -157,6 +209,7 @@ const tasks = ref([])
 const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
+const taskStats = ref({})
 
 function firstShotUrl(shots) {
   if (!shots || !shots.length) return ''
@@ -177,6 +230,7 @@ async function loadTasks() {
   loading.value = true
   try {
     tasks.value = await fetchVideoTasks(targetDate.value)
+    loadStats()
   } catch (e) {
     if (!isDuplicateRequestError(e)) {
       ElMessage.error('加载任务失败')
@@ -184,6 +238,12 @@ async function loadTasks() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadStats() {
+  try {
+    taskStats.value = await fetchVideoTaskStats(targetDate.value)
+  } catch { /* ignore */ }
 }
 
 async function handleUpload() {
@@ -212,7 +272,10 @@ async function handleFetchResults() {
   }
 }
 
-onMounted(() => loadTasks())
+onMounted(() => {
+  loadTasks()
+  loadStats()
+})
 </script>
 
 <style scoped>
@@ -550,4 +613,50 @@ onMounted(() => loadTasks())
 .vt-status-pending_publish { background: #fef3c7; color: #d97706; }
 .vt-status-published       { background: #dcfce7; color: #15803d; }
 .vt-status-abandoned       { background: #fee2e2; color: #b91c1c; }
+
+/* ── Stats row ── */
+.vt-stats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.vt-stat-card {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+}
+
+.vt-stat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.vt-stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.vt-stat-value {
+  font-size: 30px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1;
+  margin-bottom: 5px;
+  letter-spacing: -0.03em;
+}
+
+.vt-stat-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: monospace;
+}
 </style>

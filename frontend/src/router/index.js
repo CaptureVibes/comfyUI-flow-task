@@ -122,25 +122,25 @@ const routes = [
         path: 'video-ai-templates',
         name: 'video-ai-templates',
         component: () => import('../views/VideoAITemplateListView.vue'),
-        meta: { title: '视频AI模板' }
+        meta: { title: 'AI模板' }
       },
       {
         path: 'video-ai-templates/new',
         name: 'video-ai-template-create',
         component: () => import('../views/VideoAITemplateFormView.vue'),
-        meta: { title: '新建视频AI模板', parent: 'video-ai-templates' }
+        meta: { title: '新建AI模板', parent: 'video-ai-templates' }
       },
       {
         path: 'video-ai-templates/:id/edit',
         name: 'video-ai-template-edit',
         component: () => import('../views/VideoAITemplateFormView.vue'),
-        meta: { title: '编辑视频AI模板', parent: 'video-ai-templates' }
+        meta: { title: '编辑AI模板', parent: 'video-ai-templates' }
       },
       {
         path: 'accounts',
         name: 'accounts',
         component: () => import('../views/AccountListView.vue'),
-        meta: { title: '账号配置' }
+        meta: { title: 'AI博主' }
       },
       {
         path: 'accounts/new',

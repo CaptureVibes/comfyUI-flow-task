@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     video_image_upload_api_url: str = "http://api.hot-products.echooo.link/api/v1/video/upload-image"
     splitting_api_base_url: str = "http://34.21.127.95:8080"
 
+    gcs_project_id: str = "ai-agent-461123"
+    gcs_bucket_name: str = "audio_test_112"
+
     @property
     def max_image_size_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024

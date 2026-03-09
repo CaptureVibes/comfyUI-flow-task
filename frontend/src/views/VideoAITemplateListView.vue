@@ -2,7 +2,7 @@
   <div class="vai-page">
     <!-- Header -->
     <div class="vai-header">
-      <h1 class="vai-title">视频AI模板</h1>
+      <h1 class="vai-title">AI模板</h1>
       <div class="vai-header-actions">
         <el-button class="vai-retry-btn" :loading="batchResuming" @click="handleBatchResume">
           <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>

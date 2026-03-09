@@ -4,7 +4,7 @@
     <div class="vtfd-header">
       <div class="vtfd-header-left">
         <h1 class="vtfd-title">视频生成工厂</h1>
-        <div class="vtfd-subtitle">合并账号配置与AI分析，生成最终的高质量视频</div>
+        <div class="vtfd-subtitle">合并AI博主与AI分析，生成最终的高质量视频</div>
       </div>
       <div class="vtfd-header-actions">
         <button class="vg-btn vg-btn-cancel" @click="$router.push(`/dashboard/accounts/${accountId}`)">取消</button>

@@ -50,6 +50,13 @@ export async function fetchVideoTaskResults(dateStr) {
   return data
 }
 
+export async function fetchVideoTaskStats(dateStr) {
+  const params = {}
+  if (dateStr) params.target_date = dateStr
+  const { data } = await http.get('/video-tasks/stats', { params })
+  return data
+}
+
 // ── Sub-task endpoints ─────────────────────────────────────────────────────────
 
 export async function patchSubTaskStatus(subTaskId, payload) {

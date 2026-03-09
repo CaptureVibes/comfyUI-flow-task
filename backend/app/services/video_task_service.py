@@ -71,8 +71,7 @@ def _extract_image_urls(shots: list | None) -> list[str]:
 class VideoTaskService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        # self.bucket_name = "decom-objects"
-        self.bucket_name = "audio_test_112"
+        self.bucket_name = settings.gcs_bucket_name
         self._storage_client = None
         self._bucket = None
 
@@ -80,7 +79,7 @@ class VideoTaskService:
     def bucket(self):
         if self._bucket is None:
             try:
-                self._storage_client = storage.Client(project="ai-agent-461123")
+                self._storage_client = storage.Client(project=settings.gcs_project_id)
                 self._bucket = self._storage_client.bucket(self.bucket_name)
             except Exception as e:
                 logger.warning(f"Could not initialize GCS client: {e}")

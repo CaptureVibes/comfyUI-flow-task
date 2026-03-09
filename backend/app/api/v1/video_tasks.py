@@ -72,6 +72,28 @@ async def list_video_tasks(
     return result
 
 
+@router.get("/stats", response_model=dict[str, int])
+async def get_video_task_stats(
+    target_date: date | None = Query(default=None),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Return count per status, optionally filtered by target_date."""
+    from sqlalchemy import func, select
+    from app.models.video_task import VideoTask
+
+    stmt = select(
+        VideoTask.status,
+        func.count(VideoTask.id).label("cnt"),
+    ).group_by(VideoTask.status)
+    if owner_id is not None:
+        stmt = stmt.where(VideoTask.owner_id == owner_id)
+    if target_date is not None:
+        stmt = stmt.where(VideoTask.target_date == target_date)
+    rows = (await session.execute(stmt)).all()
+    return {str(row[0]): row[1] for row in rows}
+
+
 @router.get("/{task_id}", response_model=VideoTaskDetailRead)
 async def get_video_task(
     task_id: uuid.UUID,

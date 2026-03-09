@@ -182,7 +182,7 @@ const IconVideoLibrary = () => h('svg', {
   h('line', { x1: 2, y1: 16, x2: 22, y2: 16 })
 ])
 
-// 视频AI模板图标 (sparkle/wand)
+// AI模板图标 (sparkle/wand)
 const IconVideoAI = () => h('svg', {
   width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
   stroke: 'currentColor', 'stroke-width': 1.75,
@@ -205,7 +205,7 @@ const IconTaskMgmt = () => h('svg', {
   h('polyline', { points: '9 16 11 18 15 14' })
 ])
 
-// 账号配置图标 (id card)
+// AI博主图标 (id card)
 const IconAccount = () => h('svg', {
   width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
   stroke: 'currentColor', 'stroke-width': 1.75,
@@ -221,8 +221,8 @@ const baseMenuItems = [
   { path: '/dashboard/templates', name: 'templates', label: '工作流模板', iconComponent: IconFlow },
   { path: '/dashboard/comfyui', name: 'comfyui', label: 'ComfyUI 编辑器', iconComponent: IconComfyUI },
   { path: '/dashboard/video-library', name: 'video-library', label: '视频库', iconComponent: IconVideoLibrary },
-  { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: '视频AI模板', iconComponent: IconVideoAI },
-  { path: '/dashboard/accounts', name: 'accounts', label: '账号配置', iconComponent: IconAccount },
+  { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: 'AI模板', iconComponent: IconVideoAI },
+  { path: '/dashboard/accounts', name: 'accounts', label: 'AI博主', iconComponent: IconAccount },
   { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: '任务管理', iconComponent: IconTaskMgmt },
   { path: '/dashboard/settings', name: 'settings', label: '设置', iconComponent: IconSetting }
 ]

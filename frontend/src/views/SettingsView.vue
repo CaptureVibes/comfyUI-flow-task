@@ -68,7 +68,7 @@
 
       <div class="evo-pipeline-hint">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        AI 处理流程参数（模型、提示词、温度、输出格式等）在<router-link to="/dashboard/video-ai-templates">视频AI模板</router-link>页面右上角「流程配置」中按用户独立设置。
+        AI 处理流程参数（模型、提示词、温度、输出格式等）在<router-link to="/dashboard/video-ai-templates">AI模板</router-link>页面右上角「流程配置」中按用户独立设置。
       </div>
 
       <div v-if="!canEdit" class="readonly-notice">
