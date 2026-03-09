@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     max_image_size_mb: int = 10
     max_images_per_subtask: int = 10
 
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://localhost:5173/comfyui-flow"
     auto_create_tables: bool = True
 
     comfyui_api_base_url: str = "http://34.59.208.230:8189"

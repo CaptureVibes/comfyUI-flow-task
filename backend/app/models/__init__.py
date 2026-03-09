@@ -16,11 +16,13 @@ from app.models.pipeline_setting import PipelineSetting
 from app.models.system_setting import SystemSetting
 from app.models.generated_video import SubTaskGeneratedVideo
 
-from app.models.daily_generation import DailyGeneration
+from app.models.video_task import VideoTask, VideoSubTask
+from app.models.video_task_config import VideoTaskConfig
 
 __all__ = [
     "Task", "SubTask", "SubTaskPhoto", "SubTaskGeneratedImage", "TaskTemplate",
     "ComfyUISetting", "User", "VideoSource", "VideoSourceStat", "VideoAITemplate", "Account", "EvoLinkSetting",
     "PipelineSetting", "SystemSetting", "SubTaskGeneratedVideo",
-    "DailyGeneration",
+    "VideoTask", "VideoSubTask",
+    "VideoTaskConfig",
 ]

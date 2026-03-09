@@ -192,6 +192,19 @@ const IconVideoAI = () => h('svg', {
   h('path', { d: 'M5 14l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z' })
 ])
 
+// 任务管理图标 (calendar check)
+const IconTaskMgmt = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('rect', { x: 3, y: 4, width: 18, height: 18, rx: 2 }),
+  h('line', { x1: 16, y1: 2, x2: 16, y2: 6 }),
+  h('line', { x1: 8, y1: 2, x2: 8, y2: 6 }),
+  h('line', { x1: 3, y1: 10, x2: 21, y2: 10 }),
+  h('polyline', { points: '9 16 11 18 15 14' })
+])
+
 // 账号配置图标 (id card)
 const IconAccount = () => h('svg', {
   width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
@@ -210,6 +223,7 @@ const baseMenuItems = [
   { path: '/dashboard/video-library', name: 'video-library', label: '视频库', iconComponent: IconVideoLibrary },
   { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: '视频AI模板', iconComponent: IconVideoAI },
   { path: '/dashboard/accounts', name: 'accounts', label: '账号配置', iconComponent: IconAccount },
+  { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: '任务管理', iconComponent: IconTaskMgmt },
   { path: '/dashboard/settings', name: 'settings', label: '设置', iconComponent: IconSetting }
 ]
 

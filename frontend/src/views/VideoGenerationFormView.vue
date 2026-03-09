@@ -155,7 +155,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccount } from '../api/accounts'
 import { fetchVideoAITemplates, fetchAllAvailableVideoAITemplates, fetchVideoAITemplate, markTemplateUsed } from '../api/video_ai_templates'
-import { createVideoGeneration } from '../api/video_generations'
+import { createVideoTask } from '../api/video_tasks'
 
 const route = useRoute()
 const router = useRouter()
@@ -258,19 +258,16 @@ async function handleBatchGenerate() {
     for (const item of selectedItems) {
       const tpl = item.tpl
       try {
-        const image = tpl.video_source?.thumbnail_url || tpl.video_source?.cover_url || ''
         const duration = formatDuration(tpl.video_source?.duration)
         const shots = (tpl.extracted_shots || []).map(({ image_base64, ...rest }) => rest)
         const finalP = buildPromptForTemplate(tpl)
-        await createVideoGeneration({
+        await createVideoTask({
           account_id: accountId,
           template_id: tpl.id,
           final_prompt: finalP,
-          image,
           duration,
           shots,
         })
-        markTemplateUsed(tpl.id).catch(() => {})
         successCount++
       } catch {
         failCount++

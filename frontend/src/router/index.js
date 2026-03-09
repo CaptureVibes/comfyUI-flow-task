@@ -169,8 +169,20 @@ const routes = [
       {
         path: 'daily-tasks',
         name: 'daily-tasks',
-        component: () => import('../views/DailyTasksView.vue'),
-        meta: { title: '每日生成任务' }
+        component: () => import('../views/VideoTasksView.vue'),
+        meta: { title: '任务管理' }
+      },
+      {
+        path: 'daily-tasks/config',
+        name: 'task-config',
+        component: () => import('../views/TaskConfigView.vue'),
+        meta: { title: '任务配置', parent: 'daily-tasks' }
+      },
+      {
+        path: 'video-tasks/:id',
+        name: 'video-task-detail',
+        component: () => import('../views/VideoTaskDetailView.vue'),
+        meta: { title: '任务详情', parent: 'daily-tasks' }
       }
     ]
   },
