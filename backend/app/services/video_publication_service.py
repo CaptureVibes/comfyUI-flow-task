@@ -1,9 +1,10 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from typing import Any
 
 import httpx
@@ -117,28 +118,42 @@ class OpenAPIClient:
         )
         self.timeout = 30.0
 
+    @staticmethod
+    def _value_to_sign_str(v) -> str:
+        """将参数值规范序列化为签名字符串"""
+        if v is None:
+            return ""
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return str(v)
+        if isinstance(v, (datetime, date)):
+            return v.isoformat()
+        if isinstance(v, (list, dict)):
+            return json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return str(v)
+
     def _generate_signature(self, params: dict, timestamp: int) -> str:
         """生成 HMAC-SHA256 签名"""
-        # 过滤掉 signature 和 null/None 的值
-        filtered = {k: v for k, v in params.items() if k != "signature" and v is not None}
-        # 按字母排序
-        sorted_keys = sorted(filtered.keys())
-        # 拼接参数（值转为字符串）
-        param_str = "&".join(f"{k}={filtered[k]}" for k in sorted_keys)
+        # 过滤掉 signature 和 None/空字符串
+        filtered = {k: v for k, v in params.items() if k != "signature" and v is not None and v != ""}
+        # 按字母排序，值规范序列化后拼接
+        param_str = "&".join(
+            f"{k}={self._value_to_sign_str(v)}" for k, v in sorted(filtered.items())
+        )
         # 追加 timestamp
         sign_str = f"{param_str}&timestamp={timestamp}"
-        # HMAC-SHA256
-        signature = hmac.new(
+        return hmac.new(
             self.client_secret.encode(),
             sign_str.encode(),
             hashlib.sha256,
         ).hexdigest()
-        return signature
 
     def _sign_params(self, params: dict) -> dict:
         """为请求参数添加签名"""
         timestamp = int(utcnow().timestamp())
-        signature = self._generate_signature({**params, "client_id": self.client_id}, timestamp)
+        # 传入 timestamp 使其参与排序拼接，_generate_signature 末尾再追加一次（服务端规则）
+        signature = self._generate_signature({**params, "client_id": self.client_id, "timestamp": timestamp}, timestamp)
         return {
             **params,
             "client_id": self.client_id,
