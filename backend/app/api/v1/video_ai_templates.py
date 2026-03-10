@@ -11,6 +11,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.video_publication import VideoPublication
+from app.models.video_task import VideoSubTask, VideoTask
+
 from app.core.security import TokenData, get_current_user
 from app.db.session import SessionLocal, get_db
 from app.models.enums import VideoAIProcessStatus
@@ -76,6 +79,7 @@ async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITempla
         process_error=tpl.process_error,
         prompt_description=tpl.prompt_description,
         extracted_shots=tpl.extracted_shots,
+        is_used=tpl.is_used,
         extra=tpl.extra,
         created_at=tpl.created_at,
         updated_at=tpl.updated_at,
@@ -138,6 +142,37 @@ async def list_templates(
         for u in users:
             username_map[u.id] = u.display_name or u.username
 
+    # 批量查询每个模板生成成功（非 pending/generating/abandon）的视频数
+    tpl_ids = [r.id for r in rows]
+    generated_count_map: dict[uuid.UUID, int] = {r.id: 0 for r in rows}
+    if tpl_ids:
+        _EXCLUDE_STATUSES = ("pending", "generating", "abandon")
+        gen_stmt = (
+            select(VideoTask.template_id, func.count(VideoSubTask.id).label("cnt"))
+            .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .where(VideoTask.template_id.in_(tpl_ids))
+            .where(VideoSubTask.status.notin_(_EXCLUDE_STATUSES))
+            .group_by(VideoTask.template_id)
+        )
+        for tpl_id, cnt in (await session.execute(gen_stmt)).all():
+            if tpl_id in generated_count_map:
+                generated_count_map[tpl_id] = cnt
+
+    # 批量查询每个模板最近一次发布时间
+    last_published_map: dict[uuid.UUID, datetime | None] = {r.id: None for r in rows}
+    if tpl_ids:
+        from datetime import datetime
+        pub_stmt = (
+            select(VideoTask.template_id, func.max(VideoPublication.created_at).label("last_pub"))
+            .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .join(VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id)
+            .where(VideoTask.template_id.in_(tpl_ids))
+            .group_by(VideoTask.template_id)
+        )
+        for tpl_id, last_pub in (await session.execute(pub_stmt)).all():
+            if tpl_id in last_published_map:
+                last_published_map[tpl_id] = last_pub
+
     items_read = []
     for r in rows:
         vs = None
@@ -156,6 +191,8 @@ async def list_templates(
             process_status=r.process_status,
             process_error=r.process_error,
             is_used=r.is_used,
+            generated_video_count=generated_count_map.get(r.id, 0),
+            last_published_at=last_published_map.get(r.id),
             created_at=r.created_at,
             updated_at=r.updated_at,
         ))

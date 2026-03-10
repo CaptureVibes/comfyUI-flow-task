@@ -161,7 +161,12 @@ async def handle_publication_callback(
     publication = await service.handle_callback(callback_data.dict())
 
     if not publication:
-        raise HTTPException(status_code=404, detail="未找到对应的发布任务")
+        import logging
+        logging.getLogger("app.video_publications").warning(
+            "Callback received but no matching publication found, returning 200 to avoid retry: task_id=%s external_id=%s",
+            callback_data.task_id, callback_data.external_id,
+        )
+        return {"message": "success", "data": None}
 
     return {"message": "success", "data": {"publication_id": str(publication.id)}}
 

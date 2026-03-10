@@ -177,6 +177,22 @@
             <span>{{ item.process_error }}</span>
           </div>
 
+          <!-- Video source stats -->
+          <div class="vt-source-stats">
+            <span v-if="item.video_source && item.video_source.view_count != null" class="vt-stat-item">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              {{ formatViewCount(item.video_source.view_count) }}
+            </span>
+            <span class="vt-stat-item">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+              {{ item.generated_video_count || 0 }} 个视频
+            </span>
+            <span v-if="item.last_published_at" class="vt-stat-item">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              {{ formatDate(item.last_published_at) }}
+            </span>
+          </div>
+
           <!-- Meta info -->
           <div class="vt-meta">
             <div class="vt-meta-info">
@@ -604,6 +620,10 @@ function formatCount(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
   return String(n)
+}
+
+function formatViewCount(n) {
+  return formatCount(n)
 }
 
 function formatDate(iso) {
@@ -1345,6 +1365,20 @@ onMounted(() => {
   color: #dc2626;
   font-size: 12px;
   margin-bottom: 12px;
+}
+
+.vt-source-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.vt-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .vt-meta {

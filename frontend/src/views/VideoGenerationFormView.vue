@@ -224,6 +224,7 @@ async function handleBloggerChange(e) {
     const matching = templateList.value.filter(t => t.video_source?.blogger_name === blogger)
     const details = await Promise.all(matching.map(t => fetchVideoAITemplate(t.id).catch(() => t)))
     bloggerTemplates.value = details.map(tpl => ({ tpl }))
+    selectUnused()  // 默认选中未使用的模板
   } catch {
     ElMessage.error('加载模板失败')
   } finally {

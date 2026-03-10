@@ -368,22 +368,46 @@ class VideoPublicationService:
         task_id = callback_data.get("task_id")
         external_id = callback_data.get("external_id")
 
-        # 查找对应的发布任务
+        logger.info(
+            "handle_callback: looking up publication by task_id=%s OR external_id=%s",
+            task_id, external_id,
+        )
+
+        # 查找对应的发布任务：优先同时匹配 open_api_task_id 和 external_id（AND），
+        # 若未找到则单独用 open_api_task_id 回退（external_id 可能重复，不单独作为回退）
         from sqlalchemy import select
 
-        result = await self.db.execute(
-            select(VideoPublication).where(
-                (VideoPublication.open_api_task_id == task_id) |
-                (VideoPublication.external_id == external_id)
+        publication = None
+        if task_id and external_id:
+            result = await self.db.execute(
+                select(VideoPublication).where(
+                    (VideoPublication.open_api_task_id == task_id) &
+                    (VideoPublication.external_id == external_id)
+                )
             )
-        )
-        publication = result.scalar_one_or_none()
+            publication = result.scalar_one_or_none()
+
+        if publication is None and task_id:
+            result = await self.db.execute(
+                select(VideoPublication).where(VideoPublication.open_api_task_id == task_id)
+            )
+            publication = result.scalar_one_or_none()
 
         if not publication:
+            # 打印所有 publication 记录帮助排查
+            all_pubs = (await self.db.execute(select(VideoPublication))).scalars().all()
+            logger.warning(
+                "handle_callback: no publication found. Total publications in DB: %d. "
+                "task_ids=%s, external_ids=%s",
+                len(all_pubs),
+                [p.open_api_task_id for p in all_pubs],
+                [p.external_id for p in all_pubs],
+            )
             return None
 
-        # 更新状态
-        publication.status = callback_data.get("status", publication.status)
+        # 更新 publication 状态
+        new_status = callback_data.get("status", publication.status)
+        publication.status = new_status
         publication.total_channels = callback_data.get("total_channels", publication.total_channels)
         publication.completed_channels = callback_data.get("completed_channels", publication.completed_channels)
         publication.failed_channels = callback_data.get("failed_channels", publication.failed_channels)
@@ -393,7 +417,49 @@ class VideoPublicationService:
 
         if callback_data.get("completed_at"):
             from datetime import datetime
-            publication.completed_at = datetime.fromisoformat(callback_data["completed_at"].replace("Z", "+00:00"))
+            completed_at = callback_data["completed_at"]
+            if isinstance(completed_at, datetime):
+                publication.completed_at = completed_at
+            else:
+                publication.completed_at = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
+
+        logger.info(
+            "handle_callback: updating publication %s to status=%s",
+            publication.id, new_status,
+        )
+
+        # 同步更新 sub_task 状态（与 sync_publication_status 保持一致）
+        if new_status in ("completed", "partial"):
+            from sqlalchemy.orm import selectinload
+            from app.models.video_task import VideoSubTask, VideoTask
+            from app.services.video_task_service import _compute_parent_status
+
+            result = await self.db.execute(
+                select(VideoSubTask)
+                .where(VideoSubTask.id == publication.sub_task_id)
+                .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+            )
+            sub_task = result.scalar_one_or_none()
+            if sub_task and sub_task.status == "publishing":
+                sub_task.status = "published"
+                sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
+                logger.info("handle_callback: sub_task %s → published", sub_task.id)
+
+        elif new_status == "failed":
+            from sqlalchemy.orm import selectinload
+            from app.models.video_task import VideoSubTask, VideoTask
+            from app.services.video_task_service import _compute_parent_status
+
+            result = await self.db.execute(
+                select(VideoSubTask)
+                .where(VideoSubTask.id == publication.sub_task_id)
+                .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+            )
+            sub_task = result.scalar_one_or_none()
+            if sub_task and sub_task.status == "publishing":
+                sub_task.status = "pending_publish"
+                sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
+                logger.info("handle_callback: sub_task %s → pending_publish (failed)", sub_task.id)
 
         await self.db.commit()
         await self.db.refresh(publication)

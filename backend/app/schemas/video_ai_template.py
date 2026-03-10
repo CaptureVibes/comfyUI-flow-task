@@ -71,6 +71,8 @@ class VideoAITemplateListItem(BaseModel):
     process_status: VideoAIProcessStatus
     process_error: str | None
     is_used: bool = False
+    generated_video_count: int = 0
+    last_published_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
