@@ -244,6 +244,7 @@ const STATUS_LABELS = {
   scoring: 'AI审核中',
   pending_publish: '待发布',
   publishing: '发布中',
+  publish_failed: '发布失败',
   published: '已发布',
   abandoned: '已废弃',
 }
@@ -856,6 +857,7 @@ onUnmounted(() => {
 .vtd-status-scoring         { background: #f0fdf4; color: #059669; }
 .vtd-status-pending_publish { background: #fef3c7; color: #d97706; }
 .vtd-status-publishing      { background: #ede9fe; color: #7c3aed; }
+.vtd-status-publish_failed  { background: #fee2e2; color: #b91c1c; }
 .vtd-status-published       { background: #dcfce7; color: #15803d; }
 .vtd-status-abandoned       { background: #fee2e2; color: #b91c1c; }
 </style>

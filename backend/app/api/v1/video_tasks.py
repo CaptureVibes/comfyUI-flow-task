@@ -215,6 +215,17 @@ async def patch_sub_task_status(
     )
 
 
+@router.delete("/subtasks/{sub_task_id}", status_code=status.HTTP_200_OK)
+async def delete_sub_task(
+    sub_task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """删除待发布的子任务，若父任务无剩余有效子任务则一并删除"""
+    svc = VideoTaskService(db=session)
+    return await svc.delete_sub_task(sub_task_id, owner_id)
+
+
 @router.post("/subtasks/{sub_task_id}/rollback", response_model=VideoSubTaskRead)
 async def rollback_sub_task_status(
     sub_task_id: uuid.UUID,

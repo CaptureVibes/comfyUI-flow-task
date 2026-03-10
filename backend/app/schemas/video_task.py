@@ -25,6 +25,7 @@ class VideoSubTaskRead(BaseModel):
     round1_reason: str | None = None
     round2_reason: str | None = None
     scoring_error: str | None = None  # Error message when AI scoring fails
+    publish_error: str | None = None  # Error message when video publication fails
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -76,7 +77,8 @@ class VideoSubTaskStateRead(BaseModel):
     round1_reason: str | None = None
     round2_reason: str | None = None
     scoring_error: str | None = None
-    
+    publish_error: str | None = None
+
     model_config = ConfigDict(from_attributes=True)
 
 

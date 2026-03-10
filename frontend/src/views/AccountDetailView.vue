@@ -22,6 +22,9 @@
           <div class="ad-hero-meta">
             <span class="ad-hero-stat"><strong>{{ tabCounts.published }}</strong> 已发布</span>
             <span class="ad-hero-stat"><strong>{{ tabCounts.pending_publish }}</strong> 待发布</span>
+            <span v-if="tabCounts.publish_failed" class="ad-hero-stat ad-hero-stat-fail">
+              <strong>{{ tabCounts.publish_failed }}</strong> 发布失败
+            </span>
             <span class="ad-hero-stat ad-hero-stat-link" @click="router.push('/dashboard/daily-tasks')">
               <strong>{{ tabCounts.pending + tabCounts.generating }}</strong> 生成任务
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
@@ -54,11 +57,11 @@
           v-for="tab in TABS"
           :key="tab.key"
           class="ad-tab"
-          :class="{ active: activeTab === tab.key }"
+          :class="{ active: activeTab === tab.key, 'ad-tab-fail': tab.key === 'publish_failed' }"
           @click="activeTab = tab.key"
         >
           {{ tab.label }}
-          <span v-if="tabCounts[tab.key]" class="ad-tab-count">{{ tabCounts[tab.key] }}</span>
+          <span v-if="tabCounts[tab.key]" class="ad-tab-count" :class="{ 'ad-tab-count-fail': tab.key === 'publish_failed' }">{{ tabCounts[tab.key] }}</span>
         </button>
         <button class="ad-refresh-btn" :disabled="tasksLoading" @click="loadTasks">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" :class="{ spinning: tasksLoading }"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
@@ -128,8 +131,34 @@
               <span>{{ item.sub.scoring_error }}</span>
             </div>
 
+            <!-- Publish error message -->
+            <div v-if="item.sub.publish_error" class="ad-card-error">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span>发布失败: {{ item.sub.publish_error }}</span>
+            </div>
+
+            <!-- Channel status (published tab) -->
+            <div v-if="activeTab === 'published' && publicationsMap[item.sub.id]?.channels_status?.length" class="ad-channel-status">
+              <div
+                v-for="ch in publicationsMap[item.sub.id].channels_status"
+                :key="ch.upload_id || ch.channel_id"
+                class="ad-ch-item"
+                :class="`ad-ch-${ch.status}`"
+              >
+                <span class="ad-ch-platform">{{ platformLabel(ch.platform) }}</span>
+                <span class="ad-ch-status-label">{{ ch.status === 'completed' ? '成功' : ch.status === 'failed' ? '失败' : ch.status }}</span>
+                <a v-if="ch.platform_video_url" :href="ch.platform_video_url" target="_blank" class="ad-ch-link" @click.stop>查看</a>
+                <span v-if="ch.error_message && ch.status === 'failed'" class="ad-ch-error" :title="ch.error_message">{{ ch.error_message }}</span>
+              </div>
+            </div>
+
             <!-- Action buttons -->
             <div class="ad-card-actions">
+              <!-- 待发布：发布按钮 -->
               <el-button
                 v-if="item.sub.status === 'pending_publish' && item.sub.selected"
                 type="primary"
@@ -140,6 +169,26 @@
                 发布
               </el-button>
 
+              <!-- 发布失败：重试发布 -->
+              <el-button
+                v-if="item.sub.status === 'publish_failed' && item.sub.selected"
+                type="primary"
+                size="small"
+                :loading="retrying === item.sub.id"
+                @click="handleRetryPublish(item.task, item.sub)"
+              >重试发布</el-button>
+
+              <!-- 待发布：删除 -->
+              <el-button
+                v-if="item.sub.status === 'pending_publish'"
+                type="danger"
+                size="small"
+                plain
+                :loading="deleting === item.sub.id"
+                @click="handleDeleteSubTask(item.task, item.sub)"
+              >删除</el-button>
+
+              <!-- generating：撤回 -->
               <el-button
                 v-if="canRollback(item.sub)"
                 size="small"
@@ -169,11 +218,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount } from '../api/accounts'
-import { fetchAccountVideoTasks, rollbackSubTaskStatus } from '../api/video_tasks'
+import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask } from '../api/video_tasks'
+import { fetchSubTaskPublications } from '../api/video_publications'
 
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
 
@@ -188,6 +238,7 @@ const STATUS_LABELS = {
   scoring: 'AI打分',
   pending_publish: '待发布',
   publishing: '发布中',
+  publish_failed: '发布失败',
   published: '已发布',
   abandoned: '已废弃',
 }
@@ -195,12 +246,14 @@ const STATUS_LABELS = {
 const TABS = [
   { key: 'pending_publish', label: '待发布' },
   { key: 'publishing',      label: '发布中' },
+  { key: 'publish_failed',  label: '发布失败' },
   { key: 'published',       label: '已发布' },
 ]
 
 const EMPTY_TEXTS = {
   pending_publish: '暂无待发布的视频',
   publishing:      '暂无发布中的视频',
+  publish_failed:  '暂无发布失败的视频',
   published:       '暂无已发布的视频',
 }
 
@@ -210,11 +263,16 @@ const tasks = ref([])
 const tasksLoading = ref(false)
 const activeTab = ref('pending_publish')
 const rollbacking = ref(null)
+const retrying = ref(null)
+const deleting = ref(null)
 
 // 发布对话框
 const publishDialogVisible = ref(false)
 const publishVideoUrl = ref('')
 const publishSubTask = ref(null)
+
+// 已发布 tab 的渠道状态缓存（以 sub_id 为键）
+const publicationsMap = ref({})
 
 // Flatten all sub-tasks with parent task reference
 const allSubTasks = computed(() => {
@@ -235,7 +293,7 @@ const filteredSubTasks = computed(() => {
 })
 
 const tabCounts = computed(() => {
-  const counts = { pending_publish: 0, publishing: 0, published: 0, generating: 0, pending: 0, all: 0 }
+  const counts = { pending_publish: 0, publishing: 0, publish_failed: 0, published: 0, generating: 0, pending: 0, all: 0 }
   for (const { sub } of allSubTasks.value) {
     if (counts[sub.status] !== undefined) counts[sub.status]++
     counts.all++
@@ -248,7 +306,7 @@ const emptyText = computed(() => EMPTY_TEXTS[activeTab.value] || '暂无内容')
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
 function canRollback(sub) {
-  return ['generating', 'pending_publish'].includes(sub.status)
+  return sub.status === 'generating'
 }
 
 // 打开发布对话框
@@ -272,6 +330,42 @@ async function handlePublishSuccess() {
   await loadTasks()
 }
 
+// 重试发布（publish_failed → pending_publish）
+async function handleRetryPublish(_task, sub) {
+  retrying.value = sub.id
+  try {
+    await patchSubTaskStatus(sub.id, { status: 'pending_publish' })
+    ElMessage.success('已重置为待发布')
+    activeTab.value = 'pending_publish'
+    await loadTasks()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '重置失败')
+  } finally {
+    retrying.value = null
+  }
+}
+
+// 加载已发布视频的渠道状态
+async function loadPublishedPublications() {
+  const publishedSubs = allSubTasks.value.filter(({ sub }) => sub.status === 'published')
+  for (const { sub } of publishedSubs) {
+    if (!publicationsMap.value[sub.id]) {
+      try {
+        const pubs = await fetchSubTaskPublications(sub.id)
+        if (pubs.length) publicationsMap.value[sub.id] = pubs[0]
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'published') {
+    loadPublishedPublications()
+  }
+})
+
 async function loadAccount() {
   loading.value = true
   try {
@@ -288,10 +382,38 @@ async function loadTasks() {
   tasksLoading.value = true
   try {
     tasks.value = await fetchAccountVideoTasks(route.params.id)
+    // 如果当前在已发布 tab，重新加载渠道状态
+    if (activeTab.value === 'published') {
+      publicationsMap.value = {}
+      loadPublishedPublications()
+    }
   } catch {
     ElMessage.error('加载任务失败')
   } finally {
     tasksLoading.value = false
+  }
+}
+
+async function handleDeleteSubTask(_task, sub) {
+  try {
+    await ElMessageBox.confirm('确认删除该视频？此操作不可恢复。', '删除待发布视频', {
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+  deleting.value = sub.id
+  try {
+    await deleteSubTask(sub.id)
+    ElMessage.success('已删除')
+    await loadTasks()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
+  } finally {
+    deleting.value = null
   }
 }
 
@@ -361,9 +483,10 @@ onMounted(async () => {
 .ad-hero-name { font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 4px; }
 .ad-hero-style { font-size: 13px; color: #64748b; margin-bottom: 10px; line-height: 1.5; }
 
-.ad-hero-meta { display: flex; gap: 20px; margin-bottom: 10px; }
+.ad-hero-meta { display: flex; gap: 20px; margin-bottom: 10px; flex-wrap: wrap; }
 .ad-hero-stat { font-size: 13px; color: #64748b; }
 .ad-hero-stat strong { color: #0f172a; font-weight: 700; margin-right: 3px; }
+.ad-hero-stat-fail strong { color: #dc2626; }
 .ad-hero-stat-link {
   cursor: pointer;
   color: #6366f1;
@@ -426,6 +549,8 @@ onMounted(async () => {
 }
 .ad-tab:hover { color: #6366f1; background: #f5f3ff; }
 .ad-tab.active { color: #6366f1; font-weight: 700; background: #eef2ff; }
+.ad-tab-fail:hover { color: #dc2626; background: #fef2f2; }
+.ad-tab-fail.active { color: #dc2626; background: #fef2f2; }
 
 .ad-tab-count {
   font-size: 11px; font-weight: 700;
@@ -433,6 +558,8 @@ onMounted(async () => {
   border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
 }
 .ad-tab.active .ad-tab-count { background: #4f46e5; }
+.ad-tab-count-fail { background: #dc2626; }
+.ad-tab-fail.active .ad-tab-count { background: #dc2626; }
 
 .ad-refresh-btn {
   margin-left: auto;
@@ -516,6 +643,7 @@ onMounted(async () => {
 .ad-status-reviewing       { background: rgba(254,249,195,0.9);  color: #854d0e; }
 .ad-status-pending_publish { background: rgba(254,243,199,0.9);  color: #d97706; }
 .ad-status-publishing      { background: rgba(237,233,254,0.9);  color: #7c3aed; }
+.ad-status-publish_failed  { background: rgba(254,226,226,0.9);  color: #b91c1c; }
 .ad-status-published       { background: rgba(220,252,231,0.9);  color: #15803d; }
 .ad-status-abandoned       { background: rgba(254,226,226,0.9);  color: #b91c1c; }
 
@@ -562,6 +690,44 @@ onMounted(async () => {
 .ad-card-error svg {
   flex-shrink: 0;
   margin-top: 1px;
+}
+
+/* Channel status */
+.ad-channel-status {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.ad-ch-item {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px;
+}
+
+.ad-ch-platform {
+  font-weight: 600; color: #475569; min-width: 52px;
+}
+
+.ad-ch-status-label { font-weight: 700; }
+.ad-ch-completed .ad-ch-status-label { color: #15803d; }
+.ad-ch-failed .ad-ch-status-label { color: #b91c1c; }
+
+.ad-ch-link {
+  color: #6366f1; text-decoration: none; font-size: 11px;
+  padding: 1px 6px; background: #eef2ff; border-radius: 4px;
+}
+.ad-ch-link:hover { background: #e0e7ff; }
+
+.ad-ch-error {
+  color: #94a3b8; font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 110px;
 }
 
 .ad-card-detail-btn {

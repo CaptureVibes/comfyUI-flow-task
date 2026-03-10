@@ -20,7 +20,7 @@ class VideoTask(Base):
     template_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), index=True, nullable=True)
     target_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
 
-    # Status lifecycle: pending → generating → reviewing → pending_publish → published
+    # Status lifecycle: pending → generating → scoring → pending_publish → publishing → published/publish_failed
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
 
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
@@ -55,8 +55,9 @@ class VideoSubTask(Base):
     )
     sub_index: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Status lifecycle: pending → generating → reviewing → pending_publish → published
+    # Status lifecycle: pending → generating → scoring → pending_publish → publishing → published/publish_failed
     # abandoned: user selected another sub-task, this one is discarded
+    # publish_failed: video was sent to publishing but the publication failed (can retry → pending_publish)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
 
     # CDN URL written after fetch-results; sub-task UUID is used as video_id in GCS path
@@ -71,6 +72,9 @@ class VideoSubTask(Base):
 
     # Error message when AI scoring fails
     scoring_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Error message when video publication fails
+    publish_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # True when this sub-task's video was chosen by the user for publishing
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

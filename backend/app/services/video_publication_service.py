@@ -369,7 +369,8 @@ class VideoPublicationService:
             )
             sub_task = result.scalar_one_or_none()
             if sub_task and sub_task.status == "publishing":
-                sub_task.status = "pending_publish"
+                sub_task.status = "publish_failed"
+                sub_task.publish_error = publication.error_message or "发布失败"
                 from app.services.video_task_service import _compute_parent_status
                 sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
 
@@ -472,9 +473,10 @@ class VideoPublicationService:
             )
             sub_task = result.scalar_one_or_none()
             if sub_task and sub_task.status == "publishing":
-                sub_task.status = "pending_publish"
+                sub_task.status = "publish_failed"
+                sub_task.publish_error = publication.error_message or "发布失败"
                 sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
-                logger.info("handle_callback: sub_task %s → pending_publish (failed)", sub_task.id)
+                logger.info("handle_callback: sub_task %s → publish_failed", sub_task.id)
 
         await self.db.commit()
         await self.db.refresh(publication)

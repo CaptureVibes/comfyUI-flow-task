@@ -44,12 +44,23 @@ class VideoPublication(Base):
     # Open API 返回的完整响应
     response_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # 各渠道发布状态
-    channels_status: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # 格式: {
-    #   "youtube": { "status": "completed", "platform_video_id": "xxx", "platform_video_url": "xxx", "error_message": null },
-    #   "tiktok": { "status": "failed", "platform_video_id": null, "platform_video_url": null, "error_message": "xxx" }
-    # }
+    # 各渠道发布状态（Open API 返回的列表格式）
+    channels_status: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 格式: [
+    #   {
+    #     "platform": "youtube", "channel_id": "UCxxx", "channel_name": "...",
+    #     "status": "completed",  # pending / uploading / completed / failed
+    #     "platform_video_id": "Nf4DjLPXaEY", "platform_video_url": "https://...",
+    #     "upload_id": 16, "error_message": null,
+    #     "created_at": "...", "updated_at": "...", "uploaded_at": "..."
+    #   },
+    #   {
+    #     "platform": "tiktok", "channel_id": "...", "channel_name": "...",
+    #     "status": "failed", "platform_video_id": null, "platform_video_url": null,
+    #     "upload_id": 18, "error_message": "Failed to download video",
+    #     "created_at": "...", "updated_at": "...", "uploaded_at": null
+    #   }
+    # ]
 
     # 统计信息
     total_channels: Mapped[int] = mapped_column(default=0)

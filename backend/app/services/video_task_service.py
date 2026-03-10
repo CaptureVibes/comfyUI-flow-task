@@ -24,23 +24,25 @@ from app.services.video_scoring_service import score_video_with_ai
 
 logger = logging.getLogger(__name__)
 
-VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "publishing", "published", "abandoned"}
+VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "publishing", "published", "publish_failed", "abandoned"}
 
 SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":         {"generating"},
     "generating":      {"scoring"},
     "scoring":         {"pending_publish", "abandoned"},
     "pending_publish": {"publishing", "published"},
-    "publishing":      {"published"},
+    "publishing":      {"published", "publish_failed"},
+    "publish_failed":  {"pending_publish"},
     "published":       set(),
     "abandoned":       set(),
 }
 
 PREV_STATUS: dict[str, str] = {
     "generating":      "pending",
-    "scoring":          "generating",
+    "scoring":         "generating",
     "pending_publish": "scoring",
     "publishing":      "pending_publish",
+    "publish_failed":  "publishing",
     "published":       "publishing",
 }
 
@@ -53,6 +55,8 @@ def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
         return "abandoned"
     if "publishing" in statuses:
         return "publishing"
+    if "publish_failed" in statuses:
+        return "publish_failed"
     if "pending_publish" in statuses:
         return "pending_publish"
     if "scoring" in statuses:
@@ -198,6 +202,44 @@ class VideoTaskService:
         await self.db.delete(task)
         await self.db.commit()
         return True
+
+    async def delete_sub_task(self, sub_task_id: uuid.UUID, owner_id: uuid.UUID | None) -> dict:
+        """删除待发布的 sub_task，若父 task 无剩余有效 sub_task 则一并删除 task"""
+        q = (
+            select(VideoSubTask)
+            .where(VideoSubTask.id == sub_task_id)
+            .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+        )
+        sub_task = (await self.db.execute(q)).scalar_one_or_none()
+        if not sub_task:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+
+        task = sub_task.task
+        if owner_id is not None and task.owner_id != owner_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
+
+        if sub_task.status != "pending_publish":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"只能删除待发布状态的子任务，当前状态: {sub_task.status}",
+            )
+
+        await self.db.delete(sub_task)
+
+        # 若父任务除本 sub_task 外无其他非 abandoned sub_task，则删除父任务
+        remaining = [st for st in task.sub_tasks if st.id != sub_task_id and st.status != "abandoned"]
+        if not remaining:
+            await self.db.delete(task)
+            await self.db.commit()
+            return {"deleted_task": True}
+
+        # 否则重新计算父任务状态
+        # 先 flush 使 sub_task 从 task.sub_tasks 中移除，再重算
+        await self.db.flush()
+        updated_subs = [st for st in task.sub_tasks if st.id != sub_task_id]
+        task.status = _compute_parent_status(updated_subs) if updated_subs else "pending"
+        await self.db.commit()
+        return {"deleted_task": False}
 
     async def upload_tasks(self, target_date: date, owner_id: uuid.UUID | None) -> tuple[str, int, int]:
         """
