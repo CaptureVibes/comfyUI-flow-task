@@ -366,14 +366,20 @@ class VideoTaskService:
             logger.info("_score_video returned for sub-task %s: %s", sub.id, "success" if scoring_result else "None")
             if scoring_result:
                 final_score, round1_score, round2_score, round1_reason, round2_reason = scoring_result
-                sub.ai_score = int(final_score)
+                sub.ai_score = int(final_score) if final_score >= 0 else None
                 sub.round1_score = int(round1_score) if round1_score else None
                 sub.round2_score = int(round2_score) if round2_score else None
                 sub.round1_reason = round1_reason
                 sub.round2_reason = round2_reason
-                logger.info("Sub-task %s AI scored: final=%.1f, r1=%.1f, r2=%.1f",
-                            sub.id, final_score, round1_score or 0, round2_score or 0)
-                task_scored_subs.setdefault(task.id, []).append((task, sub, final_score))
+
+                # Check if video was abandoned due to low score in any round
+                if final_score < 0:
+                    sub.status = "abandoned"
+                    logger.info("Sub-task %s abandoned due to low round score: %s", sub.id, round2_reason or round1_reason)
+                else:
+                    logger.info("Sub-task %s AI scored: final=%.1f, r1=%.1f, r2=%.1f",
+                                sub.id, final_score, round1_score or 0, round2_score or 0)
+                    task_scored_subs.setdefault(task.id, []).append((task, sub, final_score))
                 updated += 1
             else:
                 # AI scoring failed, abandon

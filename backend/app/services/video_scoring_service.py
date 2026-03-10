@@ -82,13 +82,11 @@ async def score_video_with_ai(
             round1_score, round1_reason = round1_result
             logger.info("Round 1 completed with score: %.1f", round1_score)
 
-            # Check if round1 score meets threshold
+            # Check if round1 score meets threshold — if not, video should be abandoned
             if round1_score < config.round1_threshold:
-                logger.warning("Round 1 score %.1f below threshold %.1f, skipping round 2", round1_score, config.round1_threshold)
-                # Still calculate final score (round2 will be 0)
-                final_score = round1_score * config.round1_weight
-                logger.info("Final score (round 1 only): %.1f = %.1f × %.2f + 0 × %.2f", final_score, round1_score, config.round1_weight, config.round2_weight)
-                return (final_score, round1_score, 0.0, round1_reason, "")
+                logger.warning("Round 1 score %.1f below threshold %.1f, video should be abandoned", round1_score, config.round1_threshold)
+                # Return -1 as final score to signal abandonment
+                return (-1.0, round1_score, 0.0, round1_reason, f"第一轮打分 {round1_score:.1f} 低于阈值 {config.round1_threshold:.1f}，视频已废弃")
 
             logger.info("Round 1 score %.1f passed threshold %.1f, proceeding to round 2", round1_score, config.round1_threshold)
     else:
@@ -119,6 +117,12 @@ async def score_video_with_ai(
             else:
                 round2_score, round2_reason = round2_result
                 logger.info("Round 2 completed with score: %.1f", round2_score)
+
+                # Check if round2 score meets threshold — if not, video should be abandoned
+                if round2_score < config.round2_threshold:
+                    logger.warning("Round 2 score %.1f below threshold %.1f, video should be abandoned", round2_score, config.round2_threshold)
+                    # Return -1 as final score to signal abandonment
+                    return (-1.0, round1_score, round2_score, round1_reason, f"第二轮打分 {round2_score:.1f} 低于阈值 {config.round2_threshold:.1f}，视频已废弃")
     else:
         logger.info("Round 2 is disabled, skipping")
 
