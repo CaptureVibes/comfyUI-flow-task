@@ -67,11 +67,11 @@
       </div>
       <div class="vt-stat-card">
         <div class="vt-stat-top">
-          <span class="vt-stat-label">待审核</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#854d0e" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span class="vt-stat-label">AI打分中</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         </div>
-        <div class="vt-stat-value">{{ taskStats.reviewing || 0 }}</div>
-        <div class="vt-stat-sub">reviewing</div>
+        <div class="vt-stat-value">{{ taskStats.scoring || 0 }}</div>
+        <div class="vt-stat-sub">scoring</div>
       </div>
       <div class="vt-stat-card">
         <div class="vt-stat-top">
@@ -131,6 +131,24 @@
               ></span>
               <span class="vt-progress-label">{{ task.sub_tasks_done }}/3</span>
             </div>
+            <!-- Go to account to publish -->
+            <button
+              v-if="task.status === 'pending_publish' && task.account_id"
+              class="vt-publish-btn"
+              @click="router.push(`/dashboard/accounts/${task.account_id}`)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              前往发布
+            </button>
+            <!-- Delete -->
+            <button
+              v-if="task.status === 'pending' || task.status === 'generating'"
+              class="vt-delete-btn"
+              @click="handleDelete(task)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              删除
+            </button>
             <!-- View detail -->
             <button class="vt-detail-btn" @click="goToDetail(task.id)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
@@ -183,6 +201,14 @@
         </div>
       </div>
     </div>
+
+    <ConfirmDeleteDialog
+      v-model="deleteDialogVisible"
+      :title="`删除任务「${deleteTarget?.account_name || '未知账号'} · ${deleteTarget?.template_title || '未知模板'}」`"
+      description="此操作将同时删除所有关联子任务，且不可恢复。"
+      :loading="deleting"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 
@@ -190,14 +216,16 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats } from '../api/video_tasks.js'
+import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask } from '../api/video_tasks.js'
 import { isDuplicateRequestError } from '../api/http.js'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const STATUS_LABELS = {
   pending: '待处理',
   generating: '生成中',
-  reviewing: '待审核',
+  scoring: 'AI打分中',
   pending_publish: '待发布',
+  publishing: '发布中',
   published: '已发布',
   abandoned: '已废弃',
 }
@@ -251,11 +279,22 @@ async function handleUpload() {
   try {
     const res = await uploadVideoTasks(targetDate.value)
     ElMessage.success(res.message || '后台上传任务已启动')
-    await loadTasks()
+    await pollUntilStatusChanges(['pending'], ['generating', 'scoring', 'pending_publish', 'published', 'abandoned'])
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '上传失败')
   } finally {
     uploading.value = false
+  }
+}
+
+// 轮询直到所有符合 fromStatuses 的任务都离开这些状态（变为 toStatuses 之一）
+// 最多轮询 30 次，每次间隔 2s
+async function pollUntilStatusChanges(fromStatuses, toStatuses, maxAttempts = 30, intervalMs = 2000) {
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, intervalMs))
+    await loadTasks()
+    const stillWaiting = tasks.value.some(t => fromStatuses.includes(t.status))
+    if (!stillWaiting) break
   }
 }
 
@@ -269,6 +308,31 @@ async function handleFetchResults() {
     ElMessage.error(e?.response?.data?.detail || '获取结果失败')
   } finally {
     fetchingResults.value = false
+  }
+}
+
+const deleteDialogVisible = ref(false)
+const deleteTarget = ref(null)
+const deleting = ref(false)
+
+function handleDelete(task) {
+  deleteTarget.value = task
+  deleteDialogVisible.value = true
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value) return
+  deleting.value = true
+  try {
+    await deleteVideoTask(deleteTarget.value.id)
+    deleteDialogVisible.value = false
+    deleteTarget.value = null
+    ElMessage.success('任务已删除')
+    await loadTasks()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -609,10 +673,47 @@ onMounted(() => {
 
 .vt-status-pending         { background: #f1f5f9; color: #64748b; }
 .vt-status-generating      { background: #eff6ff; color: #3b82f6; }
-.vt-status-reviewing       { background: #fef9c3; color: #854d0e; }
+.vt-status-scoring         { background: #fdf4ff; color: #9333ea; }
 .vt-status-pending_publish { background: #fef3c7; color: #d97706; }
+.vt-status-publishing      { background: #ede9fe; color: #7c3aed; }
 .vt-status-published       { background: #dcfce7; color: #15803d; }
 .vt-status-abandoned       { background: #fee2e2; color: #b91c1c; }
+
+.vt-publish-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: #7c3aed;
+  background: #ede9fe;
+  border: none;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.vt-publish-btn:hover { background: #ddd6fe; }
+
+.vt-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: #b91c1c;
+  background: #fee2e2;
+  border: none;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.vt-delete-btn:hover { background: #fecaca; }
 
 /* ── Stats row ── */
 .vt-stats {

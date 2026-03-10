@@ -132,11 +132,13 @@
             <div class="ad-card-actions">
               <el-button
                 v-if="item.sub.status === 'pending_publish' && item.sub.selected"
-                type="success"
+                type="primary"
                 size="small"
-                :loading="publishing === item.sub.id"
-                @click="handlePublish(item.task, item.sub)"
-              >标记已发布</el-button>
+                @click="openPublishDialog(item.task, item.sub)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                发布
+              </el-button>
 
               <el-button
                 v-if="canRollback(item.sub)"
@@ -154,15 +156,26 @@
         </div>
       </div>
     </template>
+
+    <!-- 发布对话框 -->
+    <PublishVideoDialog
+      v-model="publishDialogVisible"
+      :video-url="publishVideoUrl"
+      :account="account"
+      :sub-task="publishSubTask"
+      @success="handlePublishSuccess"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { fetchAccount } from '../api/accounts'
-import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus } from '../api/video_tasks'
+import { fetchAccountVideoTasks, rollbackSubTaskStatus } from '../api/video_tasks'
+
+import PublishVideoDialog from '../components/PublishVideoDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -174,17 +187,20 @@ const STATUS_LABELS = {
   generating: '生成中',
   scoring: 'AI打分',
   pending_publish: '待发布',
+  publishing: '发布中',
   published: '已发布',
   abandoned: '已废弃',
 }
 
 const TABS = [
   { key: 'pending_publish', label: '待发布' },
+  { key: 'publishing',      label: '发布中' },
   { key: 'published',       label: '已发布' },
 ]
 
 const EMPTY_TEXTS = {
   pending_publish: '暂无待发布的视频',
+  publishing:      '暂无发布中的视频',
   published:       '暂无已发布的视频',
 }
 
@@ -193,8 +209,12 @@ const account = ref(null)
 const tasks = ref([])
 const tasksLoading = ref(false)
 const activeTab = ref('pending_publish')
-const publishing = ref(null)
 const rollbacking = ref(null)
+
+// 发布对话框
+const publishDialogVisible = ref(false)
+const publishVideoUrl = ref('')
+const publishSubTask = ref(null)
 
 // Flatten all sub-tasks with parent task reference
 const allSubTasks = computed(() => {
@@ -215,7 +235,7 @@ const filteredSubTasks = computed(() => {
 })
 
 const tabCounts = computed(() => {
-  const counts = { pending_publish: 0, published: 0, generating: 0, pending: 0, all: 0 }
+  const counts = { pending_publish: 0, publishing: 0, published: 0, generating: 0, pending: 0, all: 0 }
   for (const { sub } of allSubTasks.value) {
     if (counts[sub.status] !== undefined) counts[sub.status]++
     counts.all++
@@ -228,7 +248,28 @@ const emptyText = computed(() => EMPTY_TEXTS[activeTab.value] || '暂无内容')
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
 function canRollback(sub) {
-  return ['generating', 'pending_publish', 'published'].includes(sub.status)
+  return ['generating', 'pending_publish'].includes(sub.status)
+}
+
+// 打开发布对话框
+function openPublishDialog(task, sub) {
+  if (!sub.result_video_url) {
+    ElMessage.warning('视频尚未生成完成')
+    return
+  }
+  if (!account.value?.social_bindings?.length) {
+    ElMessage.warning('该账号尚未绑定任何发布平台，请先在编辑页面绑定平台')
+    return
+  }
+  publishVideoUrl.value = sub.result_video_url
+  publishSubTask.value = { ...sub, task }
+  publishDialogVisible.value = true
+}
+
+// 发布成功处理
+async function handlePublishSuccess() {
+  ElMessage.success('发布任务创建成功，正在后台处理...')
+  await loadTasks()
 }
 
 async function loadAccount() {
@@ -254,23 +295,7 @@ async function loadTasks() {
   }
 }
 
-async function handlePublish(task, sub) {
-  await ElMessageBox.confirm('确认将该视频标记为已发布？', '发布确认', {
-    confirmButtonText: '确认发布', cancelButtonText: '取消', type: 'success'
-  })
-  publishing.value = sub.id
-  try {
-    await patchSubTaskStatus(sub.id, { status: 'published' })
-    ElMessage.success('已标记为发布')
-    await loadTasks()
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '操作失败')
-  } finally {
-    publishing.value = null
-  }
-}
-
-async function handleRollback(task, sub) {
+async function handleRollback(_task, sub) {
   rollbacking.value = sub.id
   try {
     await rollbackSubTaskStatus(sub.id)
@@ -490,6 +515,7 @@ onMounted(async () => {
 .ad-status-generating      { background: rgba(239,246,255,0.85); color: #3b82f6; }
 .ad-status-reviewing       { background: rgba(254,249,195,0.9);  color: #854d0e; }
 .ad-status-pending_publish { background: rgba(254,243,199,0.9);  color: #d97706; }
+.ad-status-publishing      { background: rgba(237,233,254,0.9);  color: #7c3aed; }
 .ad-status-published       { background: rgba(220,252,231,0.9);  color: #15803d; }
 .ad-status-abandoned       { background: rgba(254,226,226,0.9);  color: #b91c1c; }
 

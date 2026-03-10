@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     gcs_project_id: str = "ai-agent-461123"
     gcs_bucket_name: str = "audio_test_112"
 
+    # Open API 配置
+    open_api_base_url: str = "http://192.168.199.28:8080"
+    open_api_client_id: str = "default_client"
+    open_api_client_secret: str = ""
+    open_api_callback_url: str | None = None  # 回调地址，由外部注入
+
     @property
     def max_image_size_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024

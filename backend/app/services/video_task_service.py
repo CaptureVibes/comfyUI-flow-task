@@ -24,13 +24,14 @@ from app.services.video_scoring_service import score_video_with_ai
 
 logger = logging.getLogger(__name__)
 
-VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "published", "abandoned"}
+VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "publishing", "published", "abandoned"}
 
 SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":         {"generating"},
     "generating":      {"scoring"},
     "scoring":         {"pending_publish", "abandoned"},
-    "pending_publish": {"published"},
+    "pending_publish": {"publishing", "published"},
+    "publishing":      {"published"},
     "published":       set(),
     "abandoned":       set(),
 }
@@ -39,7 +40,8 @@ PREV_STATUS: dict[str, str] = {
     "generating":      "pending",
     "scoring":          "generating",
     "pending_publish": "scoring",
-    "published":       "pending_publish",
+    "publishing":      "pending_publish",
+    "published":       "publishing",
 }
 
 
@@ -47,6 +49,10 @@ def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
     if any(st.selected and st.status == "published" for st in sub_tasks):
         return "published"
     statuses = {st.status for st in sub_tasks if st.status != "abandoned"}
+    if not statuses:
+        return "abandoned"
+    if "publishing" in statuses:
+        return "publishing"
     if "pending_publish" in statuses:
         return "pending_publish"
     if "scoring" in statuses:

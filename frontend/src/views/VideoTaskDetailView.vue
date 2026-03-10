@@ -196,13 +196,12 @@
 
             <el-button
               v-if="sub.status === 'pending_publish' && sub.selected"
-              type="success"
+              type="primary"
               size="small"
-              :loading="publishing === sub.id"
-              @click="handlePublish(sub)"
+              @click="router.push(`/dashboard/accounts/${task.account_id}`)"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/></svg>
-              标记为已发布
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              前往发布
             </el-button>
 
             <el-button
@@ -231,7 +230,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   fetchVideoTask,
   fetchVideoTaskState,
@@ -244,6 +243,7 @@ const STATUS_LABELS = {
   generating: '生成中',
   scoring: 'AI审核中',
   pending_publish: '待发布',
+  publishing: '发布中',
   published: '已发布',
   abandoned: '已废弃',
 }
@@ -253,18 +253,18 @@ const TIMELINE_STEPS = [
   { key: 'pending',         label: '任务创建',   desc: '任务已建立，等待上传' },
   { key: 'generating',      label: '视频生成中', desc: '正在 AI 生成视频' },
   { key: 'scoring',         label: 'AI审核中',   desc: '正在进行 AI 智能评分' },
-  { key: 'pending_publish', label: '待发布',     desc: 'AI 评分通过，等待发布' },
+  { key: 'pending_publish', label: '待发布',     desc: 'AI 评分通过，请前往账号详情页发布' },
+  { key: 'publishing',      label: '发布中',     desc: '视频正在上传到平台' },
   { key: 'published',       label: '已发布',     desc: '视频已成功发布' },
 ]
 
-const STATUS_ORDER = ['pending', 'generating', 'scoring', 'pending_publish', 'published']
+const STATUS_ORDER = ['pending', 'generating', 'scoring', 'pending_publish', 'publishing', 'published']
 
 const route = useRoute()
 const router = useRouter()
 const task = ref(null)
 const loading = ref(false)
 const selecting = ref(null)
-const publishing = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
@@ -291,7 +291,7 @@ const timeline = computed(() => {
 })
 
 function canRollback(sub) {
-  return ['generating', 'pending_publish', 'published'].includes(sub.status)
+  return ['generating', 'pending_publish'].includes(sub.status)
 }
 
 function getAiScoreClass(score) {
@@ -391,27 +391,6 @@ async function handleSelect(sub) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   } finally {
     selecting.value = null
-  }
-}
-
-async function handlePublish(sub) {
-  await ElMessageBox.confirm(
-    '确认将该视频标记为已发布？',
-    '发布确认',
-    { confirmButtonText: '确认发布', cancelButtonText: '取消', type: 'success' }
-  )
-  publishing.value = sub.id
-  try {
-    await patchSubTaskStatus(sub.id, { status: 'published' })
-    ElMessage.success('已标记为发布')
-    await loadTask()
-    if (shouldAutoRefresh()) {
-      startAutoRefresh()
-    }
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '操作失败')
-  } finally {
-    publishing.value = null
   }
 }
 
@@ -876,6 +855,7 @@ onUnmounted(() => {
 .vtd-status-generating      { background: #eff6ff; color: #3b82f6; }
 .vtd-status-scoring         { background: #f0fdf4; color: #059669; }
 .vtd-status-pending_publish { background: #fef3c7; color: #d97706; }
+.vtd-status-publishing      { background: #ede9fe; color: #7c3aed; }
 .vtd-status-published       { background: #dcfce7; color: #15803d; }
 .vtd-status-abandoned       { background: #fee2e2; color: #b91c1c; }
 </style>

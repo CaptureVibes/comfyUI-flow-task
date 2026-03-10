@@ -107,7 +107,7 @@ async def create_template(
 @router.get("", response_model=VideoAITemplateListResponse)
 async def list_templates(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     video_source_id: uuid.UUID | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),

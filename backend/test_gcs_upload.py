@@ -1,72 +1,52 @@
 """
-GCS JSON 文件上传脚本
+测试脚本：将本地 video.mp4 上传到 GCS 结果路径
+路径格式: jimeng/results/{DATE}/{VIDEO_ID}/video.mp4
 """
 
-import json
 from pathlib import Path
 
 from google.cloud import storage
 
+# ── 手动修改这两个变量 ─────────────────────────────────────────
+DATE = "2026-03-11"
+VIDEO_ID = "95c3afc1-359b-4612-a353-8163d7a510f9"
+PROD_BUCKET =  "decom-objects"
+TEST_BUCKET =  "audio_test_112"
+# ─────────────────────────────────────────────────────────────
 
-def main():
+LOCAL_VIDEO = Path(__file__).parent / "video.mp4"
+
+
+def check_mp4_exists(date: str, video_id: str) -> bool:
+    """检查指定路径的 MP4 文件是否存在"""
     client = storage.Client("ai-agent-461123")
-
-    bucket = client.bucket("decom-objects")
-
-    # source_path = Path(__file__).parent / "2026-03-04.json"
-    #
-    # with open(source_path, "r", encoding="utf-8") as f:
-    #     data = json.load(f)
-    #
-    # blob = bucket.blob("jimeng/jobs/2026-03-04.json")
-    # blob.upload_from_string(
-    #     json.dumps(data, ensure_ascii=False, indent=2),
-    #     content_type="application/json",
-    # )
-    #
-    # print(f"✅ 上传成功: gs://decom-objects/jimeng/jobs/2026-03-04.json")
-
-    # 验证上传
-    verify(bucket)
+    bucket = client.bucket(PROD_BUCKET)
+    gcs_path = f"jimeng/results/{date}/{video_id}/video.mp4"
+    blob = bucket.blob(gcs_path)
+    return blob.exists()
 
 
-def verify(bucket):
-    """验证文件是否上传成功"""
-    blob = bucket.blob("jimeng/jobs/2026-03-10.json")
-
-    if not blob.exists():
-        print("❌ 文件不存在")
+def check_json_exists(): 
+    if not LOCAL_VIDEO.exists():
+        print(f"❌ 本地视频文件不存在: {LOCAL_VIDEO}")
         return
 
-    print(f"📦 文件存在: {blob.name}")
-    print(f"📏 大小: {blob.size} bytes")
-    print(f"🕒 更新时间: {blob.updated}")
-    print(f"🔗 公开 URL: {blob.public_url}")
+    client = storage.Client("ai-agent-461123")
+    bucket = client.bucket(TEST_BUCKET)
 
-    # 下载并打印内容
-    content = blob.download_as_text()
-    data = json.loads(content)
-    print(f"📄 内容预览: {json.dumps(data, indent=2, ensure_ascii=False)}")
+    gcs_path = f"jimeng/results/{DATE}/{VIDEO_ID}/video.mp4"
+    blob = bucket.blob(gcs_path)
 
-    # """下载视频文件到本地"""
-    # file_path  = "jimeng/results/2026-03-05/001/video.mp4"
-    # print("文件路径: ", file_path)
-    # blob = bucket.blob(file_path)
-    #
-    # if not blob.exists():
-    #     print("❌ 文件不存在")
-    #     return
-    #
-    # print(f"📦 文件存在: {blob.name}")
-    # print(f"📏 大小: {blob.size} bytes")
-    # print(f"🕒 更新时间: {blob.updated}")
-    # print(f"🔗 公开 URL: {blob.public_url}")
-    #
-    # # 下载视频到本地
-    # local_path = Path(__file__).parent / "downloaded_video.mp4"
-    # blob.download_to_filename(str(local_path))
-    # print(f"✅ 下载成功: {local_path}")
+    print(f"⬆️  正在上传 {LOCAL_VIDEO} → gs://audio_test_112/{gcs_path}")
+    blob.upload_from_filename(str(LOCAL_VIDEO), content_type="video/mp4")
 
+    print(f"✅ 上传成功!")
+    print(f"   GCS 路径: gs://audio_test_112/{gcs_path}")
+    print(f"   文件大小: {blob.size} bytes")
+    print(f"   公开 URL: {blob.public_url}")
+
+def main():
+    check_json_exists()
 
 
 if __name__ == "__main__":

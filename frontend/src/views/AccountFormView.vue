@@ -92,7 +92,13 @@
               class="ac-binding-block"
             >
               <div class="ac-binding-header">
-                <el-select v-model="binding.platform" placeholder="选择平台" class="vtfd-beautiful-input" style="width: 140px">
+                <el-select
+                  v-model="binding.platform"
+                  placeholder="选择平台"
+                  class="vtfd-beautiful-input"
+                  style="width: 140px"
+                  @change="handlePlatformChange(binding)"
+                >
                   <el-option label="YouTube" value="youtube" />
                   <el-option label="TikTok" value="tiktok" />
                   <el-option label="Instagram" value="instagram" />
@@ -102,45 +108,54 @@
                 </button>
               </div>
 
-              <!-- YouTube fields -->
-              <template v-if="binding.platform === 'youtube'">
-                <el-form-item label="Channel ID">
-                  <el-input v-model="binding.channel_id" placeholder="UCxxxxxx" clearable class="vtfd-beautiful-input" />
-                </el-form-item>
-                <el-form-item label="API Key">
-                  <el-input v-model="binding.api_key" placeholder="AIzaxxxx" clearable show-password class="vtfd-beautiful-input" />
-                </el-form-item>
-                <el-form-item label="Refresh Token">
-                  <el-input v-model="binding.refresh_token" clearable show-password class="vtfd-beautiful-input" />
+              <!-- 频道选择 (从 Open API 获取) -->
+              <template v-if="binding.platform && channelsMap[binding.platform]?.length">
+                <el-form-item :label="`${platformLabel(binding.platform)} 频道`">
+                  <el-select
+                    v-model="binding.channel_id"
+                    placeholder="选择要绑定的频道"
+                    class="vtfd-beautiful-input"
+                    filterable
+                    style="width: 100%"
+                    @change="handleChannelSelect(binding)"
+                  >
+                    <el-option
+                      v-for="channel in channelsMap[binding.platform]"
+                      :key="channel.channel_id"
+                      :label="`${channel.channel_name} (@${channel.username || 'N/A'})`"
+                      :value="channel.channel_id"
+                    >
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <img
+                          v-if="channel.thumbnail_url"
+                          :src="channel.thumbnail_url"
+                          style="width: 24px; height: 24px; border-radius: 50%;"
+                        />
+                        <span>{{ channel.channel_name }}</span>
+                        <span style="color: #94a3b8; font-size: 12px;">(@{{ channel.username || 'N/A' }})</span>
+                      </div>
+                    </el-option>
+                  </el-select>
                 </el-form-item>
               </template>
 
-              <!-- TikTok fields -->
-              <template v-if="binding.platform === 'tiktok'">
-                <el-form-item label="Open ID">
-                  <el-input v-model="binding.open_id" clearable class="vtfd-beautiful-input" />
+              <!-- 手动输入 Channel ID (当没有从 API 获取到频道时) -->
+              <template v-if="binding.platform && !channelsMap[binding.platform]?.length">
+                <el-form-item :label="`${platformLabel(binding.platform)} Channel ID`">
+                  <el-input
+                    v-model="binding.channel_id"
+                    :placeholder="`${platformLabel(binding.platform)} Channel ID`"
+                    clearable
+                    class="vtfd-beautiful-input"
+                  />
                 </el-form-item>
-                <el-form-item label="Access Token">
-                  <el-input v-model="binding.access_token" clearable show-password class="vtfd-beautiful-input" />
-                </el-form-item>
-                <el-form-item label="Refresh Token">
-                  <el-input v-model="binding.refresh_token" clearable show-password class="vtfd-beautiful-input" />
-                </el-form-item>
-                <el-form-item label="Expires In (秒)">
-                  <el-input-number v-model="binding.expires_in" :min="0" class="vtfd-beautiful-input" />
-                </el-form-item>
-              </template>
-
-              <!-- Instagram fields -->
-              <template v-if="binding.platform === 'instagram'">
-                <el-form-item label="User ID">
-                  <el-input v-model="binding.user_id" clearable class="vtfd-beautiful-input" />
-                </el-form-item>
-                <el-form-item label="Access Token">
-                  <el-input v-model="binding.access_token" clearable show-password class="vtfd-beautiful-input" />
-                </el-form-item>
-                <el-form-item label="Account Type">
-                  <el-input v-model="binding.account_type" placeholder="BUSINESS / PERSONAL" clearable class="vtfd-beautiful-input" />
+                <el-form-item :label="`${platformLabel(binding.platform)} 频道名称`">
+                  <el-input
+                    v-model="binding.channel_name"
+                    placeholder="频道名称（用于显示）"
+                    clearable
+                    class="vtfd-beautiful-input"
+                  />
                 </el-form-item>
               </template>
             </div>
@@ -162,6 +177,7 @@ import { ElMessage } from 'element-plus'
 import { createAccount, fetchAccount, patchAccount } from '../api/accounts'
 import { uploadImageByFile } from '../api/tasks'
 import { isDuplicateRequestError } from '../api/http'
+import { fetchChannels } from '../api/video_publications'
 
 const route = useRoute()
 const router = useRouter()
@@ -171,6 +187,14 @@ const loading = ref(false)
 const saving = ref(false)
 const uploadingAvatar = ref(false)
 const formRef = ref(null)
+
+// Open API 频道数据
+const channelsMap = ref({
+  youtube: [],
+  tiktok: [],
+  instagram: [],
+})
+const channelsLoading = ref(false)
 
 const form = reactive({
   account_name: '',
@@ -184,8 +208,61 @@ const rules = {
   account_name: [{ required: true, message: '请输入账号名称', trigger: 'blur' }],
 }
 
+const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
+
+function platformLabel(p) { return PLATFORM_LABELS[p] || p }
+
+// 加载 Open API 频道列表
+async function loadChannels(platform) {
+  // 避免重复加载
+  if (channelsLoading.value) return
+  // 如果已经加载过，不再重复加载
+  if (channelsMap.value[platform]?.length > 0) return
+
+  try {
+    channelsLoading.value = true
+    const response = await fetchChannels(platform, { is_active: true })
+    channelsMap.value[platform] = response.data?.items || []
+  } catch (err) {
+    console.error(`加载 ${platform} 频道失败:`, err)
+    // 静默失败，不弹窗提示，允许用户手动输入
+    channelsMap.value[platform] = []
+  } finally {
+    channelsLoading.value = false
+  }
+}
+
+// 监听平台选择变化，自动加载对应频道列表
+async function handlePlatformChange(binding) {
+  const oldPlatform = binding._prevPlatform
+  const newPlatform = binding.platform
+
+  // 清空之前的频道选择
+  delete binding._prevPlatform
+  binding.channel_id = ''
+  binding.channel_name = ''
+
+  // 如果平台变了，加载新的频道列表
+  if (newPlatform && newPlatform !== oldPlatform) {
+    await loadChannels(newPlatform)
+  }
+}
+
+// 处理频道选择，保存频道名称
+function handleChannelSelect(binding) {
+  const channel = channelsMap.value[binding.platform]?.find(c => c.channel_id === binding.channel_id)
+  if (channel) {
+    binding.channel_name = channel.channel_name
+  }
+}
+
 function addBinding() {
-  form.social_bindings.push({ platform: 'youtube', channel_id: '', api_key: '', refresh_token: '' })
+  form.social_bindings.push({
+    platform: 'youtube',
+    _prevPlatform: '',
+    channel_id: '',
+    channel_name: ''
+  })
 }
 
 function removeBinding(idx) {
@@ -233,6 +310,14 @@ async function loadAccount() {
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
     form.social_bindings = data.social_bindings ? JSON.parse(JSON.stringify(data.social_bindings)) : []
+
+    // 加载已绑定平台的频道列表
+    for (const binding of form.social_bindings) {
+      if (binding.platform) {
+        binding._prevPlatform = binding.platform
+        await loadChannels(binding.platform)
+      }
+    }
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载失败')
   } finally {
@@ -271,7 +356,13 @@ async function handleSave() {
   })
 }
 
-onMounted(loadAccount)
+onMounted(async () => {
+  await loadAccount()
+  // 如果是新建，预加载 YouTube 频道列表
+  if (!isEdit.value) {
+    await loadChannels('youtube')
+  }
+})
 </script>
 
 <style scoped>

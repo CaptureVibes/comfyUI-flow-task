@@ -81,3 +81,8 @@ class VideoSubTask(Base):
     )
 
     task: Mapped["VideoTask"] = relationship("VideoTask", back_populates="sub_tasks")
+    publications: Mapped[list["VideoPublication"]] = relationship(
+        "VideoPublication",
+        back_populates="sub_task",
+        cascade="all, delete-orphan",
+    )
