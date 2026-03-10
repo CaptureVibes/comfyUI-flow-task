@@ -88,12 +88,13 @@ async def list_video_sources_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     platform: str | None = Query(None),
     blogger_name: str | None = Query(None),
+    tiktok_blogger_id: uuid.UUID | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceListResponse:
     rows, total = await list_video_sources(
         session, page=page, page_size=page_size, owner_id=owner_id,
-        platform=platform, blogger_name=blogger_name,
+        platform=platform, blogger_name=blogger_name, tiktok_blogger_id=tiktok_blogger_id,
     )
 
     # 批量查询创建者用户名
@@ -104,11 +105,16 @@ async def list_video_sources_endpoint(
         for u in users:
             username_map[u.id] = u.display_name or u.username
 
+    from app.schemas.tiktok_blogger import TiktokBloggerRead
     items = [
         VideoSourceListItem(
-            **{k: getattr(r, k) for k in VideoSourceListItem.model_fields if k not in ("owner_username", "tags") and hasattr(r, k)},
+            **{k: getattr(r, k) for k in VideoSourceListItem.model_fields if k not in ("owner_username", "tags", "tiktok_blogger") and hasattr(r, k)},
             owner_username=username_map.get(r.owner_id) if r.owner_id else None,
             tags=[TagRead.model_validate(t) for t in (r.tags or [])],
+            tiktok_blogger=TiktokBloggerRead(
+                **{k: getattr(r.tiktok_blogger, k) for k in TiktokBloggerRead.model_fields if k != "video_count" and hasattr(r.tiktok_blogger, k)},
+                video_count=0,
+            ) if r.tiktok_blogger else None,
         )
         for r in rows
     ]

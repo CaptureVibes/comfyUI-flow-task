@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
-from app.models import account, comfyui_setting, evolink_setting, generated_image, generated_video, photo, subtask, task, task_template, user, video_ai_template, video_source  # noqa: F401
+from app.models import account, comfyui_setting, evolink_setting, generated_image, generated_video, photo, subtask, task, task_template, tiktok_blogger, user, video_ai_template, video_source  # noqa: F401
 
 
 async def init_db() -> None:

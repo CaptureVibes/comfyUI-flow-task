@@ -107,6 +107,12 @@ const routes = [
         meta: { title: '视频库' }
       },
       {
+        path: 'tiktok-bloggers',
+        name: 'tiktok-bloggers',
+        component: () => import('../views/TiktokBloggerListView.vue'),
+        meta: { title: 'TikTok博主' }
+      },
+      {
         path: 'video-library/new',
         name: 'video-library-create',
         component: () => import('../views/VideoSourceFormView.vue'),

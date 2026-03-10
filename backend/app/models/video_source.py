@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -39,6 +39,12 @@ class VideoSource(Base):
     aspect_ratio: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Video aspect ratio (width/height)")
     extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     repeatable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tiktok_blogger_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tiktok_bloggers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
@@ -47,5 +53,11 @@ class VideoSource(Base):
     tags: Mapped[list["Tag"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "Tag",
         secondary="video_source_tags",
+        lazy="selectin",
+    )
+
+    tiktok_blogger: Mapped["TiktokBlogger | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "TiktokBlogger",
+        back_populates="video_sources",
         lazy="selectin",
     )

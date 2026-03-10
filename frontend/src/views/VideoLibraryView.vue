@@ -85,16 +85,40 @@
         </button>
       </div>
 
-      <!-- Blogger search -->
-      <div class="vl-search-wrap">
-        <svg class="vl-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input
-          v-model="bloggerSearch"
-          class="vl-search-input"
-          placeholder="搜索博主..."
-          @input="onSearchInput"
-        />
-        <button v-if="bloggerSearch" class="vl-search-clear" @click="clearSearch">✕</button>
+      <!-- Blogger search (searchable dropdown) -->
+      <div class="vl-blogger-search-wrap" v-click-outside="closeBloggerDropdown">
+        <div class="vl-search-wrap" style="position:relative">
+          <svg class="vl-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            v-model="bloggerSearchInput"
+            class="vl-search-input"
+            :placeholder="selectedBlogger ? selectedBlogger.label : '搜索博主...'"
+            :class="{ 'has-selection': selectedBlogger }"
+            @input="onBloggerSearchInput"
+            @focus="bloggerDropdownOpen = true"
+          />
+          <button v-if="selectedBlogger || bloggerSearchInput" class="vl-search-clear" @click="clearBloggerFilter">✕</button>
+        </div>
+        <!-- Dropdown list -->
+        <div v-if="bloggerDropdownOpen && filteredBloggerOptions.length" class="vl-blogger-dropdown">
+          <div
+            v-for="opt in filteredBloggerOptions"
+            :key="opt.value"
+            class="vl-blogger-option"
+            :class="{ active: selectedBloggerId === opt.value }"
+            @mousedown.prevent="selectBlogger(opt)"
+          >
+            <img v-if="opt.avatar" :src="opt.avatar" class="vl-blogger-opt-avatar" />
+            <div v-else class="vl-blogger-opt-avatar-ph">{{ opt.label.charAt(0) }}</div>
+            <div class="vl-blogger-opt-info">
+              <span class="vl-blogger-opt-name">{{ opt.label }}</span>
+              <span v-if="opt.handle" class="vl-blogger-opt-handle">@{{ opt.handle }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="bloggerDropdownOpen && bloggerSearchInput && !filteredBloggerOptions.length" class="vl-blogger-dropdown">
+          <div class="vl-blogger-no-result">无匹配博主</div>
+        </div>
       </div>
     </div>
 
@@ -125,7 +149,11 @@
         <div class="vc-body">
           <div class="vc-title" :title="item.video_title">{{ item.video_title || '(无标题)' }}</div>
           <div class="vc-blogger">
-            <span class="vc-at">@{{ item.blogger_name || '未知博主' }}</span>
+            <span
+              class="vc-at"
+              :class="{ 'vc-at-linked': item.tiktok_blogger }"
+              @click.stop="item.tiktok_blogger && selectBlogger({ value: item.tiktok_blogger.id, label: item.tiktok_blogger.blogger_name, handle: item.tiktok_blogger.blogger_handle, avatar: item.tiktok_blogger.avatar_url })"
+            >@{{ (item.tiktok_blogger?.blogger_name || item.blogger_name) || '未知博主' }}</span>
             <span v-if="item.view_count != null" class="vc-views">· {{ formatCount(item.view_count) }} 次播放</span>
           </div>
 
@@ -343,10 +371,20 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { fetchTags, createTag, deleteTag } from '../api/tags'
+import { fetchBloggers } from '../api/tiktok_bloggers'
 import { isDuplicateRequestError } from '../api/http'
 import { useAuth, getToken } from '../composables/useAuth'
 
 const { isAdmin } = useAuth()
+// v-click-outside directive: close dropdown when clicking outside
+const vClickOutside = {
+  mounted(el, binding) {
+    el._clickOutsideHandler = (e) => { if (!el.contains(e.target)) binding.value(e) }
+    document.addEventListener('click', el._clickOutsideHandler)
+  },
+  unmounted(el) { document.removeEventListener('click', el._clickOutsideHandler) },
+}
+
 const router = useRouter()
 const route = useRoute()
 
@@ -385,7 +423,20 @@ let searchTimer = null
 const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(Number(route.query.page_size) || 20)
 const platform = ref(route.query.platform || '')
-const bloggerSearch = ref(route.query.blogger || '')
+const bloggerSearch = ref('')  // kept for URL compat but unused
+const selectedBloggerId = ref(route.query.tiktok_blogger_id || null)
+const bloggerOptions = ref([])
+// Blogger searchable dropdown state
+const bloggerSearchInput = ref('')
+const bloggerDropdownOpen = ref(false)
+const selectedBlogger = ref(null)  // { value, label, handle, avatar }
+const filteredBloggerOptions = computed(() => {
+  const q = bloggerSearchInput.value.trim().toLowerCase()
+  if (!q) return bloggerOptions.value
+  return bloggerOptions.value.filter(o =>
+    o.label.toLowerCase().includes(q) || (o.handle || '').toLowerCase().includes(q)
+  )
+})
 const jumpPage = ref(page.value)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
@@ -436,7 +487,7 @@ function syncUrl() {
   if (page.value > 1) query.page = String(page.value)
   if (pageSize.value !== 20) query.page_size = String(pageSize.value)
   if (platform.value) query.platform = platform.value
-  if (bloggerSearch.value) query.blogger = bloggerSearch.value
+  if (selectedBloggerId.value) query.tiktok_blogger_id = selectedBloggerId.value
   router.replace({ query })
 }
 
@@ -454,7 +505,9 @@ async function loadData(silent = false) {
       page_size: pageSize.value,
     }
     if (platform.value) params.platform = platform.value
-    if (bloggerSearch.value) params.blogger_name = bloggerSearch.value
+    if (selectedBloggerId.value) {
+      params.tiktok_blogger_id = selectedBloggerId.value
+    }
 
     const data = await fetchVideoSources(params)
     items.value = data.items || []
@@ -481,13 +534,28 @@ function switchPlatform(val) {
 }
 
 function onSearchInput() {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    page.value = 1
-    jumpPage.value = 1
-    syncUrl()
-    loadData()
-  }, 400)
+  // kept for any legacy call, now unused
+}
+
+function onBloggerSearchInput() {
+  bloggerDropdownOpen.value = true
+}
+
+function closeBloggerDropdown() {
+  bloggerDropdownOpen.value = false
+  // If nothing selected, clear input
+  if (!selectedBlogger.value) bloggerSearchInput.value = ''
+}
+
+function selectBlogger(opt) {
+  selectedBlogger.value = opt
+  selectedBloggerId.value = opt.value
+  bloggerSearchInput.value = ''
+  bloggerDropdownOpen.value = false
+  page.value = 1
+  jumpPage.value = 1
+  syncUrl()
+  loadData()
 }
 
 function clearSearch() {
@@ -677,10 +745,39 @@ async function handleDeleteTag(tag) {
   }
 }
 
+async function loadBloggers() {
+  try {
+    const res = await fetchBloggers({ page: 1, page_size: 200 })
+    bloggerOptions.value = (res.data.items || []).map(b => ({
+      value: b.id,
+      label: b.blogger_name,
+      handle: b.blogger_handle,
+      avatar: b.avatar_url,
+    }))
+    // Restore selectedBlogger from URL param
+    if (selectedBloggerId.value) {
+      const found = bloggerOptions.value.find(o => o.value === selectedBloggerId.value)
+      if (found) selectedBlogger.value = found
+    }
+  } catch { /* ignore */ }
+}
+
+function clearBloggerFilter() {
+  selectedBlogger.value = null
+  selectedBloggerId.value = null
+  bloggerSearchInput.value = ''
+  bloggerDropdownOpen.value = false
+  page.value = 1
+  jumpPage.value = 1
+  syncUrl()
+  loadData()
+}
+
 onMounted(() => {
   loadStats()
   loadData()
   loadTags()
+  loadBloggers()
 })
 
 // When navigating back from detail page (keep-alive scenario),
@@ -690,7 +787,8 @@ onActivated(() => {
   page.value = Number(q.page) || 1
   pageSize.value = Number(q.page_size) || 20
   platform.value = q.platform || ''
-  bloggerSearch.value = q.blogger || ''
+  selectedBloggerId.value = q.tiktok_blogger_id || null
+  if (!selectedBloggerId.value) selectedBlogger.value = null
   jumpPage.value = page.value
   loadStats()
   loadData()
@@ -1663,4 +1761,96 @@ onUnmounted(() => {
   .vl-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
   .vl-filterbar { gap: 10px; }
 }
+
+/* Blogger selector */
+.vl-blogger-search-wrap {
+  position: relative;
+}
+.vl-search-input.has-selection {
+  color: #6366f1;
+  font-weight: 500;
+}
+.vl-search-input.has-selection::placeholder {
+  color: #6366f1;
+  font-weight: 500;
+  opacity: 1;
+}
+.vl-blogger-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-width: 300px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  z-index: 1000;
+  overflow: hidden;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.vl-blogger-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.vl-blogger-option:hover, .vl-blogger-option.active {
+  background: #f1f5f9;
+}
+.vl-blogger-opt-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.vl-blogger-opt-avatar-ph {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #6366f1;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.vl-blogger-opt-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.vl-blogger-opt-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e1e2e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vl-blogger-opt-handle {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.vl-blogger-no-result {
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+/* Linked blogger name in card is clickable */
+.vc-at-linked {
+  cursor: pointer;
+  color: #6366f1;
+  text-decoration: underline dotted;
+}
+.vc-at-linked:hover { color: #4f46e5; }
 </style>

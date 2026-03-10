@@ -9,7 +9,7 @@ from google.cloud import storage
 
 # ── 手动修改这两个变量 ─────────────────────────────────────────
 DATE = "2026-03-11"
-VIDEO_ID = "cfb5f6e4-7a71-4960-86ff-75871b9f34a4"
+VIDEO_ID = "2664d044-ca5e-4165-b120-8b7812de0163"
 PROD_BUCKET =  "decom-objects"
 TEST_BUCKET =  "audio_test_112"
 # ─────────────────────────────────────────────────────────────

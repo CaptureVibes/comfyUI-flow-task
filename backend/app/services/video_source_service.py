@@ -19,6 +19,7 @@ from app.models.tag import Tag, video_source_tags
 from app.models.video_source import VideoSource
 from app.models.video_source_stat import VideoSourceStat
 from app.schemas.video_source import VideoSourceCreate, VideoSourceParseResult
+from app.services.tiktok_blogger_service import upsert_blogger_from_info
 
 logger = logging.getLogger("app.video_source")
 
@@ -62,8 +63,27 @@ def _parse_yt_dlp_info(info: dict) -> dict:
 
     thumbnail_url = info.get("thumbnail") or None
 
+    # Extract blogger avatar from thumbnails list (highest preference = avatar)
+    # yt-dlp marks the avatar with id='avatar_uncropped' or highest preference value
+    thumbnails = info.get("thumbnails") or []
+    avatar_url: str | None = None
+    if thumbnails:
+        # Find avatar by id hint first
+        for t in thumbnails:
+            if isinstance(t, dict) and "avatar" in str(t.get("id", "")):
+                avatar_url = t.get("url")
+                break
+        if not avatar_url:
+            # Fallback: highest preference thumbnail
+            best = max(thumbnails, key=lambda t: t.get("preference", -999) if isinstance(t, dict) else -999)
+            if isinstance(best, dict):
+                avatar_url = best.get("url")
+
     _exclude = {"url", "formats", "thumbnails", "automatic_captions", "subtitles"}
     extra = {k: v for k, v in info.items() if k not in _exclude}
+    # Store avatar_url in extra so blogger upsert can use it
+    if avatar_url:
+        extra["_avatar_url"] = avatar_url
 
     # Extract video metadata
     duration = info.get("duration")
@@ -176,6 +196,7 @@ async def create_video_source(
         return existing
 
     # If pre-parsed fields provided, skip yt-dlp
+    _blogger_info: dict = {}
     if payload.video_title or payload.video_url or payload.blogger_name:
         logger.info(
             "Creating video source from pre-parsed payload: source_url=%s, duration=%s, width=%s, height=%s",
@@ -203,6 +224,7 @@ async def create_video_source(
             extra=payload.extra,
             repeatable=payload.repeatable,
         )
+        _blogger_info = payload.extra or {}
     else:
         result = await parse_video_url(payload.source_url, session=session, owner_id=owner_id)
         vs = VideoSource(
@@ -227,9 +249,16 @@ async def create_video_source(
             extra=result.extra,
             repeatable=payload.repeatable,
         )
+        _blogger_info = result.extra or {}
 
     session.add(vs)
     await session.flush()  # flush to get vs.id before associating tags
+
+    # Auto-link or create TiktokBlogger from yt-dlp info
+    blogger = await upsert_blogger_from_info(session, _blogger_info, owner_id)
+    if blogger is not None:
+        await session.flush()  # ensure new blogger.id is available
+        vs.tiktok_blogger_id = blogger.id
 
     # Associate tags via direct INSERT into junction table (avoids async lazy-load issue)
     if payload.tag_ids:
@@ -261,6 +290,7 @@ async def list_video_sources(
     owner_id: UUID | None = None,
     platform: str | None = None,
     blogger_name: str | None = None,
+    tiktok_blogger_id: UUID | None = None,
 ) -> tuple[list[VideoSource], int]:
     stmt = select(VideoSource).order_by(VideoSource.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     total_stmt = select(func.count(VideoSource.id))
@@ -270,7 +300,10 @@ async def list_video_sources(
     if platform:
         stmt = stmt.where(VideoSource.platform == platform)
         total_stmt = total_stmt.where(VideoSource.platform == platform)
-    if blogger_name:
+    if tiktok_blogger_id is not None:
+        stmt = stmt.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
+        total_stmt = total_stmt.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
+    elif blogger_name:
         stmt = stmt.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
         total_stmt = total_stmt.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
     rows = (await session.execute(stmt)).scalars().all()

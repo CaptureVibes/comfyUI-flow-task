@@ -216,11 +216,27 @@ const IconAccount = () => h('svg', {
   h('path', { d: 'M14 9h5M14 12h4M14 15h3' })
 ])
 
+// TikTok博主图标 (person + music note)
+const IconTiktokBlogger = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('circle', { cx: 8, cy: 7, r: 3 }),
+  h('path', { d: 'M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 2.2.5' }),
+  h('path', { d: 'M17 8v5' }),
+  h('path', { d: 'M21 8v5' }),
+  h('path', { d: 'M17 8a3 3 0 0 1 4 0' }),
+  h('circle', { cx: 17, cy: 13, r: 1, fill: 'currentColor', stroke: 'none' }),
+  h('circle', { cx: 21, cy: 13, r: 1, fill: 'currentColor', stroke: 'none' })
+])
+
 const baseMenuItems = [
   { path: '/dashboard', name: 'tasks', label: '任务列表', iconComponent: IconList },
   { path: '/dashboard/templates', name: 'templates', label: '工作流模板', iconComponent: IconFlow },
   { path: '/dashboard/comfyui', name: 'comfyui', label: 'ComfyUI 编辑器', iconComponent: IconComfyUI },
   { path: '/dashboard/video-library', name: 'video-library', label: '视频库', iconComponent: IconVideoLibrary },
+  { path: '/dashboard/tiktok-bloggers', name: 'tiktok-bloggers', label: 'TikTok博主', iconComponent: IconTiktokBlogger },
   { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: 'AI模板', iconComponent: IconVideoAI },
   { path: '/dashboard/accounts', name: 'accounts', label: 'AI博主', iconComponent: IconAccount },
   { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: '任务管理', iconComponent: IconTaskMgmt },

@@ -5,6 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.tiktok_blogger import TiktokBloggerRead
+
 
 # ── Tag schemas ──────────────────────────────────────────────────────────────
 
@@ -105,6 +107,8 @@ class VideoSourceRead(BaseModel):
     extra: dict | None
     repeatable: bool
     tags: list[TagRead] = []
+    tiktok_blogger_id: uuid.UUID | None = None
+    tiktok_blogger: TiktokBloggerRead | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -136,6 +140,8 @@ class VideoSourceListItem(BaseModel):
     aspect_ratio: float | None
     repeatable: bool = False
     tags: list[TagRead] = []
+    tiktok_blogger_id: uuid.UUID | None = None
+    tiktok_blogger: TiktokBloggerRead | None = None
     created_at: datetime
     updated_at: datetime
 

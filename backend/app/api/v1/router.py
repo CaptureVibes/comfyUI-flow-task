@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1 import accounts, auth, callbacks, execution, settings, subtasks, tags, task_templates, tasks, uploads, video_ai_templates, video_sources, video_tasks, video_task_config, video_publications
+from app.api.v1 import accounts, auth, callbacks, execution, settings, subtasks, tags, task_templates, tasks, tiktok_bloggers, uploads, video_ai_templates, video_sources, video_tasks, video_task_config, video_publications
 from app.core.security import get_current_user
 
 api_router = APIRouter(prefix="/api/v1")
@@ -29,3 +29,4 @@ api_router.include_router(accounts.router, dependencies=_auth_dep)
 api_router.include_router(video_tasks.router, dependencies=_auth_dep)
 api_router.include_router(video_task_config.router, dependencies=_auth_dep)
 api_router.include_router(tags.router, dependencies=_auth_dep)
+api_router.include_router(tiktok_bloggers.router, dependencies=_auth_dep)
