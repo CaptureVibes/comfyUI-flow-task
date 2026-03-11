@@ -28,6 +28,9 @@ def _config_to_dict(config) -> dict:
         "round2_threshold": config.round2_threshold,
         "round2_weight": config.round2_weight,
         "final_threshold": config.final_threshold,
+        "auto_publish_enabled": config.auto_publish_enabled,
+        "auto_publish_model": config.auto_publish_model,
+        "auto_publish_prompt": config.auto_publish_prompt,
     }
 
 
