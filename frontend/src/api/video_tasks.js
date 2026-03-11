@@ -8,10 +8,11 @@ export async function createVideoTask(payload) {
   return data
 }
 
-export async function fetchVideoTasks(dateStr, { accountId, status } = {}) {
+export async function fetchVideoTasks(dateStr, { accountId, status, tiktokBloggerId } = {}) {
   const params = { target_date: dateStr }
   if (accountId) params.account_id = accountId
   if (status) params.status = status
+  if (tiktokBloggerId) params.tiktok_blogger_id = tiktokBloggerId
   const { data } = await http.get('/video-tasks', { params })
   return data
 }
@@ -50,9 +51,10 @@ export async function fetchVideoTaskResults(dateStr) {
   return data
 }
 
-export async function fetchVideoTaskStats(dateStr) {
+export async function fetchVideoTaskStats(dateStr, { tiktokBloggerId } = {}) {
   const params = {}
   if (dateStr) params.target_date = dateStr
+  if (tiktokBloggerId) params.tiktok_blogger_id = tiktokBloggerId
   const { data } = await http.get('/video-tasks/stats', { params })
   return data
 }

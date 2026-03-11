@@ -56,11 +56,12 @@ async def list_video_tasks(
     target_date: date | None = Query(default=None),
     account_id: uuid.UUID | None = Query(default=None),
     status: str | None = Query(default=None),
+    tiktok_blogger_id: uuid.UUID | None = Query(default=None),
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     svc = VideoTaskService(db=session)
-    enriched = await svc.get_tasks_with_names(target_date, owner_id, account_id, status)
+    enriched = await svc.get_tasks_with_names(target_date, owner_id, account_id, status, tiktok_blogger_id)
     result = []
     for item in enriched:
         task = item["task"]
@@ -75,12 +76,14 @@ async def list_video_tasks(
 @router.get("/stats", response_model=dict[str, int])
 async def get_video_task_stats(
     target_date: date | None = Query(default=None),
+    tiktok_blogger_id: uuid.UUID | None = Query(default=None),
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
-    """Return count per status, optionally filtered by target_date."""
+    """Return count per status, optionally filtered by target_date and tiktok_blogger_id."""
     from sqlalchemy import func, select
     from app.models.video_task import VideoTask
+    from app.models.video_ai_template import VideoAITemplate
 
     stmt = select(
         VideoTask.status,
@@ -90,6 +93,9 @@ async def get_video_task_stats(
         stmt = stmt.where(VideoTask.owner_id == owner_id)
     if target_date is not None:
         stmt = stmt.where(VideoTask.target_date == target_date)
+    if tiktok_blogger_id is not None:
+        stmt = stmt.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)
+        stmt = stmt.where(VideoAITemplate.tiktok_blogger_id == tiktok_blogger_id)
     rows = (await session.execute(stmt)).all()
     return {str(row[0]): row[1] for row in rows}
 

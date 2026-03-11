@@ -22,8 +22,42 @@
           style="width: 180px;"
           :clearable="false"
         />
+        <!-- Blogger search dropdown -->
+        <div class="vt-blogger-search-wrap" v-click-outside="closeBloggerDropdown">
+          <div class="vt-search-wrap" style="position:relative">
+            <svg class="vt-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input
+              v-model="bloggerSearchInput"
+              class="vt-search-input"
+              :placeholder="selectedBlogger ? selectedBlogger.label : '筛选AI博主...'"
+              :class="{ 'has-selection': selectedBlogger }"
+              @input="onBloggerSearchInput"
+              @focus="bloggerDropdownOpen = true"
+            />
+            <button v-if="selectedBlogger || bloggerSearchInput" class="vt-search-clear" @click="clearBloggerFilter">✕</button>
+          </div>
+          <!-- Dropdown list -->
+          <div v-if="bloggerDropdownOpen && filteredBloggerOptions.length" class="vt-blogger-dropdown">
+            <div
+              v-for="opt in filteredBloggerOptions"
+              :key="opt.value"
+              class="vt-blogger-option"
+              :class="{ active: selectedBloggerId === opt.value }"
+              @mousedown.prevent="selectBlogger(opt)"
+            >
+              <img v-if="opt.avatar" :src="opt.avatar" class="vt-blogger-opt-avatar" />
+              <div v-else class="vt-blogger-opt-avatar-ph">{{ opt.label.charAt(0) }}</div>
+              <div class="vt-blogger-opt-info">
+                <span class="vt-blogger-opt-name">{{ opt.label }}</span>
+                <span v-if="opt.handle" class="vt-blogger-opt-handle">@{{ opt.handle }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="bloggerDropdownOpen && bloggerSearchInput && !filteredBloggerOptions.length" class="vt-blogger-dropdown">
+            <div class="vt-blogger-no-result">无匹配博主</div>
+          </div>
+        </div>
         <button
-          v-if="tasks.length > 0"
           class="vt-btn vt-btn-success"
           :class="{ 'is-loading': fetchingResults }"
           :disabled="fetchingResults"
@@ -34,7 +68,6 @@
           获取生成结果
         </button>
         <button
-          v-if="tasks.length > 0"
           class="vt-btn vt-btn-primary"
           :class="{ 'is-loading': uploading }"
           :disabled="uploading"
@@ -247,8 +280,20 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask } from '../api/video_tasks.js'
+import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
+
+// v-click-outside directive: close dropdown when clicking outside
+const vClickOutside = {
+  mounted(el, binding) {
+    el._clickOutsideHandler = (e) => { if (!el.contains(e.target)) binding.value(e) }
+    document.addEventListener('click', el._clickOutsideHandler)
+  },
+  unmounted(el) {
+    document.removeEventListener('click', el._clickOutsideHandler)
+  }
+}
 
 const STATUS_LABELS = {
   pending: '待处理',
@@ -269,6 +314,22 @@ const uploading = ref(false)
 const fetchingResults = ref(false)
 const taskStats = ref({})
 const activeFilter = ref(null)
+
+// Blogger searchable dropdown state
+const bloggers = ref([])
+const bloggerOptions = ref([])
+const bloggerSearchInput = ref('')
+const bloggerDropdownOpen = ref(false)
+const selectedBlogger = ref(null)  // { value, label, handle, avatar }
+const selectedBloggerId = ref(null)
+
+const filteredBloggerOptions = computed(() => {
+  const q = bloggerSearchInput.value.trim().toLowerCase()
+  if (!q) return bloggerOptions.value
+  return bloggerOptions.value.filter(o =>
+    o.label.toLowerCase().includes(q) || (o.handle || '').toLowerCase().includes(q)
+  )
+})
 
 const filteredTasks = computed(() => {
   if (!activeFilter.value) return tasks.value
@@ -301,7 +362,7 @@ async function loadTasks() {
   if (!targetDate.value) return
   loading.value = true
   try {
-    tasks.value = await fetchVideoTasks(targetDate.value)
+    tasks.value = await fetchVideoTasks(targetDate.value, { tiktokBloggerId: selectedBloggerId.value })
     loadStats()
   } catch (e) {
     if (!isDuplicateRequestError(e)) {
@@ -314,11 +375,15 @@ async function loadTasks() {
 
 async function loadStats() {
   try {
-    taskStats.value = await fetchVideoTaskStats(targetDate.value)
+    taskStats.value = await fetchVideoTaskStats(targetDate.value, { tiktokBloggerId: selectedBloggerId.value })
   } catch { /* ignore */ }
 }
 
 async function handleUpload() {
+  if (tasks.value.length === 0) {
+    ElMessage.warning('当前没有可上传的任务')
+    return
+  }
   uploading.value = true
   try {
     const res = await uploadVideoTasks(targetDate.value)
@@ -343,6 +408,10 @@ async function pollUntilStatusChanges(fromStatuses, toStatuses, maxAttempts = 30
 }
 
 async function handleFetchResults() {
+  if (tasks.value.length === 0) {
+    ElMessage.warning('当前没有可获取结果的任务')
+    return
+  }
   fetchingResults.value = true
   try {
     const res = await fetchVideoTaskResults(targetDate.value)
@@ -380,9 +449,55 @@ async function confirmDelete() {
   }
 }
 
+async function loadBloggers() {
+  try {
+    const res = await fetchBloggers()
+    // API 返回的是 { items: [], total, page, page_size }
+    const items = res.data?.items || []
+    bloggers.value = items
+    bloggerOptions.value = items.map(b => ({
+      value: b.id,
+      label: b.blogger_name || b.id,
+      handle: b.blogger_handle,
+      avatar: b.avatar_url
+    }))
+  } catch (e) {
+    console.error('Failed to load bloggers:', e)
+    bloggers.value = []
+    bloggerOptions.value = []
+  }
+}
+
+function onBloggerSearchInput() {
+  bloggerDropdownOpen.value = true
+}
+
+function closeBloggerDropdown() {
+  bloggerDropdownOpen.value = false
+  // If nothing selected, clear input
+  if (!selectedBlogger.value) bloggerSearchInput.value = ''
+}
+
+function selectBlogger(opt) {
+  selectedBlogger.value = opt
+  selectedBloggerId.value = opt.value
+  bloggerSearchInput.value = ''
+  bloggerDropdownOpen.value = false
+  loadTasks()
+}
+
+function clearBloggerFilter() {
+  selectedBlogger.value = null
+  selectedBloggerId.value = null
+  bloggerSearchInput.value = ''
+  bloggerDropdownOpen.value = false
+  loadTasks()
+}
+
 onMounted(() => {
   loadTasks()
   loadStats()
+  loadBloggers()
 })
 </script>
 
@@ -816,5 +931,162 @@ onMounted(() => {
   font-size: 11px;
   color: #94a3b8;
   font-family: monospace;
+}
+
+/* Blogger search dropdown */
+.vt-blogger-search-wrap {
+  position: relative;
+}
+
+.vt-search-wrap {
+  display: flex;
+  align-items: center;
+  position: relative;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0 10px;
+  height: 36px;
+  transition: all 0.2s;
+}
+
+.vt-search-wrap:hover {
+  border-color: #cbd5e1;
+}
+
+.vt-search-wrap:focus-within {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.vt-search-icon {
+  color: #94a3b8;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.vt-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: #0f172a;
+  background: transparent;
+  height: 100%;
+  min-width: 0;
+}
+
+.vt-search-input::placeholder {
+  color: #94a3b8;
+}
+
+.vt-search-input.has-selection {
+  color: #6366f1;
+  font-weight: 500;
+}
+
+.vt-search-input.has-selection::placeholder {
+  color: #6366f1;
+  font-weight: 500;
+  opacity: 1;
+}
+
+.vt-search-clear {
+  border: none;
+  background: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 4px;
+}
+
+.vt-search-clear:hover {
+  color: #64748b;
+}
+
+.vt-blogger-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-width: 300px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  z-index: 1000;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.vt-blogger-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-radius: 8px;
+}
+
+.vt-blogger-option:hover,
+.vt-blogger-option.active {
+  background: #f1f5f9;
+}
+
+.vt-blogger-opt-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.vt-blogger-opt-avatar-ph {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.vt-blogger-opt-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vt-blogger-opt-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vt-blogger-opt-handle {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.vt-blogger-no-result {
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #94a3b8;
+  text-align: center;
 }
 </style>

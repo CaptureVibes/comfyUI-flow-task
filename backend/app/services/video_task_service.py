@@ -146,6 +146,7 @@ class VideoTaskService:
         owner_id: uuid.UUID | None,
         account_id: uuid.UUID | None = None,
         status_filter: str | None = None,
+        tiktok_blogger_id: uuid.UUID | None = None,
     ) -> list[VideoTask]:
         q = (
             select(VideoTask)
@@ -160,6 +161,9 @@ class VideoTaskService:
             q = q.where(VideoTask.account_id == account_id)
         if status_filter:
             q = q.where(VideoTask.status == status_filter)
+        if tiktok_blogger_id is not None:
+            q = q.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)
+            q = q.where(VideoAITemplate.tiktok_blogger_id == tiktok_blogger_id)
         result = await self.db.execute(q)
         return list(result.scalars().all())
 
@@ -558,9 +562,10 @@ class VideoTaskService:
         owner_id: uuid.UUID | None,
         account_id: uuid.UUID | None = None,
         status_filter: str | None = None,
+        tiktok_blogger_id: uuid.UUID | None = None,
     ) -> list[dict]:
         """Returns tasks enriched with account_name, template_title, sub_tasks_done."""
-        tasks = await self.get_tasks(target_date, owner_id, account_id, status_filter)
+        tasks = await self.get_tasks(target_date, owner_id, account_id, status_filter, tiktok_blogger_id)
 
         # Batch-fetch account and template names
         account_ids = {t.account_id for t in tasks if t.account_id}
