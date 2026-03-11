@@ -18,6 +18,7 @@ from app.services.task_scheduler_service import start_task_scheduler, stop_task_
 from app.services.video_ai_service import start_video_ai_queue_processor, stop_video_ai_queue_processor
 from app.services.video_publication_service import start_video_publication_poller, stop_video_publication_poller
 from app.services.video_stats_collector import start_video_stats_collector, stop_video_stats_collector
+from app.services.account_publish_scheduler import start_account_publish_scheduler, stop_account_publish_scheduler
 
 setup_logging(settings.log_level, settings.log_dir)
 logger = logging.getLogger("app")
@@ -80,6 +81,7 @@ async def startup_event() -> None:
     start_video_ai_queue_processor()
     start_video_publication_poller()
     start_video_stats_collector()
+    start_account_publish_scheduler()
 
 
 @app.on_event("shutdown")
@@ -88,6 +90,7 @@ async def shutdown_event() -> None:
     await stop_video_ai_queue_processor()
     await stop_video_publication_poller()
     await stop_video_stats_collector()
+    await stop_account_publish_scheduler()
 
 
 @app.get("/healthz")

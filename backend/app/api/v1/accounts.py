@@ -12,7 +12,7 @@ from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
 from app.models.account_blogger_binding import AccountBloggerBinding
 from app.models.tiktok_blogger import TiktokBlogger
-from app.schemas.account import AccountCreate, AccountListResponse, AccountPatch, AccountRead, BoundBloggerRead
+from app.schemas.account import AccountCreate, AccountListResponse, AccountPatch, AccountRead, BoundBloggerRead, ScheduledPublishConfig
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
     create_account,
@@ -127,6 +127,27 @@ async def delete_account_endpoint(
 ) -> Response:
     await delete_account(session, account_id, owner_id)
     return Response(status_code=204)
+
+
+# ── 定时发布配置 ────────────────────────────────────────────────────────────────
+
+@router.put("/{account_id}/scheduled-publish", response_model=AccountRead)
+async def update_scheduled_publish(
+    account_id: uuid.UUID,
+    payload: ScheduledPublishConfig,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> AccountRead:
+    """更新 AI 博主账号的定时发布配置"""
+    account = await get_account_or_404(session, account_id, owner_id)
+    account.publish_enabled = payload.publish_enabled
+    account.publish_cron = payload.publish_cron
+    account.publish_window_minutes = payload.publish_window_minutes
+    account.publish_count = payload.publish_count
+    await session.commit()
+    await session.refresh(account)
+    bloggers = await _load_bound_bloggers(session, account_id)
+    return _account_read(account, bloggers)
 
 
 # ── 账号-博主绑定 ─────────────────────────────────────────────────────────────

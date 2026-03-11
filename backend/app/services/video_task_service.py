@@ -24,13 +24,14 @@ from app.services.video_scoring_service import score_video_with_ai
 
 logger = logging.getLogger(__name__)
 
-VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "publishing", "published", "publish_failed", "abandoned"}
+VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "queued", "publishing", "published", "publish_failed", "abandoned"}
 
 SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":         {"generating"},
     "generating":      {"scoring"},
     "scoring":         {"pending_publish", "abandoned"},
-    "pending_publish": {"publishing", "published"},
+    "pending_publish": {"queued", "publishing", "published"},
+    "queued":          {"publishing", "pending_publish"},
     "publishing":      {"published", "publish_failed"},
     "publish_failed":  {"pending_publish"},
     "published":       set(),
@@ -41,7 +42,8 @@ PREV_STATUS: dict[str, str] = {
     "generating":      "pending",
     "scoring":         "generating",
     "pending_publish": "scoring",
-    "publishing":      "pending_publish",
+    "queued":          "pending_publish",
+    "publishing":      "queued",
     "publish_failed":  "publishing",
     "published":       "publishing",
 }
@@ -57,6 +59,8 @@ def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
         return "publishing"
     if "publish_failed" in statuses:
         return "publish_failed"
+    if "queued" in statuses:
+        return "queued"
     if "pending_publish" in statuses:
         return "pending_publish"
     if "scoring" in statuses:
@@ -550,6 +554,76 @@ class VideoTaskService:
         sub.status = prev
         if prev != "pending_publish":
             sub.selected = False
+
+        sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+        await self.db.commit()
+        await self.db.refresh(sub)
+        return sub
+
+    async def enqueue_sub_task(
+        self,
+        sub_task_id: uuid.UUID,
+        owner_id: uuid.UUID | None,
+    ) -> VideoSubTask:
+        """将子任务从 pending_publish 状态移到 queued 状态，进入发布队列"""
+        q = (
+            select(VideoSubTask)
+            .where(VideoSubTask.id == sub_task_id)
+            .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+        )
+        sub = (await self.db.execute(q)).scalar_one_or_none()
+        if not sub:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+        if owner_id is not None and sub.task.owner_id != owner_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+
+        if sub.status != "pending_publish":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"只有 pending_publish 状态的子任务才能进入队列",
+            )
+
+        sub.status = "queued"
+        # 如果没有设置 queue_order，设置为当前时间戳，确保排在最后
+        if sub.queue_order is None:
+            # 获取当前最大的 queue_order
+            from sqlalchemy import func
+            max_order = await self.db.execute(
+                select(func.max(VideoSubTask.queue_order)).where(VideoSubTask.status == "queued")
+            )
+            max_order_val = max_order.scalar()
+            sub.queue_order = (max_order_val or 0) + 1
+
+        sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+        await self.db.commit()
+        await self.db.refresh(sub)
+        return sub
+
+    async def dequeue_sub_task(
+        self,
+        sub_task_id: uuid.UUID,
+        owner_id: uuid.UUID | None,
+    ) -> VideoSubTask:
+        """将子任务从 queued 状态移回 pending_publish 状态"""
+        q = (
+            select(VideoSubTask)
+            .where(VideoSubTask.id == sub_task_id)
+            .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+        )
+        sub = (await self.db.execute(q)).scalar_one_or_none()
+        if not sub:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+        if owner_id is not None and sub.task.owner_id != owner_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+
+        if sub.status != "queued":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"只有 queued 状态的子任务才能移出队列",
+            )
+
+        sub.status = "pending_publish"
+        sub.queue_order = None  # 清除排序
 
         sub.task.status = _compute_parent_status(sub.task.sub_tasks)
         await self.db.commit()

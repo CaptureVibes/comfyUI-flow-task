@@ -240,3 +240,56 @@ async def rollback_sub_task_status(
 ) -> Any:
     svc = VideoTaskService(db=session)
     return await svc.rollback_sub_task_status(sub_task_id, owner_id)
+
+
+@router.post("/subtasks/{sub_task_id}/enqueue", response_model=VideoSubTaskRead)
+async def enqueue_sub_task(
+    sub_task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """将子任务从 pending_publish 状态移到 queued 状态，进入发布队列"""
+    svc = VideoTaskService(db=session)
+    return await svc.enqueue_sub_task(sub_task_id, owner_id)
+
+
+@router.post("/subtasks/{sub_task_id}/dequeue", response_model=VideoSubTaskRead)
+async def dequeue_sub_task(
+    sub_task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """将子任务从 queued 状态移回 pending_publish 状态"""
+    svc = VideoTaskService(db=session)
+    return await svc.dequeue_sub_task(sub_task_id, owner_id)
+
+
+@router.patch("/subtasks/queue-order", status_code=status.HTTP_200_OK)
+async def update_queue_order(
+    payload: list[dict],
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """批量更新发布队列顺序，payload: [{id: uuid, queue_order: int}]"""
+    from fastapi import HTTPException
+    from app.models.video_task import VideoSubTask
+    from sqlalchemy import select
+
+    for item in payload:
+        sub_id = uuid.UUID(item["id"])
+        order = int(item["queue_order"])
+        q = select(VideoSubTask).where(VideoSubTask.id == sub_id)
+        if owner_id is not None:
+            from app.models.video_task import VideoTask
+            from sqlalchemy.orm import selectinload
+            q = q.options(selectinload(VideoSubTask.task))
+        sub = (await session.execute(q)).scalar_one_or_none()
+        if not sub:
+            raise HTTPException(status_code=404, detail=f"子任务 {sub_id} 不存在")
+        if owner_id is not None and sub.task.owner_id != owner_id:
+            raise HTTPException(status_code=403, detail="无权操作")
+        sub.queue_order = order
+
+    await session.commit()
+    return {"status": "ok"}
+

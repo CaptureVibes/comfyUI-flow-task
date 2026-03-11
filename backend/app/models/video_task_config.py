@@ -39,6 +39,12 @@ class VideoTaskConfig(Base):
     # Weighted average score must be >= this threshold to enter "pending_publish" state
     final_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=65.0)
 
+    # ── Auto Publish Metadata Generation ──────────────────────────────────────
+    # AI generates title/desc/hashtag before auto-publishing queued videos
+    auto_publish_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auto_publish_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-2.0-flash")
+    auto_publish_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

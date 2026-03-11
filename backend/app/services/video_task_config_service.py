@@ -55,5 +55,12 @@ class VideoTaskConfigService:
         if update.final_threshold is not None:
             config.final_threshold = update.final_threshold
 
+        if update.auto_publish_enabled is not None:
+            config.auto_publish_enabled = update.auto_publish_enabled
+        if update.auto_publish_model is not None:
+            config.auto_publish_model = update.auto_publish_model
+        if update.auto_publish_prompt is not None:
+            config.auto_publish_prompt = update.auto_publish_prompt
+
         await self.db.flush()
         return config

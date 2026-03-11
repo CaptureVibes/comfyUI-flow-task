@@ -29,3 +29,8 @@ export async function searchBloggers(q = '', limit = 20) {
   const { data } = await http.get('/tiktok-bloggers/search', { params: { q, limit } })
   return data
 }
+
+export function updateScheduledPublish(id, payload) {
+  // payload: { publish_enabled, publish_cron, publish_window_minutes, publish_count }
+  return http.put(`/tiktok-bloggers/${id}/scheduled-publish`, payload)
+}

@@ -61,6 +61,14 @@ class BoundBloggerRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ScheduledPublishConfig(BaseModel):
+    """AI博主定时发布配置"""
+    publish_enabled: bool = False
+    publish_cron: str | None = None
+    publish_window_minutes: int = 0
+    publish_count: int = 1
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
@@ -70,6 +78,10 @@ class AccountRead(BaseModel):
     avatar_url: str | None
     social_bindings: list | None
     tiktok_bloggers: list[BoundBloggerRead] = []
+    publish_enabled: bool = False
+    publish_cron: str | None = None
+    publish_window_minutes: int = 0
+    publish_count: int = 1
     created_at: datetime
     updated_at: datetime
 

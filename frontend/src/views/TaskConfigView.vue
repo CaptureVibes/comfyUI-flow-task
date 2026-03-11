@@ -27,7 +27,7 @@
           <el-form-item label="模型">
             <el-input
               v-model="config.round1_model"
-              placeholder="输入模型名称，如: gemini-2.0-flash"
+              placeholder="输入模型名称，如: gemini-3.1-pro-preview"
             />
           </el-form-item>
           <el-form-item label="通过阈值">
@@ -125,6 +125,37 @@
         </el-form>
       </el-card>
 
+      <!-- Auto Publish Metadata -->
+      <el-card class="round-card" shadow="never">
+        <template #header>
+          <div class="card-header">
+            <span>自动发布 AI 生成标题/描述/标签</span>
+            <el-switch v-model="config.auto_publish_enabled" />
+          </div>
+        </template>
+        <el-form :model="config" label-width="100px" label-position="left">
+          <el-form-item label="">
+            <span class="hint" style="margin-left:0">启用后，自动发布前会调用 AI 分析视频内容，生成标题、描述和 hashtag。AI 必须返回 JSON 格式：<code>{"title":"...","desc":"...","hashtag":["..."]}</code></span>
+          </el-form-item>
+          <template v-if="config.auto_publish_enabled">
+            <el-form-item label="模型">
+              <el-input
+                v-model="config.auto_publish_model"
+                placeholder="输入模型名称，如: gemini-3.1-pro-preview"
+              />
+            </el-form-item>
+            <el-form-item label="提示词">
+              <el-input
+                v-model="config.auto_publish_prompt"
+                type="textarea"
+                :rows="8"
+                placeholder="请输入提示词，告诉 AI 如何根据视频内容生成标题、描述和标签。AI 必须输出 JSON 格式。"
+              />
+            </el-form-item>
+          </template>
+        </el-form>
+      </el-card>
+
       <!-- Save button -->
       <div class="actions">
         <el-button type="primary" size="large" @click="saveConfig" :loading="saving">
@@ -157,6 +188,9 @@ const config = reactive({
   round2_threshold: 70,
   round2_weight: 0.3,
   final_threshold: 65,
+  auto_publish_enabled: false,
+  auto_publish_model: 'gemini-2.0-flash',
+  auto_publish_prompt: '',
 })
 
 async function loadConfig() {

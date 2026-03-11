@@ -136,6 +136,19 @@
       </div>
       <div
         class="vt-stat-card"
+        :class="{ 'vt-stat-active': activeFilter === 'queued' }"
+        style="--stat-color: #8b5cf6; --stat-bg: #ede9fe;"
+        @click="toggleFilter('queued')"
+      >
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">队列中</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.queued || 0 }}</div>
+        <div class="vt-stat-sub">queued</div>
+      </div>
+      <div
+        class="vt-stat-card"
         :class="{ 'vt-stat-active': activeFilter === 'published' }"
         style="--stat-color: #10b981; --stat-bg: #dcfce7;"
         @click="toggleFilter('published')"
@@ -300,8 +313,10 @@ const STATUS_LABELS = {
   generating: '生成中',
   scoring: 'AI打分中',
   pending_publish: '待发布',
+  queued: '队列中',
   publishing: '发布中',
   published: '已发布',
+  publish_failed: '发布失败',
   abandoned: '已废弃',
 }
 
@@ -834,6 +849,7 @@ onMounted(() => {
 .vt-status-generating      { background: #eff6ff; color: #3b82f6; }
 .vt-status-scoring         { background: #fdf4ff; color: #9333ea; }
 .vt-status-pending_publish { background: #fef3c7; color: #d97706; }
+.vt-status-queued          { background: #ede9fe; color: #8b5cf6; }
 .vt-status-publishing      { background: #ede9fe; color: #7c3aed; }
 .vt-status-published       { background: #dcfce7; color: #15803d; }
 .vt-status-abandoned       { background: #fee2e2; color: #b91c1c; }

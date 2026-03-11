@@ -72,6 +72,16 @@ export async function rollbackSubTaskStatus(subTaskId) {
   return data
 }
 
+export async function enqueueSubTask(subTaskId) {
+  const { data } = await http.post(`/video-tasks/subtasks/${subTaskId}/enqueue`)
+  return data
+}
+
+export async function dequeueSubTask(subTaskId) {
+  const { data } = await http.post(`/video-tasks/subtasks/${subTaskId}/dequeue`)
+  return data
+}
+
 export async function deleteSubTask(subTaskId) {
   const { data } = await http.delete(`/video-tasks/subtasks/${subTaskId}`)
   return data

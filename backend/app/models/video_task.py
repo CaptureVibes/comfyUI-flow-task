@@ -76,6 +76,9 @@ class VideoSubTask(Base):
     # True when this sub-task's video was chosen by the user for publishing
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # Queue order for manual sorting in publish queue (only used when status=queued)
+    queue_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

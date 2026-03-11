@@ -21,6 +21,7 @@
           <div v-if="account.style_description" class="ad-hero-style">{{ account.style_description }}</div>
           <div class="ad-hero-meta">
             <span class="ad-hero-stat"><strong>{{ tabCounts.published }}</strong> 已发布</span>
+            <span class="ad-hero-stat"><strong>{{ tabCounts.queued }}</strong> 发布队列</span>
             <span class="ad-hero-stat"><strong>{{ tabCounts.pending_publish }}</strong> 待发布</span>
             <span v-if="tabCounts.publish_failed" class="ad-hero-stat ad-hero-stat-fail">
               <strong>{{ tabCounts.publish_failed }}</strong> 发布失败
@@ -61,6 +62,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             生成视频
           </button>
+          <button class="ad-schedule-btn" :class="{ active: account.publish_enabled }" @click="openScheduleDialog">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            {{ account.publish_enabled ? '定时发布中' : '定时发布' }}
+          </button>
           <button class="ad-edit-btn" @click="$router.push(`/dashboard/accounts/${account.id}/edit`)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             编辑账号
@@ -74,16 +79,22 @@
           v-for="tab in TABS"
           :key="tab.key"
           class="ad-tab"
-          :class="{ active: activeTab === tab.key, 'ad-tab-fail': tab.key === 'publish_failed' }"
+          :class="{ active: activeTab === tab.key, 'ad-tab-fail': tab.key === 'publish_failed', 'ad-tab-queue': tab.key === 'queued' }"
           @click="activeTab = tab.key"
         >
           {{ tab.label }}
-          <span v-if="tabCounts[tab.key]" class="ad-tab-count" :class="{ 'ad-tab-count-fail': tab.key === 'publish_failed' }">{{ tabCounts[tab.key] }}</span>
+          <span v-if="tabCounts[tab.key]" class="ad-tab-count" :class="{ 'ad-tab-count-fail': tab.key === 'publish_failed', 'ad-tab-count-queue': tab.key === 'queued' }">{{ tabCounts[tab.key] }}</span>
         </button>
         <button class="ad-refresh-btn" :disabled="tasksLoading" @click="loadTasks">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" :class="{ spinning: tasksLoading }"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
           刷新
         </button>
+      </div>
+
+      <!-- Queue tab hint -->
+      <div v-if="activeTab === 'queued'" class="ad-queue-hint">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        拖拽视频卡片可调整发布顺序，队列按得分从高到低排列
       </div>
 
       <!-- Video grid -->
@@ -94,13 +105,29 @@
         <span>{{ emptyText }}</span>
       </div>
 
-      <div v-else class="ad-video-grid">
+      <div
+        v-else
+        class="ad-video-grid"
+        :class="{ 'ad-grid-draggable': activeTab === 'queued' }"
+        @dragover.prevent
+        @drop="onDrop($event)"
+      >
         <div
-          v-for="item in filteredSubTasks"
+          v-for="(item, index) in filteredSubTasks"
           :key="item.sub.id"
           class="ad-video-card"
-          :class="{ 'ad-card-selected': item.sub.selected }"
+          :class="{ 'ad-card-selected': item.sub.selected, 'ad-card-dragging': draggingId === item.sub.id }"
+          :draggable="activeTab === 'queued'"
+          @dragstart="onDragStart($event, item.sub.id, index)"
+          @dragend="onDragEnd"
+          @dragover.prevent="onDragOver($event, index)"
         >
+          <!-- Drag handle (queue tab only) -->
+          <div v-if="activeTab === 'queued'" class="ad-drag-handle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="9" cy="7" r="1" fill="#94a3b8"/><circle cx="15" cy="7" r="1" fill="#94a3b8"/><circle cx="9" cy="12" r="1" fill="#94a3b8"/><circle cx="15" cy="12" r="1" fill="#94a3b8"/><circle cx="9" cy="17" r="1" fill="#94a3b8"/><circle cx="15" cy="17" r="1" fill="#94a3b8"/></svg>
+            <span class="ad-queue-rank">#{{ index + 1 }}</span>
+          </div>
+
           <!-- Thumbnail / video -->
           <div class="ad-card-thumb" @click="router.push(`/dashboard/video-tasks/${item.task.id}`)">
             <video
@@ -127,6 +154,11 @@
             <div v-if="item.sub.selected" class="ad-card-check">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
+
+            <!-- AI Score badge -->
+            <div v-if="item.sub.ai_score != null" class="ad-card-score-badge" :class="scoreClass(item.sub.ai_score)">
+              {{ item.sub.ai_score }}分
+            </div>
           </div>
 
           <!-- Card content -->
@@ -137,6 +169,24 @@
             </div>
             <div class="ad-card-template">{{ item.task.template_title || '未知模板' }}</div>
             <div class="ad-card-prompt">{{ item.task.prompt }}</div>
+
+            <!-- AI Scoring details -->
+            <div v-if="item.sub.ai_score != null || item.sub.round1_score != null" class="ad-score-detail">
+              <div class="ad-score-row">
+                <span class="ad-score-label">AI综合分</span>
+                <span class="ad-score-val" :class="scoreClass(item.sub.ai_score)">{{ item.sub.ai_score ?? '-' }}</span>
+              </div>
+              <div v-if="item.sub.round1_score != null" class="ad-score-row">
+                <span class="ad-score-label">第一轮</span>
+                <span class="ad-score-val">{{ item.sub.round1_score }}</span>
+                <span v-if="item.sub.round1_reason" class="ad-score-reason" :title="item.sub.round1_reason">{{ item.sub.round1_reason }}</span>
+              </div>
+              <div v-if="item.sub.round2_score != null" class="ad-score-row">
+                <span class="ad-score-label">第二轮</span>
+                <span class="ad-score-val">{{ item.sub.round2_score }}</span>
+                <span v-if="item.sub.round2_reason" class="ad-score-reason" :title="item.sub.round2_reason">{{ item.sub.round2_reason }}</span>
+              </div>
+            </div>
 
             <!-- Scoring error message -->
             <div v-if="item.sub.scoring_error" class="ad-card-error">
@@ -165,9 +215,30 @@
 
             <!-- Action buttons -->
             <div class="ad-card-actions">
-              <!-- 待发布：发布按钮 -->
+              <!-- 待发布：入队按钮 -->
               <el-button
                 v-if="item.sub.status === 'pending_publish' && item.sub.selected"
+                type="success"
+                size="small"
+                :loading="enqueuing === item.sub.id"
+                @click="handleEnqueue(item.sub)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px"><path d="M3 17l9-9 9 9M12 8v13"/></svg>
+                加入队列
+              </el-button>
+
+              <!-- 发布队列：出队按钮 -->
+              <el-button
+                v-if="item.sub.status === 'queued'"
+                size="small"
+                plain
+                :loading="dequeuing === item.sub.id"
+                @click="handleDequeue(item.sub)"
+              >移出队列</el-button>
+
+              <!-- 发布队列：直接发布按钮 -->
+              <el-button
+                v-if="item.sub.status === 'queued'"
                 type="primary"
                 size="small"
                 @click="openPublishDialog(item.task, item.sub)"
@@ -221,6 +292,48 @@
       :sub-task="publishSubTask"
       @success="handlePublishSuccess"
     />
+
+    <!-- 定时发布配置 dialog -->
+    <el-dialog v-model="showScheduleDialog" title="定时发布配置" width="520px">
+      <el-form :model="scheduleForm" label-width="120px" label-position="left">
+        <el-form-item label="启用定时发布">
+          <el-switch v-model="scheduleForm.publish_enabled" />
+        </el-form-item>
+        <template v-if="scheduleForm.publish_enabled">
+          <el-form-item label="快捷规则">
+            <div class="ad-schedule-presets">
+              <button
+                v-for="p in CRON_PRESETS"
+                :key="p.cron"
+                type="button"
+                class="ad-preset-btn"
+                :class="{ active: scheduleForm.publish_cron === p.cron }"
+                @click="scheduleForm.publish_cron = p.cron"
+              >{{ p.label }}</button>
+            </div>
+          </el-form-item>
+          <el-form-item label="Cron 表达式">
+            <el-input v-model="scheduleForm.publish_cron" placeholder="0 10 * * *" style="font-family:monospace" />
+            <div class="ad-schedule-hint">格式：分 时 日 月 周（北京时间）。例：每天10点 = 0 10 * * *</div>
+          </el-form-item>
+          <el-form-item label="随机延迟">
+            <el-input-number v-model="scheduleForm.publish_window_minutes" :min="0" :max="720" :step="15" style="width:130px" />
+            <span class="ad-schedule-unit">分钟（到点后随机延迟，0 = 精确时间）</span>
+          </el-form-item>
+          <el-form-item label="每次发布数量">
+            <el-input-number v-model="scheduleForm.publish_count" :min="1" :max="20" style="width:100px" />
+            <span class="ad-schedule-unit">个视频（按队列顺序）</span>
+          </el-form-item>
+          <el-form-item label="规则预览">
+            <div class="ad-schedule-preview">{{ schedulePreview }}</div>
+          </el-form-item>
+        </template>
+      </el-form>
+      <template #footer>
+        <el-button @click="showScheduleDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingSchedule" @click="handleSaveSchedule">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -228,9 +341,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchAccount } from '../api/accounts'
-import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask } from '../api/video_tasks'
+import { fetchAccount, updateScheduledPublish } from '../api/accounts'
+import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask } from '../api/video_tasks'
 import { fetchSubTaskPublications } from '../api/video_publications'
+import http from '../api/http'
 
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
 
@@ -244,6 +358,7 @@ const STATUS_LABELS = {
   generating: '生成中',
   scoring: 'AI打分',
   pending_publish: '待发布',
+  queued: '队列中',
   publishing: '发布中',
   publish_failed: '发布失败',
   published: '已发布',
@@ -252,6 +367,7 @@ const STATUS_LABELS = {
 
 const TABS = [
   { key: 'pending_publish', label: '待发布' },
+  { key: 'queued',          label: '发布队列' },
   { key: 'publishing',      label: '发布中' },
   { key: 'publish_failed',  label: '发布失败' },
   { key: 'published',       label: '已发布' },
@@ -259,6 +375,7 @@ const TABS = [
 
 const EMPTY_TEXTS = {
   pending_publish: '暂无待发布的视频',
+  queued:          '发布队列为空，在「待发布」tab 中将视频加入队列',
   publishing:      '暂无发布中的视频',
   publish_failed:  '暂无发布失败的视频',
   published:       '暂无已发布的视频',
@@ -272,6 +389,13 @@ const activeTab = ref('pending_publish')
 const rollbacking = ref(null)
 const retrying = ref(null)
 const deleting = ref(null)
+const enqueuing = ref(null)
+const dequeuing = ref(null)
+
+// 拖拽状态
+const draggingId = ref(null)
+const draggingIndex = ref(null)
+const dragOverIndex = ref(null)
 
 // 发布对话框
 const publishDialogVisible = ref(false)
@@ -295,12 +419,28 @@ const allSubTasks = computed(() => {
 })
 
 const filteredSubTasks = computed(() => {
-  if (activeTab.value === 'all') return allSubTasks.value
-  return allSubTasks.value.filter(item => item.sub.status === activeTab.value)
+  const items = allSubTasks.value.filter(item => item.sub.status === activeTab.value)
+  // 待发布按分数从高到低排序
+  if (activeTab.value === 'pending_publish') {
+    return [...items].sort((a, b) => {
+      const aScore = a.sub.ai_score ?? -1
+      const bScore = b.sub.ai_score ?? -1
+      return bScore - aScore
+    })
+  }
+  // 发布队列只按 queue_order 手动排序
+  if (activeTab.value === 'queued') {
+    return [...items].sort((a, b) => {
+      const aOrder = a.sub.queue_order ?? 99999
+      const bOrder = b.sub.queue_order ?? 99999
+      return aOrder - bOrder
+    })
+  }
+  return items
 })
 
 const tabCounts = computed(() => {
-  const counts = { pending_publish: 0, publishing: 0, publish_failed: 0, published: 0, generating: 0, pending: 0, all: 0 }
+  const counts = { pending_publish: 0, queued: 0, publishing: 0, publish_failed: 0, published: 0, generating: 0, pending: 0, all: 0 }
   for (const { sub } of allSubTasks.value) {
     if (counts[sub.status] !== undefined) counts[sub.status]++
     counts.all++
@@ -314,6 +454,13 @@ function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
 function canRollback(sub) {
   return sub.status === 'generating'
+}
+
+function scoreClass(score) {
+  if (score == null) return ''
+  if (score >= 80) return 'score-high'
+  if (score >= 60) return 'score-mid'
+  return 'score-low'
 }
 
 // 打开发布对话框
@@ -349,6 +496,35 @@ async function handleRetryPublish(_task, sub) {
     ElMessage.error(e?.response?.data?.detail || '重置失败')
   } finally {
     retrying.value = null
+  }
+}
+
+// 入队（pending_publish → queued）
+async function handleEnqueue(sub) {
+  enqueuing.value = sub.id
+  try {
+    await enqueueSubTask(sub.id)
+    ElMessage.success('已加入发布队列')
+    activeTab.value = 'queued'
+    await loadTasks()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    enqueuing.value = null
+  }
+}
+
+// 出队（queued → pending_publish）
+async function handleDequeue(sub) {
+  dequeuing.value = sub.id
+  try {
+    await dequeueSubTask(sub.id)
+    ElMessage.success('已移出队列')
+    await loadTasks()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    dequeuing.value = null
   }
 }
 
@@ -434,6 +610,108 @@ async function handleRollback(_task, sub) {
     ElMessage.error(e?.response?.data?.detail || '撤回失败')
   } finally {
     rollbacking.value = null
+  }
+}
+
+// ── 拖拽排序 (queue tab only) ──────────────────────────────────────────────────
+
+function onDragStart(event, subId, index) {
+  if (activeTab.value !== 'queued') return
+  draggingId.value = subId
+  draggingIndex.value = index
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+function onDragEnd() {
+  draggingId.value = null
+  draggingIndex.value = null
+  dragOverIndex.value = null
+}
+
+function onDragOver(_event, index) {
+  if (activeTab.value !== 'queued') return
+  dragOverIndex.value = index
+}
+
+async function onDrop(_event) {
+  if (activeTab.value !== 'queued') return
+  if (draggingIndex.value === null || dragOverIndex.value === null) return
+  if (draggingIndex.value === dragOverIndex.value) return
+
+  // Reorder locally
+  const items = [...filteredSubTasks.value]
+  const [moved] = items.splice(draggingIndex.value, 1)
+  items.splice(dragOverIndex.value, 0, moved)
+
+  // Persist new order: PATCH queue_order for each item via sub-task status endpoint
+  // We use a dedicated endpoint: PATCH /video-tasks/subtasks/{id}/queue-order
+  // For now call the backend with the new order list
+  try {
+    const orderPayload = items.map((item, idx) => ({ id: item.sub.id, queue_order: idx + 1 }))
+    await http.patch('/video-tasks/subtasks/queue-order', orderPayload)
+    await loadTasks()
+  } catch (e) {
+    ElMessage.error('保存排序失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+// ── 定时发布 dialog ────────────────────────────────────────────────────────────
+
+const CRON_PRESETS = [
+  { label: '每天8点',    cron: '0 8 * * *' },
+  { label: '每天10点',   cron: '0 10 * * *' },
+  { label: '每天12点',   cron: '0 12 * * *' },
+  { label: '每天20点',   cron: '0 20 * * *' },
+  { label: '隔天10点',   cron: '0 10 */2 * *' },
+  { label: '每周一10点', cron: '0 10 * * 1' },
+]
+
+const showScheduleDialog = ref(false)
+const savingSchedule = ref(false)
+const scheduleForm = ref({
+  publish_enabled: false,
+  publish_cron: '',
+  publish_window_minutes: 0,
+  publish_count: 1,
+})
+
+const schedulePreview = computed(() => {
+  const cron = scheduleForm.value.publish_cron?.trim()
+  if (!cron) return '请输入 Cron 表达式'
+  const preset = CRON_PRESETS.find(p => p.cron === cron)
+  const label = preset ? `${preset.label}` : `Cron: ${cron}`
+  const window = scheduleForm.value.publish_window_minutes
+  const count = scheduleForm.value.publish_count
+  const windowStr = window > 0 ? `，到点后随机延迟最多 ${window} 分钟` : ''
+  return `${label}${windowStr}，每次发布 ${count} 个视频（按队列顺序）`
+})
+
+function openScheduleDialog() {
+  scheduleForm.value = {
+    publish_enabled: account.value?.publish_enabled ?? false,
+    publish_cron: account.value?.publish_cron ?? '',
+    publish_window_minutes: account.value?.publish_window_minutes ?? 0,
+    publish_count: account.value?.publish_count ?? 1,
+  }
+  showScheduleDialog.value = true
+}
+
+async function handleSaveSchedule() {
+  savingSchedule.value = true
+  try {
+    const updated = await updateScheduledPublish(account.value.id, {
+      publish_enabled: scheduleForm.value.publish_enabled,
+      publish_cron: scheduleForm.value.publish_cron || null,
+      publish_window_minutes: scheduleForm.value.publish_window_minutes,
+      publish_count: scheduleForm.value.publish_count,
+    })
+    account.value = updated
+    showScheduleDialog.value = false
+    ElMessage.success(scheduleForm.value.publish_enabled ? '定时发布已启用' : '定时发布已关闭')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingSchedule.value = false
   }
 }
 
@@ -583,6 +861,45 @@ onMounted(async () => {
 }
 .ad-edit-btn:hover { background: #e0e7ff; border-color: #6366f1; }
 
+.ad-schedule-btn {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; padding: 9px 18px;
+  border-radius: 10px; border: 1px solid #c7d2fe;
+  background: #f5f3ff; color: #6366f1; cursor: pointer; transition: all 0.15s;
+}
+.ad-schedule-btn:hover { background: #ede9fe; border-color: #a5b4fc; }
+.ad-schedule-btn.active {
+  background: #6366f1; color: #fff; border-color: #6366f1;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+}
+
+/* Schedule dialog */
+.ad-schedule-presets {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+
+.ad-preset-btn {
+  padding: 4px 12px; border-radius: 20px; border: 1.5px solid #e2e8f0;
+  background: #fff; color: #64748b; font-size: 12px; cursor: pointer;
+  transition: all 0.15s; font-weight: 500;
+}
+.ad-preset-btn:hover { border-color: #a5b4fc; color: #6366f1; background: #f5f3ff; }
+.ad-preset-btn.active { border-color: #6366f1; background: #6366f1; color: #fff; }
+
+.ad-schedule-hint {
+  font-size: 11px; color: #94a3b8; margin-top: 4px; line-height: 1.5;
+}
+
+.ad-schedule-unit {
+  font-size: 12px; color: #94a3b8; margin-left: 8px;
+}
+
+.ad-schedule-preview {
+  font-size: 13px; color: #374151; background: #f1f5f9;
+  border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px;
+  line-height: 1.5; width: 100%;
+}
+
 /* Tabs bar */
 .ad-tabs-bar {
   display: flex;
@@ -606,6 +923,8 @@ onMounted(async () => {
 .ad-tab.active { color: #6366f1; font-weight: 700; background: #eef2ff; }
 .ad-tab-fail:hover { color: #dc2626; background: #fef2f2; }
 .ad-tab-fail.active { color: #dc2626; background: #fef2f2; }
+.ad-tab-queue:hover { color: #059669; background: #f0fdf4; }
+.ad-tab-queue.active { color: #059669; background: #f0fdf4; }
 
 .ad-tab-count {
   font-size: 11px; font-weight: 700;
@@ -615,6 +934,8 @@ onMounted(async () => {
 .ad-tab.active .ad-tab-count { background: #4f46e5; }
 .ad-tab-count-fail { background: #dc2626; }
 .ad-tab-fail.active .ad-tab-count { background: #dc2626; }
+.ad-tab-count-queue { background: #059669; }
+.ad-tab-queue.active .ad-tab-count { background: #047857; }
 
 .ad-refresh-btn {
   margin-left: auto;
@@ -625,6 +946,14 @@ onMounted(async () => {
 }
 .ad-refresh-btn:hover:not(:disabled) { color: #6366f1; border-color: #c7d2fe; background: #eef2ff; }
 .ad-refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Queue hint */
+.ad-queue-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #6366f1;
+  background: #eef2ff; border: 1px solid #c7d2fe;
+  border-radius: 8px; padding: 8px 14px; margin-bottom: 14px;
+}
 
 .spinning { animation: spin 0.8s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -644,6 +973,10 @@ onMounted(async () => {
   gap: 14px;
 }
 
+.ad-grid-draggable {
+  /* slight visual hint for draggable grid */
+}
+
 /* Video card */
 .ad-video-card {
   background: #fff;
@@ -654,6 +987,20 @@ onMounted(async () => {
 }
 .ad-video-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.07); }
 .ad-video-card.ad-card-selected { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.ad-video-card.ad-card-dragging { opacity: 0.5; border: 2px dashed #6366f1; }
+.ad-grid-draggable .ad-video-card { cursor: grab; }
+.ad-grid-draggable .ad-video-card:active { cursor: grabbing; }
+
+/* Drag handle */
+.ad-drag-handle {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px 0;
+  color: #94a3b8; font-size: 11px;
+}
+
+.ad-queue-rank {
+  font-size: 12px; font-weight: 700; color: #059669;
+}
 
 /* Thumbnail */
 .ad-card-thumb {
@@ -692,11 +1039,23 @@ onMounted(async () => {
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
 
+/* AI Score badge on thumb */
+.ad-card-score-badge {
+  position: absolute; top: 8px; left: 8px;
+  font-size: 11px; font-weight: 800;
+  padding: 3px 8px; border-radius: 6px;
+  backdrop-filter: blur(6px);
+}
+.ad-card-score-badge.score-high { background: rgba(220,252,231,0.9); color: #15803d; }
+.ad-card-score-badge.score-mid  { background: rgba(254,249,195,0.9); color: #854d0e; }
+.ad-card-score-badge.score-low  { background: rgba(254,226,226,0.9); color: #b91c1c; }
+
 /* Status colors */
 .ad-status-pending         { background: rgba(241,245,249,0.85); color: #64748b; }
 .ad-status-generating      { background: rgba(239,246,255,0.85); color: #3b82f6; }
 .ad-status-reviewing       { background: rgba(254,249,195,0.9);  color: #854d0e; }
 .ad-status-pending_publish { background: rgba(254,243,199,0.9);  color: #d97706; }
+.ad-status-queued          { background: rgba(209,250,229,0.9);  color: #065f46; }
 .ad-status-publishing      { background: rgba(237,233,254,0.9);  color: #7c3aed; }
 .ad-status-publish_failed  { background: rgba(254,226,226,0.9);  color: #b91c1c; }
 .ad-status-published       { background: rgba(220,252,231,0.9);  color: #15803d; }
@@ -722,6 +1081,48 @@ onMounted(async () => {
   font-size: 12px; color: #475569; line-height: 1.4;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; margin-bottom: 10px;
+}
+
+/* AI Score detail */
+.ad-score-detail {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ad-score-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.ad-score-label {
+  color: #94a3b8;
+  font-weight: 600;
+  min-width: 48px;
+}
+
+.ad-score-val {
+  font-weight: 800;
+  color: #0f172a;
+}
+.ad-score-val.score-high { color: #15803d; }
+.ad-score-val.score-mid  { color: #d97706; }
+.ad-score-val.score-low  { color: #dc2626; }
+
+.ad-score-reason {
+  color: #64748b;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 
 .ad-card-actions {

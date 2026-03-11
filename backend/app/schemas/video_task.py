@@ -25,6 +25,7 @@ class VideoSubTaskRead(BaseModel):
     round1_reason: str | None = None
     round2_reason: str | None = None
     scoring_error: str | None = None  # Error message when AI scoring fails
+    queue_order: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

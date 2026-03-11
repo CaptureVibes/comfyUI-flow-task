@@ -38,3 +38,9 @@ export async function bindBlogger(accountId, tiktokBloggerId) {
 export async function unbindBlogger(accountId, bloggerId) {
   await http.delete(`/accounts/${accountId}/bloggers/${bloggerId}`)
 }
+
+export async function updateScheduledPublish(accountId, payload) {
+  // payload: { publish_enabled, publish_cron, publish_window_minutes, publish_count }
+  const { data } = await http.put(`/accounts/${accountId}/scheduled-publish`, payload)
+  return data
+}
