@@ -50,12 +50,6 @@ class VideoSource(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
 
-    tags: Mapped[list["Tag"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
-        "Tag",
-        secondary="video_source_tags",
-        lazy="selectin",
-    )
-
     tiktok_blogger: Mapped["TiktokBlogger | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "TiktokBlogger",
         back_populates="video_sources",

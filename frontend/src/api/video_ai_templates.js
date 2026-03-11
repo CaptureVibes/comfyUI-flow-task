@@ -108,3 +108,10 @@ export async function generateImages(templateId) {
   })
   return data
 }
+
+
+export async function fetchTemplatesByBlogger(bloggerId, tagIds = []) {
+  const params = tagIds.length ? { tag_ids: tagIds.join(',') } : {}
+  const { data } = await http.get(`/video-ai-templates/by-blogger/${bloggerId}`, { params })
+  return data
+}

@@ -19,7 +19,9 @@ from app.models.generated_video import SubTaskGeneratedVideo
 from app.models.video_task import VideoTask, VideoSubTask
 from app.models.video_task_config import VideoTaskConfig
 from app.models.video_publication import VideoPublication
-from app.models.tag import Tag
+from app.models.tag import Tag, VideoSourceTag
+from app.models.tiktok_blogger import TiktokBlogger
+from app.models.account_blogger_binding import AccountBloggerBinding
 
 __all__ = [
     "Task", "SubTask", "SubTaskPhoto", "SubTaskGeneratedImage", "TaskTemplate",
@@ -28,5 +30,7 @@ __all__ = [
     "VideoTask", "VideoSubTask",
     "VideoTaskConfig",
     "VideoPublication",
-    "Tag",
+    "Tag", "VideoSourceTag",
+    "TiktokBlogger",
+    "AccountBloggerBinding",
 ]

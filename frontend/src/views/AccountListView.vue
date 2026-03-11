@@ -44,7 +44,23 @@
         <div class="ac-body">
           <div class="ac-name">{{ item.account_name }}</div>
           <div v-if="item.style_description" class="ac-style">{{ item.style_description }}</div>
-          <div v-if="!item.social_bindings?.length" class="ac-no-binding">未绑定平台</div>
+          <div v-if="!item.social_bindings?.length && !item.tiktok_bloggers?.length" class="ac-no-binding">未绑定平台</div>
+
+          <!-- Bound TikTok bloggers -->
+          <div v-if="item.tiktok_bloggers?.length" class="ac-bloggers">
+            <div
+              v-for="blogger in item.tiktok_bloggers"
+              :key="blogger.id"
+              class="ac-blogger-chip"
+              :title="blogger.blogger_name + (blogger.blogger_handle ? ' @' + blogger.blogger_handle : '')"
+            >
+              <img v-if="blogger.avatar_url" :src="blogger.avatar_url" class="ac-blogger-avatar" />
+              <div v-else class="ac-blogger-avatar ac-blogger-avatar-ph">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
+              <span class="ac-blogger-name">{{ blogger.blogger_name }}</span>
+            </div>
+          </div>
 
           <div class="ac-footer">
             <div class="ac-binding-tags">
@@ -323,6 +339,49 @@ onMounted(loadData)
   color: #94a3b8;
   margin-bottom: 10px;
   flex: 1;
+}
+
+.ac-bloggers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ac-blogger-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #f8faff;
+  border: 1px solid #e0e7ff;
+  border-radius: 20px;
+  padding: 3px 8px 3px 3px;
+  max-width: 100%;
+}
+
+.ac-blogger-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ac-blogger-avatar-ph {
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ac-blogger-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: #4f46e5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
 }
 
 .ac-footer {

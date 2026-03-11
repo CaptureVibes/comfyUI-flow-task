@@ -8,6 +8,16 @@ from pydantic import BaseModel, Field
 from app.models.enums import VideoAIProcessStatus
 
 
+class TagRead(BaseModel):
+    id: uuid.UUID
+    owner_id: uuid.UUID | None
+    name: str
+    color: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class VideoSourceSummary(BaseModel):
     id: uuid.UUID
     platform: str | None
@@ -30,6 +40,7 @@ class VideoAITemplateCreate(BaseModel):
     prompt_description: str | None = None
     extracted_shots: list | None = None
     extra: dict | None = None
+    tag_ids: list[uuid.UUID] | None = None
 
 
 class VideoAITemplatePatch(BaseModel):
@@ -53,6 +64,9 @@ class VideoAITemplateRead(BaseModel):
     prompt_description: str | None
     extracted_shots: list | None
     is_used: bool = False
+    repeatable: bool = False
+    tiktok_blogger_id: uuid.UUID | None = None
+    tags: list[TagRead] = []
     extra: dict | None
     created_at: datetime
     updated_at: datetime
@@ -70,7 +84,12 @@ class VideoAITemplateListItem(BaseModel):
     video_source: VideoSourceSummary | None = None
     process_status: VideoAIProcessStatus
     process_error: str | None
+    prompt_description: str | None = None
+    extracted_shots: list | None = None
     is_used: bool = False
+    repeatable: bool = False
+    tiktok_blogger_id: uuid.UUID | None = None
+    tags: list[TagRead] = []
     generated_video_count: int = 0
     last_published_at: datetime | None = None
     created_at: datetime

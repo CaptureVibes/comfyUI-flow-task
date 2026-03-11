@@ -166,15 +166,95 @@
           </div>
         </div>
       </div>
+
+      <!-- TikTok 博主绑定卡片（仅编辑模式显示） -->
+      <div v-if="isEdit" class="vtfd-card vtfd-fw-card">
+        <div class="vtfd-section">
+          <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
+            <span class="vtfd-section-tag">绑定 TikTok 博主</span>
+            <el-button type="primary" link @click="showBindDialog = true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              绑定博主
+            </el-button>
+          </div>
+
+          <div v-if="boundBloggers.length === 0" class="vtfd-images-empty" style="padding: 30px;">
+            <div class="vtfd-images-empty-text">暂未绑定TikTok博主，绑定后可在生成页快速选择博主的模板</div>
+          </div>
+
+          <div v-else class="blogger-list">
+            <div v-for="blogger in boundBloggers" :key="blogger.id" class="blogger-item">
+              <img v-if="blogger.avatar_url" :src="blogger.avatar_url" class="blogger-avatar" />
+              <div v-else class="blogger-avatar blogger-avatar-placeholder">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
+              <div class="blogger-info">
+                <div class="blogger-name">{{ blogger.blogger_name }}</div>
+                <div class="blogger-handle" v-if="blogger.blogger_handle">@{{ blogger.blogger_handle }}</div>
+              </div>
+              <button class="ac-binding-del" @click="handleUnbindBlogger(blogger)" :disabled="unbindingId === blogger.id">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </el-form>
+
+    <!-- 绑定博主弹窗 -->
+    <el-dialog v-model="showBindDialog" title="搜索并绑定博主" width="480px" :close-on-click-modal="false">
+      <el-input
+        v-model="bloggerSearchQ"
+        placeholder="输入博主名或 handle 搜索..."
+        clearable
+        @input="handleBloggerSearch"
+        style="margin-bottom: 12px;"
+      >
+        <template #prefix>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </template>
+      </el-input>
+
+      <div v-if="bloggerSearchLoading" style="text-align: center; padding: 20px; color: #94a3b8;">搜索中...</div>
+
+      <div v-else-if="bloggerSearchResults.length === 0" style="text-align: center; padding: 20px; color: #94a3b8;">
+        {{ '未找到匹配的博主' }}
+      </div>
+
+      <div v-else class="blogger-search-list">
+        <div
+          v-for="b in bloggerSearchResults"
+          :key="b.id"
+          class="blogger-search-item"
+          :class="{ 'is-bound': isBound(b.id) }"
+          @click="!isBound(b.id) && handleBindBlogger(b)"
+        >
+          <img v-if="b.avatar_url" :src="b.avatar_url" class="blogger-avatar blogger-avatar-sm" />
+          <div v-else class="blogger-avatar blogger-avatar-sm blogger-avatar-placeholder">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          </div>
+          <div class="blogger-info">
+            <div class="blogger-name">{{ b.blogger_name }}</div>
+            <div class="blogger-handle" v-if="b.blogger_handle">@{{ b.blogger_handle }}</div>
+          </div>
+          <span v-if="isBound(b.id)" style="font-size: 12px; color: #10b981; font-weight: 600;">已绑定</span>
+          <el-button v-else type="primary" size="small" :loading="bindingId === b.id" @click.stop="handleBindBlogger(b)">绑定</el-button>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="showBindDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { createAccount, fetchAccount, patchAccount } from '../api/accounts'
+import { createAccount, fetchAccount, patchAccount, fetchAccountBloggers, bindBlogger, unbindBlogger } from '../api/accounts'
+import { searchBloggers } from '../api/tiktok_bloggers'
 import { uploadImageByFile } from '../api/tasks'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchChannels } from '../api/video_publications'
@@ -310,6 +390,7 @@ async function loadAccount() {
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
     form.social_bindings = data.social_bindings ? JSON.parse(JSON.stringify(data.social_bindings)) : []
+    boundBloggers.value = data.tiktok_bloggers || []
 
     // 加载已绑定平台的频道列表
     for (const binding of form.social_bindings) {
@@ -356,8 +437,85 @@ async function handleSave() {
   })
 }
 
+// ── TikTok 博主绑定 ───────────────────────────────────────────────────────────
+const boundBloggers = ref([])
+const showBindDialog = ref(false)
+const bloggerSearchQ = ref('')
+const bloggerSearchResults = ref([])
+const bloggerSearchLoading = ref(false)
+const bindingId = ref(null)
+const unbindingId = ref(null)
+
+watch(showBindDialog, (val) => {
+  if (val) {
+    bloggerSearchQ.value = ''
+    handleBloggerSearch()
+  } else {
+    bloggerSearchResults.value = []
+  }
+})
+
+let _searchTimer = null
+function handleBloggerSearch() {
+  clearTimeout(_searchTimer)
+  _searchTimer = setTimeout(async () => {
+    bloggerSearchLoading.value = true
+    try {
+      bloggerSearchResults.value = await searchBloggers(bloggerSearchQ.value, 30)
+    } catch {
+      bloggerSearchResults.value = []
+    } finally {
+      bloggerSearchLoading.value = false
+    }
+  }, 300)
+}
+
+function isBound(bloggerId) {
+  return boundBloggers.value.some(b => b.id === bloggerId)
+}
+
+async function loadBoundBloggers() {
+  if (!isEdit.value) return
+  try {
+    boundBloggers.value = await fetchAccountBloggers(route.params.id)
+  } catch {
+    // fallback: keep whatever was loaded from account response
+  }
+}
+
+async function handleBindBlogger(blogger) {
+  if (bindingId.value) return
+  bindingId.value = blogger.id
+  try {
+    await bindBlogger(route.params.id, blogger.id)
+    if (!boundBloggers.value.some(b => b.id === blogger.id)) {
+      boundBloggers.value.push(blogger)
+    }
+    ElMessage.success(`已绑定：${blogger.blogger_name}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '绑定失败')
+  } finally {
+    bindingId.value = null
+  }
+}
+
+async function handleUnbindBlogger(blogger) {
+  if (unbindingId.value) return
+  unbindingId.value = blogger.id
+  try {
+    await unbindBlogger(route.params.id, blogger.id)
+    boundBloggers.value = boundBloggers.value.filter(b => b.id !== blogger.id)
+    ElMessage.success(`已解绑：${blogger.blogger_name}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '解绑失败')
+  } finally {
+    unbindingId.value = null
+  }
+}
+
 onMounted(async () => {
   await loadAccount()
+  await loadBoundBloggers()
   // 如果是新建，预加载 YouTube 频道列表
   if (!isEdit.value) {
     await loadChannels('youtube')
@@ -593,6 +751,91 @@ onMounted(async () => {
   border-color: #fca5a5;
   color: #dc2626;
   transform: scale(1.05);
+}
+
+/* Blogger binding */
+.blogger-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.blogger-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.blogger-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid #e2e8f0;
+}
+
+.blogger-avatar-sm {
+  width: 32px;
+  height: 32px;
+}
+
+.blogger-avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+}
+
+.blogger-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.blogger-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blogger-handle {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.blogger-search-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.blogger-search-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.blogger-search-item:hover:not(.is-bound) {
+  background: #f1f5f9;
+}
+
+.blogger-search-item.is-bound {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* Empty texts */

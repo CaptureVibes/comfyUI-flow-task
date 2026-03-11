@@ -195,8 +195,8 @@ class VideoTaskService:
         task = (await self.db.execute(q)).scalar_one_or_none()
         if not task:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
-        if task.target_date != date.today():
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能删除今日任务")
+        if task.target_date < date.today():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="不允许删除今日之前的任务")
         if task.status not in ("pending", "generating"):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="只能删除 pending 或 generating 状态的任务")
         await self.db.delete(task)

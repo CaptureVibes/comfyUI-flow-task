@@ -11,8 +11,8 @@ export async function fetchVideoSourceStats() {
 }
 
 export async function createVideoSource(payload) {
-  const { data } = await http.post('/video-sources', payload)
-  return data
+  const res = await http.post('/video-sources', payload)
+  return { data: res.data, status: res.status }
 }
 
 export async function fetchVideoSources(params = {}) {

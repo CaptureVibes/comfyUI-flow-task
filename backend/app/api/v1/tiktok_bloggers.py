@@ -3,10 +3,12 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
+from app.models.tiktok_blogger import TiktokBlogger
 from app.schemas.tiktok_blogger import (
     TiktokBloggerFromUrl,
     TiktokBloggerListResponse,
@@ -66,6 +68,35 @@ async def list_bloggers_endpoint(
         for b, vc in rows
     ]
     return TiktokBloggerListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/search", response_model=list[TiktokBloggerRead])
+async def search_bloggers_endpoint(
+    q: str = Query("", description="模糊搜索关键词（博主名或handle）"),
+    limit: int = Query(20, ge=1, le=100),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[TiktokBloggerRead]:
+    """按博主名/handle 模糊搜索，用于生成页选择博主。"""
+    stmt = select(TiktokBlogger).order_by(TiktokBlogger.blogger_name.asc()).limit(limit)
+    if owner_id is not None:
+        stmt = stmt.where(TiktokBlogger.owner_id == owner_id)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                TiktokBlogger.blogger_name.ilike(pattern),
+                TiktokBlogger.blogger_handle.ilike(pattern),
+            )
+        )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        TiktokBloggerRead(
+            **{k: getattr(b, k) for k in TiktokBloggerRead.model_fields if k != "video_count" and hasattr(b, k)},
+            video_count=0,
+        )
+        for b in rows
+    ]
 
 
 @router.get("/{blogger_id}", response_model=TiktokBloggerRead)

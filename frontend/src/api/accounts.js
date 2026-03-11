@@ -23,3 +23,18 @@ export async function patchAccount(id, payload) {
 export async function deleteAccount(id) {
   await http.delete(`/accounts/${id}`)
 }
+
+// 账号-博主绑定
+export async function fetchAccountBloggers(accountId) {
+  const { data } = await http.get(`/accounts/${accountId}/bloggers`)
+  return data
+}
+
+export async function bindBlogger(accountId, tiktokBloggerId) {
+  const { data } = await http.post(`/accounts/${accountId}/bloggers`, { tiktok_blogger_id: tiktokBloggerId })
+  return data
+}
+
+export async function unbindBlogger(accountId, bloggerId) {
+  await http.delete(`/accounts/${accountId}/bloggers/${bloggerId}`)
+}

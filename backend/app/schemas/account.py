@@ -51,6 +51,16 @@ class AccountPatch(BaseModel):
     social_bindings: list[dict] | None = None
 
 
+class BoundBloggerRead(BaseModel):
+    id: uuid.UUID
+    blogger_name: str
+    blogger_handle: str | None
+    avatar_url: str | None
+    platform: str | None
+
+    model_config = {"from_attributes": True}
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
@@ -59,6 +69,7 @@ class AccountRead(BaseModel):
     model_appearance: str | None
     avatar_url: str | None
     social_bindings: list | None
+    tiktok_bloggers: list[BoundBloggerRead] = []
     created_at: datetime
     updated_at: datetime
 

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
-from app.schemas.account import AccountCreate, AccountListResponse, AccountPatch, AccountRead
+from app.models.account_blogger_binding import AccountBloggerBinding
+from app.models.tiktok_blogger import TiktokBlogger
+from app.schemas.account import AccountCreate, AccountListResponse, AccountPatch, AccountRead, BoundBloggerRead
+from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
     create_account,
     delete_account,
@@ -17,6 +23,27 @@ from app.services.account_service import (
 )
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+
+
+class BindBloggerBody(BaseModel):
+    tiktok_blogger_id: uuid.UUID
+
+
+async def _load_bound_bloggers(session: AsyncSession, account_id: uuid.UUID) -> list[BoundBloggerRead]:
+    stmt = (
+        select(TiktokBlogger)
+        .join(AccountBloggerBinding, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
+        .where(AccountBloggerBinding.account_id == account_id)
+        .order_by(AccountBloggerBinding.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [BoundBloggerRead.model_validate(b) for b in rows]
+
+
+def _account_read(account, bloggers: list[BoundBloggerRead]) -> AccountRead:
+    data = AccountRead.model_validate(account)
+    data.tiktok_bloggers = bloggers
+    return data
 
 
 def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
@@ -36,7 +63,7 @@ async def create_account_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> AccountRead:
     account = await create_account(session, payload, creator_id)
-    return AccountRead.model_validate(account)
+    return _account_read(account, [])
 
 
 @router.get("", response_model=AccountListResponse)
@@ -47,8 +74,21 @@ async def list_accounts_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
     items, total = await list_accounts(session, page=page, page_size=page_size, owner_id=owner_id)
+    # Batch-load bound bloggers for all accounts
+    account_ids = [a.id for a in items]
+    blogger_map: dict[uuid.UUID, list[BoundBloggerRead]] = {aid: [] for aid in account_ids}
+    if account_ids:
+        stmt = (
+            select(AccountBloggerBinding.account_id, TiktokBlogger)
+            .join(TiktokBlogger, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
+            .where(AccountBloggerBinding.account_id.in_(account_ids))
+            .order_by(AccountBloggerBinding.created_at.asc())
+        )
+        for aid, blogger in (await session.execute(stmt)).all():
+            blogger_map[aid].append(BoundBloggerRead.model_validate(blogger))
+    rich_items = [_account_read(a, blogger_map[a.id]) for a in items]
     return AccountListResponse(
-        items=items,  # type: ignore[arg-type]
+        items=rich_items,  # type: ignore[arg-type]
         total=total,
         page=page,
         page_size=page_size,
@@ -62,7 +102,8 @@ async def get_account_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> AccountRead:
     account = await get_account_or_404(session, account_id, owner_id)
-    return AccountRead.model_validate(account)
+    bloggers = await _load_bound_bloggers(session, account_id)
+    return _account_read(account, bloggers)
 
 
 @router.patch("/{account_id}", response_model=AccountRead)
@@ -74,7 +115,8 @@ async def patch_account_endpoint(
 ) -> AccountRead:
     account = await get_account_or_404(session, account_id, owner_id)
     account = await patch_account(session, account, payload)
-    return AccountRead.model_validate(account)
+    bloggers = await _load_bound_bloggers(session, account_id)
+    return _account_read(account, bloggers)
 
 
 @router.delete("/{account_id}")
@@ -84,4 +126,82 @@ async def delete_account_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> Response:
     await delete_account(session, account_id, owner_id)
+    return Response(status_code=204)
+
+
+# ── 账号-博主绑定 ─────────────────────────────────────────────────────────────
+
+@router.get("/{account_id}/bloggers", response_model=list[TiktokBloggerRead])
+async def list_account_bloggers(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[TiktokBloggerRead]:
+    """获取账号已绑定的TikTok博主列表。"""
+    await get_account_or_404(session, account_id, owner_id)
+    stmt = (
+        select(TiktokBlogger)
+        .join(AccountBloggerBinding, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
+        .where(AccountBloggerBinding.account_id == account_id)
+        .order_by(AccountBloggerBinding.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        TiktokBloggerRead(
+            **{k: getattr(b, k) for k in TiktokBloggerRead.model_fields if k != "video_count" and hasattr(b, k)},
+            video_count=0,
+        )
+        for b in rows
+    ]
+
+
+@router.post("/{account_id}/bloggers", status_code=201)
+async def bind_blogger_to_account(
+    account_id: uuid.UUID,
+    body: BindBloggerBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """绑定TikTok博主到账号。"""
+    await get_account_or_404(session, account_id, owner_id)
+
+    blogger = await session.get(TiktokBlogger, body.tiktok_blogger_id)
+    if not blogger:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="博主不存在")
+
+    existing = await session.scalar(
+        select(AccountBloggerBinding)
+        .where(AccountBloggerBinding.account_id == account_id)
+        .where(AccountBloggerBinding.tiktok_blogger_id == body.tiktok_blogger_id)
+    )
+    if existing:
+        return {"status": "already_bound"}
+
+    binding = AccountBloggerBinding(
+        account_id=account_id,
+        tiktok_blogger_id=body.tiktok_blogger_id,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(binding)
+    await session.commit()
+    return {"status": "bound"}
+
+
+@router.delete("/{account_id}/bloggers/{blogger_id}")
+async def unbind_blogger_from_account(
+    account_id: uuid.UUID,
+    blogger_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """解绑TikTok博主与账号的关联。"""
+    await get_account_or_404(session, account_id, owner_id)
+    binding = await session.scalar(
+        select(AccountBloggerBinding)
+        .where(AccountBloggerBinding.account_id == account_id)
+        .where(AccountBloggerBinding.tiktok_blogger_id == blogger_id)
+    )
+    if binding:
+        await session.delete(binding)
+        await session.commit()
     return Response(status_code=204)

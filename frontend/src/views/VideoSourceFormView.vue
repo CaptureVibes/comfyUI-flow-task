@@ -361,7 +361,7 @@ async function handleSave() {
   if (!parsed.value || saving.value) return
   saving.value = true
   try {
-    const result = await createVideoSource({
+    const { data: result, status } = await createVideoSource({
       source_url: parsed.value.source_url,
       platform: parsed.value.platform,
       blogger_name: parsed.value.blogger_name,
@@ -384,8 +384,7 @@ async function handleSave() {
       repeatable: repeatable.value,
     })
 
-    const isExisting = result.created_at && (new Date() - new Date(result.created_at)) > 2000
-    if (isExisting) {
+    if (status === 200) {
       ElMessage.warning('该视频已存在于库中，跳转到详情页')
     } else {
       ElMessage.success('保存成功，正在跳转...')

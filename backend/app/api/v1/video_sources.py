@@ -72,14 +72,37 @@ async def parse_video_endpoint(
     return await parse_video_url(payload.source_url, session=session, owner_id=creator_id)
 
 
-@router.post("", response_model=VideoSourceRead, status_code=201)
+async def _vs_to_read(session: AsyncSession, vs: object) -> VideoSourceRead:
+    """Build VideoSourceRead, querying tags from VideoSourceTag table."""
+    from app.models.tag import Tag, VideoSourceTag
+    from app.schemas.tiktok_blogger import TiktokBloggerRead
+    tags_stmt = (
+        select(Tag)
+        .join(VideoSourceTag, VideoSourceTag.tag_id == Tag.id)
+        .where(VideoSourceTag.video_source_id == vs.id)  # type: ignore[attr-defined]
+    )
+    tag_rows = (await session.execute(tags_stmt)).scalars().all()
+    tags = [TagRead.model_validate(t) for t in tag_rows]
+    tiktok_blogger = None
+    if vs.tiktok_blogger:  # type: ignore[attr-defined]
+        tiktok_blogger = TiktokBloggerRead(
+            **{k: getattr(vs.tiktok_blogger, k) for k in TiktokBloggerRead.model_fields if k != "video_count" and hasattr(vs.tiktok_blogger, k)},
+            video_count=0,
+        )
+    data = {k: getattr(vs, k) for k in VideoSourceRead.model_fields if k not in ("tags", "tiktok_blogger") and hasattr(vs, k)}
+    return VideoSourceRead(**data, tags=tags, tiktok_blogger=tiktok_blogger)
+
+
+@router.post("", response_model=VideoSourceRead)
 async def create_video_source_endpoint(
     payload: VideoSourceCreate,
+    response: Response,
     creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceRead:
-    vs = await create_video_source(session, payload, creator_id)
-    return VideoSourceRead.model_validate(vs)
+    is_new, vs = await create_video_source(session, payload, creator_id)
+    response.status_code = 201 if is_new else 200
+    return await _vs_to_read(session, vs)
 
 
 @router.get("", response_model=VideoSourceListResponse)
@@ -105,12 +128,25 @@ async def list_video_sources_endpoint(
         for u in users:
             username_map[u.id] = u.display_name or u.username
 
+    # 批量查询每个视频的标签
+    from app.models.tag import Tag, VideoSourceTag
     from app.schemas.tiktok_blogger import TiktokBloggerRead
+    vs_ids = [r.id for r in rows]
+    tags_map: dict[uuid.UUID, list] = {r.id: [] for r in rows}
+    if vs_ids:
+        tags_stmt = (
+            select(VideoSourceTag.video_source_id, Tag)
+            .join(Tag, Tag.id == VideoSourceTag.tag_id)
+            .where(VideoSourceTag.video_source_id.in_(vs_ids))
+        )
+        for vs_id, tag in (await session.execute(tags_stmt)).all():
+            tags_map[vs_id].append(TagRead.model_validate(tag))
+
     items = [
         VideoSourceListItem(
             **{k: getattr(r, k) for k in VideoSourceListItem.model_fields if k not in ("owner_username", "tags", "tiktok_blogger") and hasattr(r, k)},
             owner_username=username_map.get(r.owner_id) if r.owner_id else None,
-            tags=[TagRead.model_validate(t) for t in (r.tags or [])],
+            tags=tags_map.get(r.id, []),
             tiktok_blogger=TiktokBloggerRead(
                 **{k: getattr(r.tiktok_blogger, k) for k in TiktokBloggerRead.model_fields if k != "video_count" and hasattr(r.tiktok_blogger, k)},
                 video_count=0,
@@ -166,7 +202,7 @@ async def get_video_source_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceRead:
     vs = await get_video_source_or_404(session, vs_id, owner_id)
-    return VideoSourceRead.model_validate(vs)
+    return await _vs_to_read(session, vs)
 
 
 @router.get("/{vs_id}/stats-history", response_model=VideoSourceStatHistoryResponse)
@@ -188,7 +224,7 @@ async def download_video_source_endpoint(
 ) -> VideoSourceRead:
     """Trigger background download via yt-dlp and upload to permanent storage."""
     vs = await trigger_download_and_upload(session, vs_id, owner_id)
-    return VideoSourceRead.model_validate(vs)
+    return await _vs_to_read(session, vs)
 
 
 @router.delete("/{vs_id}")

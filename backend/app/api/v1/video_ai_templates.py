@@ -18,9 +18,11 @@ from app.core.security import TokenData, get_current_user
 from app.db.session import SessionLocal, get_db
 from app.models.enums import VideoAIProcessStatus
 from app.models.user import User
+from app.models.tag import Tag, VideoSourceTag
 from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
 from app.schemas.video_ai_template import (
+    TagRead,
     VideoAITemplateCreate,
     VideoAITemplateListItem,
     VideoAITemplateListResponse,
@@ -62,12 +64,24 @@ async def _get_tpl_or_404(
     return tpl
 
 
+async def _get_tpl_tags(session: AsyncSession, tpl_id: uuid.UUID) -> list[TagRead]:
+    stmt = (
+        select(Tag)
+        .join(VideoSourceTag, VideoSourceTag.tag_id == Tag.id)
+        .where(VideoSourceTag.video_ai_template_id == tpl_id)
+        .order_by(Tag.name.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [TagRead.model_validate(r) for r in rows]
+
+
 async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITemplateRead:
     video_source = None
     if tpl.video_source_id:
         vs = await session.get(VideoSource, tpl.video_source_id)
         if vs:
             video_source = VideoSourceSummary.model_validate(vs)
+    tags = await _get_tpl_tags(session, tpl.id)
     return VideoAITemplateRead(
         id=tpl.id,
         owner_id=tpl.owner_id,
@@ -80,6 +94,9 @@ async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITempla
         prompt_description=tpl.prompt_description,
         extracted_shots=tpl.extracted_shots,
         is_used=tpl.is_used,
+        repeatable=tpl.repeatable,
+        tiktok_blogger_id=tpl.tiktok_blogger_id,
+        tags=tags,
         extra=tpl.extra,
         created_at=tpl.created_at,
         updated_at=tpl.updated_at,
@@ -92,6 +109,17 @@ async def create_template(
     creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoAITemplateRead:
+    from datetime import datetime, timezone
+
+    # 从原视频继承 repeatable 和 tiktok_blogger_id
+    repeatable = False
+    tiktok_blogger_id = None
+    if payload.video_source_id:
+        vs = await session.get(VideoSource, payload.video_source_id)
+        if vs:
+            repeatable = getattr(vs, "repeatable", False) or False
+            tiktok_blogger_id = getattr(vs, "tiktok_blogger_id", None)
+
     tpl = VideoAITemplate(
         owner_id=creator_id,
         title=payload.title,
@@ -100,9 +128,25 @@ async def create_template(
         process_status=VideoAIProcessStatus.pending,
         prompt_description=payload.prompt_description,
         extracted_shots=payload.extracted_shots,
+        repeatable=repeatable,
+        tiktok_blogger_id=tiktok_blogger_id,
         extra=payload.extra,
     )
     session.add(tpl)
+    await session.flush()  # 获取 tpl.id
+
+    # 关联标签：从 VideoSource 继承（更新现有记录，补充 video_ai_template_id）
+    from sqlalchemy import select as sa_select
+    from app.models.tag import VideoSourceTag
+
+    if payload.video_source_id:
+        tag_stmt = sa_select(VideoSourceTag).where(
+            VideoSourceTag.video_source_id == payload.video_source_id
+        )
+        source_tags = (await session.execute(tag_stmt)).scalars().all()
+        for st in source_tags:
+            st.video_ai_template_id = tpl.id
+
     await session.commit()
     await session.refresh(tpl)
     return await _to_read(session, tpl)
@@ -190,7 +234,11 @@ async def list_templates(
             video_source=vs,
             process_status=r.process_status,
             process_error=r.process_error,
+            prompt_description=r.prompt_description,
+            extracted_shots=r.extracted_shots,
             is_used=r.is_used,
+            repeatable=r.repeatable,
+            tiktok_blogger_id=r.tiktok_blogger_id,
             generated_video_count=generated_count_map.get(r.id, 0),
             last_published_at=last_published_map.get(r.id),
             created_at=r.created_at,
@@ -242,6 +290,8 @@ async def _do_batch_create_and_start(creator_id: uuid.UUID, owner_id: uuid.UUID 
                     description="",
                     video_source_id=vsid,
                     process_status=VideoAIProcessStatus.pending,
+                    repeatable=getattr(vs, "repeatable", False) or False,
+                    tiktok_blogger_id=getattr(vs, "tiktok_blogger_id", None),
                 )
                 session.add(tpl)
                 new_tpls.append(tpl)
@@ -250,7 +300,28 @@ async def _do_batch_create_and_start(creator_id: uuid.UUID, owner_id: uuid.UUID 
             for tpl in new_tpls:
                 await session.refresh(tpl)
 
-        # 4. 批量入队（在 session 关闭后，enqueue 使用自己的 session）
+            # 4. 复制 VideoSource 的标签到新的 Template（更新现有记录）
+            from sqlalchemy import select as sa_select
+            from collections import defaultdict
+            tpl_vs_map = {tpl.id: tpl.video_source_id for tpl in new_tpls if tpl.video_source_id}
+            if tpl_vs_map:
+                # 查询这些 VideoSource 的所有标签关联
+                tag_stmt = sa_select(VideoSourceTag).where(
+                    VideoSourceTag.video_source_id.in_(set(tpl_vs_map.values()))
+                )
+                source_tags = (await session.execute(tag_stmt)).scalars().all()
+                # 按 video_source_id 分组
+                tags_by_vs: dict[uuid.UUID, list[VideoSourceTag]] = defaultdict(list)
+                for st in source_tags:
+                    tags_by_vs[st.video_source_id].append(st)
+                # 为每个 Template 更新对应的标签记录（补充 video_ai_template_id）
+                vs_to_tpl: dict[uuid.UUID, uuid.UUID] = {v: t for t, v in tpl_vs_map.items()}
+                for st in source_tags:
+                    if st.video_source_id in vs_to_tpl:
+                        st.video_ai_template_id = vs_to_tpl[st.video_source_id]
+                await session.commit()
+
+            # 5. 批量入队（在 session 关闭后，enqueue 使用自己的 session）
         for tpl in new_tpls:
             await enqueue_template(str(tpl.id))
 
@@ -317,7 +388,90 @@ async def list_all_available_templates(
             video_source=vs,
             process_status=r.process_status,
             process_error=r.process_error,
+            prompt_description=r.prompt_description,
+            extracted_shots=r.extracted_shots,
             is_used=r.is_used,
+            repeatable=r.repeatable,
+            tiktok_blogger_id=r.tiktok_blogger_id,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        ))
+
+    return items_read
+
+
+@router.get("/by-blogger/{blogger_id}", response_model=list[VideoAITemplateListItem])
+async def list_templates_by_blogger(
+    blogger_id: uuid.UUID,
+    tag_ids: str | None = Query(None, description="逗号分隔的 tag_id，用于按标签过滤"),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[VideoAITemplateListItem]:
+    """获取指定TikTok博主关联的所有成功模板，用于生成页按博主选模板。支持按 tag_ids 过滤。"""
+    from sqlalchemy import exists
+
+    stmt = (
+        select(VideoAITemplate)
+        .where(VideoAITemplate.tiktok_blogger_id == blogger_id)
+        .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
+        .order_by(VideoAITemplate.created_at.desc())
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
+
+    # 按标签过滤：模板必须包含所有指定标签
+    if tag_ids:
+        filter_tag_ids = [uuid.UUID(t.strip()) for t in tag_ids.split(",") if t.strip()]
+        for tid in filter_tag_ids:
+            stmt = stmt.where(
+                exists().where(
+                    VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
+                ).where(VideoSourceTag.tag_id == tid)
+            )
+
+    rows = (await session.execute(stmt)).scalars().all()
+
+    vs_ids = list({r.video_source_id for r in rows if r.video_source_id is not None})
+    vs_map: dict[uuid.UUID, VideoSource] = {}
+    if vs_ids:
+        video_sources = (await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))).scalars().all()
+        for v in video_sources:
+            vs_map[v.id] = v
+
+    # 批量查询模板标签
+    tpl_ids = [r.id for r in rows]
+    tags_map: dict[uuid.UUID, list[TagRead]] = {r.id: [] for r in rows}
+    if tpl_ids:
+        tag_stmt = (
+            select(VideoSourceTag.video_ai_template_id, Tag)
+            .join(Tag, Tag.id == VideoSourceTag.tag_id)
+            .where(VideoSourceTag.video_ai_template_id.in_(tpl_ids))
+            .order_by(Tag.name.asc())
+        )
+        for tpl_id, tag in (await session.execute(tag_stmt)).all():
+            if tpl_id in tags_map:
+                tags_map[tpl_id].append(TagRead.model_validate(tag))
+
+    items_read = []
+    for r in rows:
+        vs = None
+        if r.video_source_id and r.video_source_id in vs_map:
+            vs = VideoSourceSummary.model_validate(vs_map[r.video_source_id])
+        items_read.append(VideoAITemplateListItem(
+            id=r.id,
+            owner_id=r.owner_id,
+            title=r.title,
+            description=r.description,
+            video_source_id=r.video_source_id,
+            video_source=vs,
+            process_status=r.process_status,
+            process_error=r.process_error,
+            prompt_description=r.prompt_description,
+            extracted_shots=r.extracted_shots,
+            is_used=r.is_used,
+            repeatable=r.repeatable,
+            tiktok_blogger_id=r.tiktok_blogger_id,
+            tags=tags_map.get(r.id, []),
             created_at=r.created_at,
             updated_at=r.updated_at,
         ))

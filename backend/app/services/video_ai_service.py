@@ -498,55 +498,66 @@ async def _run_splitting_stage(
     第三阶段：调用 segment API 对生图结果进行人物分割，
     将每个 segment 的 base64 上传 CDN，返回 shots 列表。
     每项格式：{"image_url": str, "description": "", "bbox": [...], "confidence": float}
+    最多重试 3 次。
     """
     from app.core.config import settings
     from app.services.upload_service import UpstreamImageUploadService
 
     base_url = splitting_api_url or settings.splitting_api_base_url
     api_url = f"{base_url.rstrip('/')}/api/segment-models"
-    logger.info("[%s] Splitting: calling segment API for image: %s", template_id, image_url[:80])
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        resp = await client.post(api_url, json={"image_url": image_url})
-        if not resp.is_success:
-            logger.error("[%s] Segment API error: status=%d, body=%s", template_id, resp.status_code, resp.text[:300])
-        resp.raise_for_status()
-        data = resp.json()
-
-    if not data.get("success"):
-        raise ValueError(f"Segment API returned success=false: {data.get('message', '')}")
-
-    segments: list[dict] = data.get("segments", [])
-    if not segments:
-        raise ValueError("Segment API returned no segments")
-
-    logger.info("[%s] Splitting: %d segments received, uploading to CDN", template_id, len(segments))
-
-    svc = UpstreamImageUploadService()
-    shots = []
-    for seg in segments:
-        b64 = seg.get("image_base64", "")
-        if not b64:
-            logger.warning("[%s] Segment index=%s has no image_base64, skipping", template_id, seg.get("index"))
-            continue
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
         try:
-            content = base64.b64decode(b64)
-            result = await svc.upload_image(content, "image/png", f"segment_{seg.get('index', 0)}.png")
-            shots.append({
-                "image_url": result.url,
-                "description": "",
-                "bbox": seg.get("bbox"),
-                "confidence": seg.get("confidence"),
-                "image_base64": b64,  # 保留 base64 供第四阶段直接使用，避免重复下载
-            })
+            logger.info("[%s] Splitting attempt %d/3: calling segment API for image: %s", template_id, attempt, image_url[:80])
+
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(api_url, json={"image_url": image_url})
+                if not resp.is_success:
+                    logger.error("[%s] Segment API error: status=%d, body=%s", template_id, resp.status_code, resp.text[:300])
+                resp.raise_for_status()
+                data = resp.json()
+
+            if not data.get("success"):
+                raise ValueError(f"Segment API returned success=false: {data.get('message', '')}")
+
+            segments: list[dict] = data.get("segments", [])
+            if not segments:
+                raise ValueError("Segment API returned no segments")
+
+            logger.info("[%s] Splitting: %d segments received, uploading to CDN", template_id, len(segments))
+
+            svc = UpstreamImageUploadService()
+            shots = []
+            for seg in segments:
+                b64 = seg.get("image_base64", "")
+                if not b64:
+                    logger.warning("[%s] Segment index=%s has no image_base64, skipping", template_id, seg.get("index"))
+                    continue
+                try:
+                    content = base64.b64decode(b64)
+                    result = await svc.upload_image(content, "image/png", f"segment_{seg.get('index', 0)}.png")
+                    shots.append({
+                        "image_url": result.url,
+                        "description": "",
+                        "bbox": seg.get("bbox"),
+                        "confidence": seg.get("confidence"),
+                        "image_base64": b64,  # 保留 base64 供第四阶段直接使用，避免重复下载
+                    })
+                except Exception as exc:
+                    logger.warning("[%s] Segment index=%s upload failed: %s", template_id, seg.get("index"), exc)
+
+            if not shots:
+                raise ValueError("所有 segment 上传 CDN 失败")
+
+            logger.info("[%s] Splitting stage done: %d shots uploaded", template_id, len(shots))
+            return shots
+
         except Exception as exc:
-            logger.warning("[%s] Segment index=%s upload failed: %s", template_id, seg.get("index"), exc)
+            last_exc = exc
+            logger.warning("[%s] Splitting attempt %d/3 failed: %s", template_id, attempt, exc)
 
-    if not shots:
-        raise ValueError("所有 segment 上传 CDN 失败")
-
-    logger.info("[%s] Splitting stage done: %d shots uploaded", template_id, len(shots))
-    return shots
+    raise last_exc  # type: ignore[misc]
 
 
 async def _run_face_removing_stage(
@@ -560,7 +571,7 @@ async def _run_face_removing_stage(
 ) -> list[dict]:
     """
     第四阶段：对每张 shot 图片调用去脸 API，返回更新后的 shots 列表。
-    processedUrl 替换原 image_url。
+    processedUrl 替换原 image_url。每张图最多重试 3 次。
     """
     base_url = face_removing_api_url or "http://34.86.216.234:8001"
     api_url = f"{base_url.rstrip('/')}/api/v1/style-outfits/processBodyShape"
@@ -591,25 +602,38 @@ async def _run_face_removing_stage(
                 "marginScale": margin_scale,
                 "headTopRatio": head_top_ratio,
             }
-            logger.info("[%s] Face-removing shot[%d]: calling API", template_id, i)
-            resp = await client.post(api_url, json=req_payload)
-            if not resp.is_success:
-                logger.error("[%s] Face-removing shot[%d] API error: status=%d body=%s", template_id, i, resp.status_code, resp.text[:300])
-            resp.raise_for_status()
-            data = resp.json()
 
-            if data.get("code") != 0 or not data.get("success"):
-                raise ValueError(f"Face-removing API shot[{i}] error: {data.get('message', '')}")
+            last_exc: Exception | None = None
+            cdn_url: str | None = None
+            for attempt in range(1, 4):
+                try:
+                    logger.info("[%s] Face-removing shot[%d] attempt %d/3: calling API", template_id, i, attempt)
+                    resp = await client.post(api_url, json=req_payload)
+                    if not resp.is_success:
+                        logger.error("[%s] Face-removing shot[%d] API error: status=%d body=%s", template_id, i, resp.status_code, resp.text[:300])
+                    resp.raise_for_status()
+                    data = resp.json()
 
-            processed_url = data["data"]["processedUrl"]
-            logger.info("[%s] Face-removing shot[%d] processedUrl: %s", template_id, i, processed_url[:80])
+                    if data.get("code") != 0 or not data.get("success"):
+                        raise ValueError(f"Face-removing API shot[{i}] error: {data.get('message', '')}")
 
-            # 下载处理后图片并上传到我们的 CDN
-            dl2 = await client.get(processed_url)
-            dl2.raise_for_status()
-            upload_result = await upload_svc.upload_image(dl2.content, "image/png", f"face_removed_{i}.png")
-            cdn_url = upload_result.url
-            logger.info("[%s] Face-removing shot[%d] uploaded to CDN: %s", template_id, i, cdn_url[:80])
+                    processed_url = data["data"]["processedUrl"]
+                    logger.info("[%s] Face-removing shot[%d] processedUrl: %s", template_id, i, processed_url[:80])
+
+                    # 下载处理后图片并上传到我们的 CDN
+                    dl2 = await client.get(processed_url)
+                    dl2.raise_for_status()
+                    upload_result = await upload_svc.upload_image(dl2.content, "image/png", f"face_removed_{i}.png")
+                    cdn_url = upload_result.url
+                    logger.info("[%s] Face-removing shot[%d] uploaded to CDN: %s", template_id, i, cdn_url[:80])
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning("[%s] Face-removing shot[%d] attempt %d/3 failed: %s", template_id, i, attempt, exc)
+
+            if last_exc is not None:
+                raise ValueError(f"Face-removing shot[{i}] failed after 3 attempts: {last_exc}") from last_exc
 
             # 去掉 image_base64 字段，不存入最终结果
             shot_out = {k: v for k, v in shot.items() if k != "image_base64"}

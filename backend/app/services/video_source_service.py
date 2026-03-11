@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.tag import Tag, video_source_tags
+from app.models.tag import Tag, VideoSourceTag
 from app.models.video_source import VideoSource
 from app.models.video_source_stat import VideoSourceStat
 from app.schemas.video_source import VideoSourceCreate, VideoSourceParseResult
@@ -187,13 +187,13 @@ async def create_video_source(
     session: AsyncSession,
     payload: VideoSourceCreate,
     owner_id: UUID | None = None,
-) -> VideoSource:
+) -> tuple[bool, VideoSource]:
+    """Returns (is_new, video_source). is_new=False if record already existed."""
     # Check for duplicates first (even with pre-parsed data)
     existing = await check_duplicate_url(session, payload.source_url, owner_id)
     if existing:
         logger.info("Video source already exists: %s", existing.id)
-        # Return the existing video source instead of creating a new one
-        return existing
+        return False, existing
 
     # If pre-parsed fields provided, skip yt-dlp
     _blogger_info: dict = {}
@@ -260,26 +260,26 @@ async def create_video_source(
         await session.flush()  # ensure new blogger.id is available
         vs.tiktok_blogger_id = blogger.id
 
-    # Associate tags via direct INSERT into junction table (avoids async lazy-load issue)
+    # Associate tags via ORM model
     if payload.tag_ids:
         for tag_id in payload.tag_ids:
-            await session.execute(
-                video_source_tags.insert().values(
-                    video_source_id=vs.id,
-                    tag_id=tag_id,
-                )
+            entry = VideoSourceTag(
+                owner_id=owner_id,
+                video_source_id=vs.id,
+                tag_id=tag_id,
+                created_at=datetime.now(timezone.utc),
             )
+            session.add(entry)
 
     await session.commit()
     await session.refresh(vs)
 
     logger.info(
-        "Created video source: id=%s, duration=%s, width=%s, height=%s, aspect_ratio=%s, tags=%s",
+        "Created video source: id=%s, duration=%s, width=%s, height=%s, aspect_ratio=%s",
         vs.id, vs.duration, vs.width, vs.height, vs.aspect_ratio,
-        [str(t.id) for t in vs.tags],
     )
 
-    return vs
+    return True, vs
 
 
 async def list_video_sources(

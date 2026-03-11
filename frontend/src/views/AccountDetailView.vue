@@ -37,6 +37,23 @@
             </span>
             <span v-if="!account.social_bindings?.length" class="ad-no-platform">未绑定平台</span>
           </div>
+
+          <!-- Bound TikTok bloggers -->
+          <div v-if="account.tiktok_bloggers?.length" class="ad-hero-bloggers">
+            <span class="ad-bloggers-label">关联博主</span>
+            <div
+              v-for="blogger in account.tiktok_bloggers"
+              :key="blogger.id"
+              class="ad-blogger-chip"
+              :title="blogger.blogger_name + (blogger.blogger_handle ? ' @' + blogger.blogger_handle : '')"
+            >
+              <img v-if="blogger.avatar_url" :src="blogger.avatar_url" class="ad-blogger-avatar" />
+              <div v-else class="ad-blogger-avatar ad-blogger-avatar-ph">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
+              <span class="ad-blogger-name">{{ blogger.blogger_name }}</span>
+            </div>
+          </div>
         </div>
 
         <div class="ad-hero-actions">
@@ -488,7 +505,55 @@ onMounted(async () => {
 .ad-hero-stat-link:hover { color: #4f46e5; }
 .ad-hero-stat-link strong { color: #6366f1; }
 
-.ad-hero-platforms { display: flex; gap: 8px; flex-wrap: wrap; }
+.ad-hero-platforms { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+
+.ad-hero-bloggers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.ad-bloggers-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.ad-blogger-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #f8faff;
+  border: 1px solid #e0e7ff;
+  border-radius: 20px;
+  padding: 3px 10px 3px 3px;
+  cursor: default;
+}
+
+.ad-blogger-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ad-blogger-avatar-ph {
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-blogger-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4f46e5;
+  white-space: nowrap;
+}
 
 .ad-platform-badge {
   font-size: 12px; font-weight: 700; padding: 3px 10px;

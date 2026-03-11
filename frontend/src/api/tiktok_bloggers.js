@@ -24,3 +24,8 @@ export function deleteBlogger(id) {
 export function fetchBloggerVideos(id, params = {}) {
   return http.get(`/tiktok-bloggers/${id}/videos`, { params })
 }
+
+export async function searchBloggers(q = '', limit = 20) {
+  const { data } = await http.get('/tiktok-bloggers/search', { params: { q, limit } })
+  return data
+}
