@@ -378,7 +378,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -922,6 +922,11 @@ onMounted(async () => {
   if (!isEdit.value) {
     await loadChannels('youtube')
   }
+})
+
+onUnmounted(() => {
+  clearTimeout(_aiPollTimer)
+  clearTimeout(_searchTimer)
 })
 </script>
 
