@@ -60,11 +60,22 @@
                     v-for="sub in reviewingSubTasks()"
                     :key="sub.id"
                     class="vtd-tl-score-item"
-                    :class="{ 'vtd-tl-score-selected': sub.selected }"
+                    :class="{ 'vtd-tl-score-selected': sub.selected, 'vtd-tl-score-abandoned': sub.status === 'abandoned' }"
                   >
                     <span class="vtd-tl-score-index">#{{ sub.sub_index }}</span>
-                    <span class="vtd-tl-score-value" :class="getAiScoreClass(sub.ai_score)">
+                    <span
+                      v-if="sub.ai_score !== null && sub.ai_score !== undefined"
+                      class="vtd-tl-score-value"
+                      :class="getAiScoreClass(sub.ai_score)"
+                    >
                       {{ sub.ai_score }}分
+                    </span>
+                    <span
+                      v-else-if="sub.round1_score !== null && sub.round1_score !== undefined"
+                      class="vtd-tl-score-value"
+                      :class="getAiScoreClass(sub.round1_score)"
+                    >
+                      R1 {{ sub.round1_score }}分
                     </span>
                     <span v-if="sub.round1_score !== null" class="vtd-tl-score-rounds">
                       R1: {{ sub.round1_score }}
@@ -150,7 +161,7 @@
                   {{ sub.round2_score }}分
                 </span>
               </div>
-              <div class="vtd-ai-score-item vtd-ai-final">
+              <div v-if="sub.ai_score !== null && sub.ai_score !== undefined" class="vtd-ai-score-item vtd-ai-final">
                 <span class="vtd-ai-round">综合得分</span>
                 <span class="vtd-ai-score-value" :class="getAiScoreClass(sub.ai_score)">
                   {{ sub.ai_score }}分
@@ -302,21 +313,38 @@ function getAiScoreClass(score) {
 }
 
 function hasAiScores(sub) {
-  return sub.ai_score !== null && sub.ai_score !== undefined
+  return (
+    sub.ai_score !== null && sub.ai_score !== undefined ||
+    sub.round1_score !== null && sub.round1_score !== undefined ||
+    sub.round2_score !== null && sub.round2_score !== undefined ||
+    !!sub.round1_reason ||
+    !!sub.round2_reason
+  )
 }
 
 function hasReviewingScores() {
   if (!task.value?.sub_tasks) return false
   return task.value.sub_tasks.some(
-    sub => (sub.status === 'pending_publish' || sub.status === 'published') && sub.ai_score !== null && sub.ai_score !== undefined
+    sub => (
+      ['pending_publish', 'published', 'abandoned'].includes(sub.status) &&
+      (
+        sub.ai_score !== null && sub.ai_score !== undefined ||
+        sub.round1_score !== null && sub.round1_score !== undefined ||
+        sub.round2_score !== null && sub.round2_score !== undefined
+      )
+    )
   )
 }
 
 function reviewingSubTasks() {
   if (!task.value?.sub_tasks) return []
   return task.value.sub_tasks.filter(
-    sub => sub.status === 'pending_publish' || sub.status === 'published'
-  ).filter(sub => sub.ai_score !== null && sub.ai_score !== undefined)
+    sub => ['pending_publish', 'published', 'abandoned'].includes(sub.status)
+  ).filter(sub =>
+    sub.ai_score !== null && sub.ai_score !== undefined ||
+    sub.round1_score !== null && sub.round1_score !== undefined ||
+    sub.round2_score !== null && sub.round2_score !== undefined
+  )
 }
 
 function shouldAutoRefresh() {
@@ -599,6 +627,11 @@ onUnmounted(() => {
 .vtd-tl-score-item.vtd-tl-score-selected {
   border-color: #6366f1;
   background: #eef2ff;
+}
+
+.vtd-tl-score-item.vtd-tl-score-abandoned {
+  border-color: #fecaca;
+  background: #fff1f2;
 }
 
 .vtd-tl-score-index {
