@@ -4,6 +4,7 @@ import base64
 import binascii
 import mimetypes
 import uuid
+import asyncio
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -75,21 +76,30 @@ class UpstreamImageUploadService:
         response = None
         for attempt in range(1, 4):
             try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
+                async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
                     response = await client.post(
                         settings.upload_api_url,
                         files={"file": (safe_name, content, content_type)},
                         headers={"Accept": "*/*"},
                     )
+                if response.status_code >= 400:
+                    raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
                 last_exc = None
                 break
             except httpx.RequestError as exc:
                 last_exc = exc
                 if attempt < 3:
-                    import asyncio
+                    await asyncio.sleep(attempt)
+            except UpstreamError as exc:
+                last_exc = exc
+                if attempt < 3:
                     await asyncio.sleep(attempt)
 
         if last_exc is not None:
+            if isinstance(last_exc, UpstreamError) and response is not None and response.status_code < 500:
+                raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
+            if isinstance(last_exc, UpstreamError):
+                raise last_exc
             raise UpstreamError(f"Upload upstream request failed after 3 attempts: {last_exc}") from last_exc
 
         if response.status_code >= 400:
