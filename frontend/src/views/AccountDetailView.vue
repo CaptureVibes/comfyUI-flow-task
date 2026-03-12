@@ -786,7 +786,7 @@ onMounted(async () => {
   border-radius: 16px;
   box-shadow: 0 2px 8px rgba(0,0,0,.05);
   padding: 28px;
-  display: flex; align-items: center; gap: 24px;
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
   margin-bottom: 16px;
 }
 
@@ -948,10 +948,19 @@ onMounted(async () => {
 .ad-platform-instagram { background: #fef3c7; color: #92400e; }
 .ad-no-platform { font-size: 13px; color: #94a3b8; }
 
-.ad-hero-actions { flex-shrink: 0; display: flex; gap: 10px; }
+.ad-hero-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-self: stretch;
+  justify-content: center;
+  min-width: 130px;
+}
 
 .ad-gen-btn {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
   font-size: 13px; font-weight: 700; padding: 9px 18px;
   border-radius: 10px; border: none; background: #6366f1; color: #fff;
   cursor: pointer; transition: all 0.15s;
@@ -960,7 +969,8 @@ onMounted(async () => {
 .ad-gen-btn:hover { background: #4f46e5; transform: translateY(-1px); }
 
 .ad-edit-btn {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
   font-size: 13px; font-weight: 600; padding: 9px 18px;
   border-radius: 10px; border: 1px solid #c7d2fe;
   background: #eef2ff; color: #4338ca; cursor: pointer; transition: all 0.15s;
@@ -968,7 +978,8 @@ onMounted(async () => {
 .ad-edit-btn:hover { background: #e0e7ff; border-color: #6366f1; }
 
 .ad-schedule-btn {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
   font-size: 13px; font-weight: 600; padding: 9px 18px;
   border-radius: 10px; border: 1px solid #c7d2fe;
   background: #f5f3ff; color: #6366f1; cursor: pointer; transition: all 0.15s;

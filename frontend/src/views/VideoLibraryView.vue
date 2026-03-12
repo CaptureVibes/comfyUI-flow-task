@@ -289,28 +289,88 @@
     <div class="tm-body">
       <!-- Tag list -->
       <div class="tm-list" v-if="tags.length">
-        <div v-for="tag in tags" :key="tag.id" class="tm-item">
-          <span
-            class="tm-color-dot"
-            :style="tag.color ? { background: tag.color } : { background: '#94a3b8' }"
-          ></span>
-          <span
-            class="tm-chip"
-            :style="tag.color ? { background: tag.color + '22', color: tag.color, borderColor: tag.color + '55' } : {}"
-          >{{ tag.name }}</span>
-          <span class="tm-spacer"></span>
-          <button
-            class="tm-del-btn"
-            :disabled="deletingTagId === tag.id"
-            @click="handleDeleteTag(tag)"
-            title="删除标签"
+        <div v-for="tag in tags" :key="tag.id" class="tm-item-wrap">
+          <!-- Tag row: click to select -->
+          <div
+            class="tm-item"
+            :class="{
+              'tm-item-selected': selectedTagId === tag.id && editingTagId !== tag.id,
+              'tm-item-editing': editingTagId === tag.id
+            }"
+            @click="selectTag(tag)"
           >
-            <svg v-if="deletingTagId !== tag.id" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-            <span v-else class="tm-del-spin"></span>
-          </button>
+            <span
+              class="tm-color-dot"
+              :style="{ background: tag.color || '#94a3b8' }"
+            ></span>
+            <span
+              class="tm-chip"
+              :style="tag.color ? { background: tag.color + '22', color: tag.color, borderColor: tag.color + '55' } : {}"
+            >{{ tag.name }}</span>
+            <span class="tm-spacer"></span>
+            <!-- Edit button (name only) -->
+            <button
+              class="tm-edit-btn"
+              :class="{ active: editingTagId === tag.id }"
+              @click.stop="editingTagId === tag.id ? cancelEditTag() : startEditTag(tag)"
+              title="编辑标签名称"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <!-- Delete button -->
+            <button
+              class="tm-del-btn"
+              :disabled="deletingTagId === tag.id"
+              @click.stop="handleDeleteTag(tag)"
+              title="删除标签"
+            >
+              <svg v-if="deletingTagId !== tag.id" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+              <span v-else class="tm-del-spin"></span>
+            </button>
+          </div>
+
+          <!-- Inline edit panel (name only) -->
+          <div v-if="editingTagId === tag.id" class="tm-edit-panel">
+            <input
+              v-model.trim="editingTagName"
+              class="tm-input tm-edit-input"
+              placeholder="标签名称"
+              maxlength="50"
+              @keyup.enter="saveEditTag(tag)"
+            />
+            <div class="tm-edit-actions">
+              <button class="tm-cancel-btn" @click="cancelEditTag">取消</button>
+              <button
+                class="tm-save-btn"
+                :disabled="!editingTagName || savingTagId === tag.id"
+                @click="saveEditTag(tag)"
+              >
+                <span v-if="savingTagId === tag.id">保存中…</span>
+                <span v-else>保存</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
       <el-empty v-else description="暂无标签，快来创建第一个吧" :image-size="60" style="padding: 16px 0" />
+
+      <!-- Quick color picker: shows when a tag is selected -->
+      <div v-if="selectedTagId" class="tm-quick-colors-wrap">
+        <div class="tm-quick-colors-label">
+          点击颜色即可修改「{{ tags.find(t => t.id === selectedTagId)?.name }}」的颜色
+          <span v-if="updatingColorId" class="tm-updating-hint">更新中…</span>
+        </div>
+        <div class="tm-preset-colors">
+          <span
+            v-for="c in PRESET_COLORS"
+            :key="c"
+            class="tm-preset-dot"
+            :class="{ selected: tags.find(t => t.id === selectedTagId)?.color === c }"
+            :style="{ background: c }"
+            @click="handleQuickColorChange(c)"
+          ></span>
+        </div>
+      </div>
 
       <!-- Divider -->
       <div class="tm-divider"></div>
@@ -326,15 +386,7 @@
             maxlength="50"
             @keyup.enter="handleCreateTag"
           />
-          <div class="tm-color-pick-wrap">
-            <input
-              type="color"
-              v-model="newTagColor"
-              class="tm-color-input"
-              title="选择颜色"
-            />
-            <span class="tm-color-preview" :style="{ background: newTagColor }"></span>
-          </div>
+          <span class="tm-color-preview" :style="{ background: newTagColor }"></span>
           <button
             class="tm-create-btn"
             :disabled="!newTagName || creatingTag"
@@ -344,7 +396,7 @@
             <span v-else>+ 创建</span>
           </button>
         </div>
-        <!-- Preset colors -->
+        <!-- Preset colors for new tag -->
         <div class="tm-preset-colors">
           <span
             v-for="c in PRESET_COLORS"
@@ -366,7 +418,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
-import { fetchTags, createTag, deleteTag } from '../api/tags'
+import { fetchTags, createTag, updateTag, deleteTag } from '../api/tags'
 import { fetchBloggers } from '../api/tiktok_bloggers'
 import { isDuplicateRequestError } from '../api/http'
 import { useAuth, getToken } from '../composables/useAuth'
@@ -410,6 +462,12 @@ const newTagName = ref('')
 const newTagColor = ref('#6366f1')
 const creatingTag = ref(false)
 const deletingTagId = ref(null)
+const editingTagId = ref(null)
+const editingTagName = ref('')
+const editingTagColor = ref('')
+const savingTagId = ref(null)
+const selectedTagId = ref(null)
+const updatingColorId = ref(null)
 const PRESET_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6', '#64748b']
 const batchCreatingTemplate = ref(false)
 let pollTimer = null
@@ -701,6 +759,8 @@ async function loadTags() {
 }
 
 async function openTagManager() {
+  selectedTagId.value = null
+  editingTagId.value = null
   tagMgrVisible.value = true
   await loadTags()
 }
@@ -718,6 +778,54 @@ async function handleCreateTag() {
     ElMessage.error(err?.response?.data?.detail || '创建失败')
   } finally {
     creatingTag.value = false
+  }
+}
+
+function selectTag(tag) {
+  if (editingTagId.value === tag.id) return
+  selectedTagId.value = selectedTagId.value === tag.id ? null : tag.id
+}
+
+async function handleQuickColorChange(color) {
+  if (!selectedTagId.value || updatingColorId.value) return
+  const tag = tags.value.find(t => t.id === selectedTagId.value)
+  if (!tag || tag.color === color) return
+  updatingColorId.value = tag.id
+  try {
+    await updateTag(tag.id, { name: tag.name, color })
+    tag.color = color
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '颜色更新失败')
+  } finally {
+    updatingColorId.value = null
+  }
+}
+
+function startEditTag(tag) {
+  selectedTagId.value = null
+  editingTagId.value = tag.id
+  editingTagName.value = tag.name
+  editingTagColor.value = tag.color || '#6366f1'
+}
+
+function cancelEditTag() {
+  editingTagId.value = null
+  editingTagName.value = ''
+  editingTagColor.value = ''
+}
+
+async function saveEditTag(tag) {
+  if (!editingTagName.value || savingTagId.value) return
+  savingTagId.value = tag.id
+  try {
+    await updateTag(tag.id, { name: editingTagName.value, color: tag.color })
+    tag.name = editingTagName.value
+    cancelEditTag()
+    ElMessage.success('标签已更新')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '更新失败')
+  } finally {
+    savingTagId.value = null
   }
 }
 
@@ -855,58 +963,92 @@ onUnmounted(() => {
 
 /* ── Tag Manager Dialog ── */
 .tm-body {
-  padding: 4px 0;
+  padding: 0;
 }
 
+/* Tag list */
 .tm-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 280px;
+  gap: 6px;
+  max-height: 360px;
   overflow-y: auto;
-  padding-right: 4px;
-  margin-bottom: 4px;
+  margin-bottom: 12px;
+  padding-right: 2px;
+}
+
+.tm-list::-webkit-scrollbar { width: 4px; }
+.tm-list::-webkit-scrollbar-track { background: transparent; }
+.tm-list::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
+
+.tm-item-wrap {
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
 }
 
 .tm-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 11px 14px;
   border-radius: 10px;
   background: #f8fafc;
-  border: 1px solid #f1f5f9;
-  transition: background 0.15s;
+  border: 1.5px solid #f1f5f9;
+  transition: all 0.15s;
+  cursor: pointer;
 }
 
 .tm-item:hover {
-  background: #f1f5f9;
+  background: #f0f4ff;
+  border-color: #c7d2fe;
 }
 
+.tm-item:not(.tm-item-editing) { cursor: pointer; }
+
+.tm-item.tm-item-selected {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+}
+
+.tm-item.tm-item-editing {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+  border-radius: 10px 10px 0 0;
+  border-bottom: none;
+}
+
+/* Color dot */
 .tm-color-dot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.8), 0 0 0 3px rgba(0,0,0,0.1);
 }
 
+/* Tag chip */
 .tm-chip {
   display: inline-flex;
   align-items: center;
-  height: 24px;
+  height: 26px;
   padding: 0 10px;
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
   border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  color: #64748b;
+  background: #fff;
+  color: #475569;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tm-spacer {
-  flex: 1;
-}
+.tm-spacer { flex: 1; }
 
+/* Icon buttons */
+.tm-edit-btn,
 .tm-del-btn {
   display: inline-flex;
   align-items: center;
@@ -916,10 +1058,16 @@ onUnmounted(() => {
   border-radius: 7px;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: #cbd5e1;
   cursor: pointer;
   transition: all 0.15s;
   flex-shrink: 0;
+}
+
+.tm-edit-btn:hover,
+.tm-edit-btn.active {
+  background: #eef2ff;
+  color: #6366f1;
 }
 
 .tm-del-btn:hover:not(:disabled) {
@@ -927,41 +1075,124 @@ onUnmounted(() => {
   color: #ef4444;
 }
 
-.tm-del-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.tm-del-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Inline edit panel */
+.tm-edit-panel {
+  background: #f0f3ff;
+  border: 1.5px solid #a5b4fc;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.tm-del-spin {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid #e2e8f0;
-  border-top-color: #ef4444;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+.tm-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 34px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: #334155 !important;
+  padding: 0 10px !important;
+  border-radius: 7px !important;
+  border: 1px solid #c7d2fe !important;
+  background: rgba(255, 255, 255, 0.85) !important;
+  box-shadow: inset 0 1px 2px rgba(99, 102, 241, 0.06) !important;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s !important;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.tm-edit-input:focus {
+  border-color: #6366f1 !important;
+  background: #fff !important;
+  box-shadow: inset 0 1px 2px rgba(99, 102, 241, 0.08), 0 0 0 2px rgba(99, 102, 241, 0.12) !important;
+  outline: none;
 }
 
+.tm-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.tm-cancel-btn {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tm-cancel-btn:hover { background: #f1f5f9; }
+
+.tm-save-btn {
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 7px;
+  border: none;
+  background: #6366f1;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tm-save-btn:hover:not(:disabled) { background: #4f46e5; }
+.tm-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Quick color picker */
+.tm-quick-colors-wrap {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  background: #f8faff;
+  border: 1.5px solid #e0e7ff;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tm-quick-colors-label {
+  font-size: 12px;
+  color: #6366f1;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tm-updating-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+/* Divider */
 .tm-divider {
   height: 1px;
   background: #f1f5f9;
-  margin: 16px 0;
+  margin: 4px 0 16px;
 }
 
+/* Create section */
 .tm-create {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .tm-create-title {
   font-size: 13px;
-  font-weight: 600;
-  color: #475569;
+  font-weight: 700;
+  color: #334155;
+  letter-spacing: -0.01em;
 }
 
 .tm-create-row {
@@ -972,49 +1203,36 @@ onUnmounted(() => {
 
 .tm-input {
   flex: 1;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 9px;
-  font-size: 13px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 14px;
   color: #334155;
+  background: #f8fafc;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .tm-input:focus {
   border-color: #6366f1;
-}
-
-.tm-color-pick-wrap {
-  position: relative;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-}
-
-.tm-color-input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
+  background: #fff;
 }
 
 .tm-color-preview {
   display: block;
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   border: 2px solid #e2e8f0;
-  pointer-events: none;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
 }
 
 .tm-create-btn {
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 9px;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
   border: none;
   background: #6366f1;
   color: #fff;
@@ -1025,37 +1243,49 @@ onUnmounted(() => {
   transition: background 0.15s;
 }
 
-.tm-create-btn:hover:not(:disabled) {
-  background: #4f46e5;
-}
+.tm-create-btn:hover:not(:disabled) { background: #4f46e5; }
+.tm-create-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.tm-create-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
+/* Color preset dots */
 .tm-preset-colors {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .tm-preset-dot {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   cursor: pointer;
-  border: 2px solid transparent;
-  transition: transform 0.15s, border-color 0.15s;
+  border: 2.5px solid transparent;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .tm-preset-dot:hover {
-  transform: scale(1.2);
+  transform: scale(1.18);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 
 .tm-preset-dot.selected {
   border-color: #1e293b;
   transform: scale(1.15);
+  box-shadow: 0 0 0 3px rgba(30,41,59,0.15);
 }
+
+/* Spinner */
+.tm-del-spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fca5a5;
+  border-top-color: #ef4444;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .vl-header-actions {
   display: flex;

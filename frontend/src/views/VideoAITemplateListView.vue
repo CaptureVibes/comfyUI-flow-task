@@ -1081,7 +1081,7 @@ onActivated(() => {
 /* Stats row */
 .vai-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-columns: repeat(8, 1fr);
   gap: 14px;
   margin-bottom: 28px;
 }

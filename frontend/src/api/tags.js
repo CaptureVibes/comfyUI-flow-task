@@ -10,6 +10,11 @@ export async function createTag(payload) {
   return data
 }
 
+export async function updateTag(id, payload) {
+  const { data } = await http.patch(`/tags/${id}`, payload)
+  return data
+}
+
 export async function deleteTag(id) {
   await http.delete(`/tags/${id}`)
 }

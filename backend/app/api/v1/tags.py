@@ -72,6 +72,33 @@ async def create_tag(
     return TagRead.model_validate(tag)
 
 
+class TagUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
+@router.patch("/{tag_id}", response_model=TagRead)
+async def update_tag(
+    tag_id: uuid.UUID,
+    payload: TagUpdate,
+    owner_id: uuid.UUID | None = Depends(_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TagRead:
+    stmt = select(Tag).where(Tag.id == tag_id)
+    if owner_id is not None:
+        stmt = stmt.where(Tag.owner_id == owner_id)
+    tag = await session.scalar(stmt)
+    if not tag:
+        raise HTTPException(status_code=404, detail="标签不存在")
+    if payload.name is not None:
+        tag.name = payload.name
+    if payload.color is not None:
+        tag.color = payload.color
+    await session.commit()
+    await session.refresh(tag)
+    return TagRead.model_validate(tag)
+
+
 @router.delete("/{tag_id}", status_code=204)
 async def delete_tag(
     tag_id: uuid.UUID,
