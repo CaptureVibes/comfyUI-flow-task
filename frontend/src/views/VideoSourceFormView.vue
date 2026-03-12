@@ -169,7 +169,7 @@
                       class="vsf-tag-input"
                       placeholder="+ 添加标签"
                       @keydown.enter.prevent="addOrCreateTag"
-                      @focus="showTagDropdown = true"
+                      @focus="handleTagInputFocus"
                       @blur="onTagInputBlur"
                     />
                     <div v-if="showTagDropdown && filteredTags.length > 0" class="vsf-tag-dropdown">
@@ -264,6 +264,7 @@ const allTags = ref([])
 const selectedTagIds = ref([])
 const newTagName = ref('')
 const showTagDropdown = ref(false)
+const tagsLoading = ref(false)
 
 // Repeatable state
 const repeatable = ref(false)
@@ -279,9 +280,22 @@ const filteredTagExists = computed(() =>
   allTags.value.some(t => t.name.toLowerCase() === newTagName.value.toLowerCase())
 )
 
-onMounted(async () => {
-  try { allTags.value = await fetchTags() } catch { /* ignore */ }
+onMounted(() => {
+  loadTags()
 })
+
+async function loadTags(force = false) {
+  if (tagsLoading.value) return
+  if (!force && allTags.value.length > 0) return
+  tagsLoading.value = true
+  try {
+    allTags.value = await fetchTags()
+  } catch {
+    // ignore here; retry on parse success / focus
+  } finally {
+    tagsLoading.value = false
+  }
+}
 
 function selectTag(tag) {
   if (!selectedTagIds.value.includes(tag.id)) {
@@ -311,6 +325,13 @@ async function addOrCreateTag() {
 
 function onTagInputBlur() {
   setTimeout(() => { showTagDropdown.value = false }, 150)
+}
+
+async function handleTagInputFocus() {
+  showTagDropdown.value = true
+  if (allTags.value.length === 0) {
+    await loadTags(true)
+  }
 }
 
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
@@ -347,6 +368,9 @@ async function handleParse() {
       ElMessage.warning('该视频已存在于库中，跳转到详情页')
       setTimeout(() => router.push(`/dashboard/video-library/${result.existing_id}`), 1000)
       return
+    }
+    if (allTags.value.length === 0) {
+      await loadTags(true)
     }
     parsed.value = result
   } catch (err) {
