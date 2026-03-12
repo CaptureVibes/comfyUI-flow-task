@@ -112,6 +112,17 @@ class VideoTaskService:
         if target_date is None:
             target_date = date.today() + timedelta(days=1)
 
+        normalized_shots = list(shots) if isinstance(shots, list) else []
+        account = await self.db.get(Account, account_id)
+        account_photo_url = account.photo_url if account and account.photo_url else None
+        if account_photo_url:
+            photo_shot = {
+                "image_url": account_photo_url,
+                "description": "",
+            }
+            if not normalized_shots or normalized_shots[0].get("image_url") != account_photo_url:
+                normalized_shots = [photo_shot, *normalized_shots]
+
         task = VideoTask(
             owner_id=user_id,
             account_id=account_id,
@@ -120,7 +131,7 @@ class VideoTaskService:
             status="pending",
             prompt=final_prompt,
             duration=duration,
-            shots=shots,
+            shots=normalized_shots,
         )
         self.db.add(task)
         await self.db.flush()  # get task.id before creating sub-tasks
@@ -265,13 +276,12 @@ class VideoTaskService:
         payload = []
         for task in tasks:
             image_urls = _extract_image_urls(task.shots)
-            display_image_urls = image_urls[:1]  # 目前只传第一个
             prompt_text = (task.prompt.replace("\n", " ").replace("\r", "").strip() if task.prompt else "")[:1990]
             for sub in task.sub_tasks:
                 sub_prompt = f"video_id: {sub.id}\n{prompt_text}"
                 payload.append({
                     "prompt": sub_prompt,
-                    "image_urls": display_image_urls,
+                    "image_urls": image_urls,
                     "duration": task.duration,
                     "video_id": str(sub.id),
                 })
