@@ -19,7 +19,7 @@ logger = logging.getLogger("app.video_publication_service")
 
 # ── 后台轮询器 ──────────────────────────────────────────────────────────────────
 
-_POLL_INTERVAL_SECONDS = 20.0
+_POLL_INTERVAL_SECONDS = 60.0
 
 _poller_task: asyncio.Task | None = None
 _poller_stop_event: asyncio.Event | None = None

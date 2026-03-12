@@ -42,7 +42,7 @@ async def create_publication(
     if not sub_task.selected:
         raise HTTPException(status_code=400, detail="只能发布已选中的视频")
 
-    if sub_task.status != "pending_publish":
+    if sub_task.status not in ("queued", "pending_publish"):
         raise HTTPException(status_code=400, detail=f"视频状态不允许发布: {sub_task.status}")
 
     if not sub_task.result_video_url:
