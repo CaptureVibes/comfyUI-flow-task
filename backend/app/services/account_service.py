@@ -21,6 +21,7 @@ async def create_account(
         style_description=payload.style_description,
         model_appearance=payload.model_appearance,
         avatar_url=payload.avatar_url,
+        photo_url=payload.photo_url,
         social_bindings=payload.social_bindings,
     )
     session.add(account)
@@ -72,6 +73,8 @@ async def patch_account(
         account.model_appearance = payload.model_appearance
     if payload.avatar_url is not None:
         account.avatar_url = payload.avatar_url
+    if payload.photo_url is not None:
+        account.photo_url = payload.photo_url
     if payload.social_bindings is not None:
         account.social_bindings = payload.social_bindings
     await session.commit()

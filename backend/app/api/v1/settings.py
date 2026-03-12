@@ -93,6 +93,16 @@ async def get_pipeline_settings(
         face_removing_margin_scale=row.face_removing_margin_scale,
         face_removing_head_top_ratio=row.face_removing_head_top_ratio,
         upscaling_scale=row.upscaling_scale,
+        ai_account_video_prompt=row.ai_account_video_prompt,
+        ai_account_video_model=row.ai_account_video_model,
+        ai_account_name_prompt=row.ai_account_name_prompt,
+        ai_account_avatar_prompt=row.ai_account_avatar_prompt,
+        ai_account_photo_video_prompt=row.ai_account_photo_video_prompt,
+        ai_account_photo_image_prompt=row.ai_account_photo_image_prompt,
+        ai_account_name_model=row.ai_account_name_model,
+        ai_account_avatar_model=row.ai_account_avatar_model,
+        ai_account_avatar_size=row.ai_account_avatar_size,
+        ai_account_avatar_quality=row.ai_account_avatar_quality,
     )
 
 
@@ -117,6 +127,16 @@ async def put_pipeline_settings(
         face_removing_margin_scale=row.face_removing_margin_scale,
         face_removing_head_top_ratio=row.face_removing_head_top_ratio,
         upscaling_scale=row.upscaling_scale,
+        ai_account_video_prompt=row.ai_account_video_prompt,
+        ai_account_video_model=row.ai_account_video_model,
+        ai_account_name_prompt=row.ai_account_name_prompt,
+        ai_account_avatar_prompt=row.ai_account_avatar_prompt,
+        ai_account_photo_video_prompt=row.ai_account_photo_video_prompt,
+        ai_account_photo_image_prompt=row.ai_account_photo_image_prompt,
+        ai_account_name_model=row.ai_account_name_model,
+        ai_account_avatar_model=row.ai_account_avatar_model,
+        ai_account_avatar_size=row.ai_account_avatar_size,
+        ai_account_avatar_quality=row.ai_account_avatar_quality,
     )
 
 

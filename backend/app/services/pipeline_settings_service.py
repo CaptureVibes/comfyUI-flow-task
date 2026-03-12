@@ -40,6 +40,16 @@ async def update_pipeline_settings(session: AsyncSession, owner_id: uuid.UUID, p
     row.face_removing_margin_scale = payload.face_removing_margin_scale
     row.face_removing_head_top_ratio = payload.face_removing_head_top_ratio
     row.upscaling_scale = payload.upscaling_scale
+    row.ai_account_video_prompt = payload.ai_account_video_prompt
+    row.ai_account_video_model = payload.ai_account_video_model
+    row.ai_account_name_prompt = payload.ai_account_name_prompt
+    row.ai_account_avatar_prompt = payload.ai_account_avatar_prompt
+    row.ai_account_photo_video_prompt = payload.ai_account_photo_video_prompt
+    row.ai_account_photo_image_prompt = payload.ai_account_photo_image_prompt
+    row.ai_account_name_model = payload.ai_account_name_model
+    row.ai_account_avatar_model = payload.ai_account_avatar_model
+    row.ai_account_avatar_size = payload.ai_account_avatar_size
+    row.ai_account_avatar_quality = payload.ai_account_avatar_quality
     await session.commit()
     await session.refresh(row)
     return row

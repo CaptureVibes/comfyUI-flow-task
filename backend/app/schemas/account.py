@@ -40,6 +40,7 @@ class AccountCreate(BaseModel):
     style_description: str | None = None
     model_appearance: str | None = None
     avatar_url: str | None = None
+    photo_url: str | None = None
     social_bindings: list[dict] | None = None
 
 
@@ -48,7 +49,34 @@ class AccountPatch(BaseModel):
     style_description: str | None = None
     model_appearance: str | None = None
     avatar_url: str | None = None
+    photo_url: str | None = None
     social_bindings: list[dict] | None = None
+
+
+class AIGenerateBody(BaseModel):
+    tag_ids: list[uuid.UUID]
+
+
+class AIGenerateStatusResponse(BaseModel):
+    account_id: str
+    status: str  # pending, video_analyzing, name_generating, avatar_generating, photo_generating, completed, failed
+    error_message: str = ""
+    generated_name: str = ""
+    generated_avatar_url: str = ""
+    generated_photo_url: str = ""
+    combined_description: str = ""
+
+
+class BoundTagRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    color: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class BindTagBody(BaseModel):
+    tag_id: uuid.UUID
 
 
 class BoundBloggerRead(BaseModel):
@@ -76,12 +104,16 @@ class AccountRead(BaseModel):
     style_description: str | None
     model_appearance: str | None
     avatar_url: str | None
+    photo_url: str | None = None
     social_bindings: list | None
     tiktok_bloggers: list[BoundBloggerRead] = []
+    bound_tags: list[BoundTagRead] = []
     publish_enabled: bool = False
     publish_cron: str | None = None
     publish_window_minutes: int = 0
     publish_count: int = 1
+    ai_generation_status: str = "idle"
+    ai_generation_error: str | None = None
     created_at: datetime
     updated_at: datetime
 

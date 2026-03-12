@@ -51,3 +51,14 @@ class PipelineSettingsPayload(BaseModel):
     face_removing_head_top_ratio: float = 0.7
     # 第五阶段：图片超分（Pillow LANCZOS）
     upscaling_scale: int = 1024
+    # AI 账号生成配置
+    ai_account_video_prompt: str = ""
+    ai_account_video_model: str = "gemini-3.1-pro-preview"
+    ai_account_name_prompt: str = ""
+    ai_account_avatar_prompt: str = ""
+    ai_account_photo_video_prompt: str = ""
+    ai_account_photo_image_prompt: str = ""
+    ai_account_name_model: str = "gemini-2.5-flash"
+    ai_account_avatar_model: str = "gemini-3.1-flash-image-preview"
+    ai_account_avatar_size: str = "1:1"
+    ai_account_avatar_quality: str = "1K"

@@ -9,11 +9,32 @@
     <template v-if="account">
       <!-- Hero card -->
       <div class="ad-hero">
-        <div class="ad-hero-avatar">
-          <img v-if="account.avatar_url" :src="account.avatar_url" class="ad-avatar-img" />
-          <div v-else class="ad-avatar-placeholder">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-          </div>
+        <div class="ad-hero-media">
+          <button
+            type="button"
+            class="ad-media-card ad-media-avatar"
+            :class="{ 'is-clickable': !!account.avatar_url }"
+            @click="openMediaPreview(account.avatar_url, `${account.account_name}头像`)"
+          >
+            <img v-if="account.avatar_url" :src="account.avatar_url" class="ad-avatar-img" />
+            <div v-else class="ad-avatar-placeholder">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            </div>
+            <span class="ad-media-label">头像</span>
+          </button>
+          <button
+            type="button"
+            class="ad-media-card ad-media-photo"
+            :class="{ 'is-clickable': !!account.photo_url }"
+            @click="openMediaPreview(account.photo_url, `${account.account_name}照片`)"
+          >
+            <img v-if="account.photo_url" :src="account.photo_url" class="ad-photo-img" />
+            <div v-else class="ad-photo-placeholder">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.7"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-5.5-5.5a2 2 0 0 0-2.828 0L4 21V5z"/><circle cx="15" cy="9" r="2"/></svg>
+              <span>暂无照片</span>
+            </div>
+            <span class="ad-media-label">照片</span>
+          </button>
         </div>
 
         <div class="ad-hero-info">
@@ -334,6 +355,19 @@
         <el-button type="primary" :loading="savingSchedule" @click="handleSaveSchedule">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="previewVisible"
+      width="min(92vw, 1080px)"
+      top="5vh"
+      append-to-body
+      class="ad-preview-dialog"
+    >
+      <img v-if="previewImage.url" :src="previewImage.url" :alt="previewImage.title" class="ad-preview-image" />
+      <template #header>
+        <div class="ad-preview-title">{{ previewImage.title }}</div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -391,6 +425,8 @@ const retrying = ref(null)
 const deleting = ref(null)
 const enqueuing = ref(null)
 const dequeuing = ref(null)
+const previewVisible = ref(false)
+const previewImage = ref({ url: '', title: '' })
 
 // 拖拽状态
 const draggingId = ref(null)
@@ -461,6 +497,12 @@ function scoreClass(score) {
   if (score >= 80) return 'score-high'
   if (score >= 60) return 'score-mid'
   return 'score-low'
+}
+
+function openMediaPreview(url, title) {
+  if (!url) return
+  previewImage.value = { url, title }
+  previewVisible.value = true
 }
 
 // 打开发布对话框
@@ -748,19 +790,83 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
-.ad-hero-avatar { flex-shrink: 0; }
+.ad-hero-media {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.ad-media-card {
+  position: relative;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.ad-media-card.is-clickable {
+  cursor: zoom-in;
+}
+
+.ad-media-avatar {
+  width: 108px;
+  height: 108px;
+  border-radius: 28px;
+}
+
+.ad-media-photo {
+  width: 164px;
+  height: 108px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #eef2ff, #f8fafc);
+  box-shadow: inset 0 0 0 1px #e2e8f0;
+}
 
 .ad-avatar-img {
-  width: 80px; height: 80px; border-radius: 50%;
+  width: 100%; height: 100%; border-radius: 28px;
   object-fit: cover; border: 3px solid #e0e7ff;
   box-shadow: 0 2px 12px rgba(99,102,241,.15);
 }
 
 .ad-avatar-placeholder {
-  width: 80px; height: 80px; border-radius: 50%;
+  width: 100%; height: 100%; border-radius: 28px;
   background: linear-gradient(135deg, #eef2ff, #f5f3ff);
   display: flex; align-items: center; justify-content: center;
   border: 3px solid #e0e7ff;
+}
+
+.ad-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ad-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 12px;
+  background: linear-gradient(135deg, #eef2ff, #f8fafc);
+}
+
+.ad-media-label {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+  padding: 4px 8px;
+  border-radius: 999px;
 }
 
 .ad-hero-info { flex: 1; }
@@ -1196,6 +1302,21 @@ onMounted(async () => {
 }
 .ad-card-detail-btn:hover { border-color: #c7d2fe; background: #eef2ff; color: #6366f1; }
 
+.ad-preview-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.ad-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -1206,6 +1327,7 @@ onMounted(async () => {
 }
 @media (max-width: 700px) {
   .ad-hero { flex-direction: column; text-align: center; }
+  .ad-hero-media { width: 100%; justify-content: center; }
   .ad-hero-platforms { justify-content: center; }
   .ad-hero-meta { justify-content: center; }
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }

@@ -21,8 +21,12 @@
       <!-- Base Info Card -->
       <div class="vtfd-card vtfd-fw-card">
         <div class="vtfd-section">
-          <div class="vtfd-section-header">
+          <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
             <span class="vtfd-section-tag">基本信息</span>
+            <el-button type="primary" @click="showAIGenDialog = true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px"><path d="M12 2l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5z"/></svg>
+              AI 生成账号
+            </el-button>
           </div>
 
           <div class="ac-form-grid">
@@ -66,6 +70,22 @@
                   <div v-else class="ac-avatar-uploader-icon" v-loading="uploadingAvatar">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     <div style="font-size: 12px; margin-top: 4px; color: #94a3b8">上传头像</div>
+                  </div>
+                </el-upload>
+              </el-form-item>
+              <el-form-item label="博主照片">
+                <el-upload
+                  class="ac-photo-uploader"
+                  action=""
+                  :show-file-list="false"
+                  :auto-upload="true"
+                  :http-request="handlePhotoUpload"
+                  :before-upload="beforeAvatarUpload"
+                >
+                  <img v-if="form.photo_url" :src="form.photo_url" class="ac-photo" />
+                  <div v-else class="ac-photo-uploader-icon" v-loading="uploadingPhoto">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <div style="font-size: 11px; margin-top: 4px; color: #94a3b8">上传照片</div>
                   </div>
                 </el-upload>
               </el-form-item>
@@ -167,6 +187,32 @@
         </div>
       </div>
 
+      <!-- 绑定标签卡片（仅编辑模式显示） -->
+      <div v-if="isEdit" class="vtfd-card vtfd-fw-card">
+        <div class="vtfd-section">
+          <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
+            <span class="vtfd-section-tag">绑定标签</span>
+            <el-button type="primary" link @click="openTagBindDialog">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              绑定标签
+            </el-button>
+          </div>
+
+          <div v-if="boundTags.length === 0" class="vtfd-images-empty" style="padding: 30px;">
+            <div class="vtfd-images-empty-text">暂未绑定标签，绑定标签后可用于 AI 生成博主内容</div>
+          </div>
+          <div v-else class="tag-list">
+            <div v-for="tag in boundTags" :key="tag.id" class="tag-bound-item">
+              <span class="tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+              <span class="tag-name">{{ tag.name }}</span>
+              <button class="ac-binding-del" @click="handleUnbindTag(tag)" :disabled="tagUnbindingId === tag.id">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- TikTok 博主绑定卡片（仅编辑模式显示） -->
       <div v-if="isEdit" class="vtfd-card vtfd-fw-card">
         <div class="vtfd-section">
@@ -200,6 +246,88 @@
         </div>
       </div>
     </el-form>
+
+    <!-- 标签绑定弹窗 -->
+    <el-dialog v-model="showTagBindDialog" title="绑定标签" width="460px" :close-on-click-modal="false">
+      <div v-if="allTags.length === 0" style="text-align: center; padding: 20px; color: #94a3b8;">暂无可用标签</div>
+      <div v-else class="tag-bind-grid">
+        <div
+          v-for="tag in allTags"
+          :key="tag.id"
+          class="tag-bind-item"
+          :class="{ 'is-bound': isBoundTag(tag.id) }"
+          @click="!isBoundTag(tag.id) && handleBindTag(tag)"
+        >
+          <span class="tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+          <span>{{ tag.name }}</span>
+          <span v-if="isBoundTag(tag.id)" style="margin-left: auto; font-size: 12px; color: #10b981; font-weight: 600;">已绑定</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showTagBindDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- AI 生成弹窗 -->
+    <el-dialog v-model="showAIGenDialog" title="AI 生成账号" width="520px" :close-on-click-modal="!aiGenerating" :close-on-press-escape="!aiGenerating">
+      <div v-if="!aiGenerating">
+        <div style="font-size: 13px; color: #64748b; margin-bottom: 16px;">
+          选择标签，AI 将分析标签关联的视频（最多10个），自动生成博主名称和头像。
+        </div>
+        <div style="font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 10px;">选择标签</div>
+        <div v-if="allTags.length === 0" style="color: #94a3b8; font-size: 13px; padding: 12px 0;">暂无可用标签，请先在视频库中创建标签。</div>
+        <div v-else class="ai-tag-select-grid">
+          <div
+            v-for="tag in allTags"
+            :key="tag.id"
+            class="ai-tag-chip"
+            :class="{ selected: aiGenSelectedTagIds.includes(tag.id) }"
+            @click="toggleAITag(tag.id)"
+          >
+            <span class="tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+            {{ tag.name }}
+          </div>
+        </div>
+      </div>
+      <div v-else class="ai-gen-progress">
+        <el-steps :active="aiProgressStep" finish-status="success" simple style="margin-bottom: 20px;">
+          <el-step title="视频分析" />
+          <el-step title="名称生成" />
+          <el-step title="头像生成" />
+          <el-step title="照片生成" />
+          <el-step title="完成" />
+        </el-steps>
+        <div class="ai-gen-status-text">
+          <span class="ai-gen-spinner" v-if="aiProgressStep < 5"></span>
+          {{ aiStatusText }}
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showAIGenDialog = false" :disabled="aiGenerating">取消</el-button>
+        <template v-if="!aiGenerating">
+          <el-button
+            v-if="aiLastStatus === 'failed'"
+            @click="handleResumeAIGeneration"
+          >
+            断点续跑
+          </el-button>
+          <el-button
+            v-if="aiLastStatus === 'failed'"
+            type="warning"
+            @click="handleRestartAIGeneration"
+          >
+            重新生成
+          </el-button>
+          <el-button
+            type="primary"
+            @click="startAIGeneration"
+            :disabled="aiGenSelectedTagIds.length === 0"
+          >
+            {{ aiLastStatus === 'failed' ? '重选标签生成' : '开始生成' }}
+          </el-button>
+        </template>
+      </template>
+    </el-dialog>
 
     <!-- 绑定博主弹窗 -->
     <el-dialog v-model="showBindDialog" title="搜索并绑定博主" width="480px" :close-on-click-modal="false">
@@ -253,7 +381,14 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { createAccount, fetchAccount, patchAccount, fetchAccountBloggers, bindBlogger, unbindBlogger } from '../api/accounts'
+import {
+  createAccount, fetchAccount, patchAccount,
+  fetchAccountBloggers, bindBlogger, unbindBlogger,
+  fetchAccountTags, bindTagToAccount, unbindTagFromAccount,
+  triggerAIAccountGeneration, fetchAIGenerationStatus,
+  resumeAIAccountGeneration, restartAIAccountGeneration,
+} from '../api/accounts'
+import { fetchTags, fetchTagsVideoCount } from '../api/tags'
 import { searchBloggers } from '../api/tiktok_bloggers'
 import { uploadImageByFile } from '../api/tasks'
 import { isDuplicateRequestError } from '../api/http'
@@ -266,6 +401,7 @@ const isEdit = computed(() => Boolean(route.params.id))
 const loading = ref(false)
 const saving = ref(false)
 const uploadingAvatar = ref(false)
+const uploadingPhoto = ref(false)
 const formRef = ref(null)
 
 // Open API 频道数据
@@ -281,6 +417,7 @@ const form = reactive({
   style_description: '',
   model_appearance: '',
   avatar_url: '',
+  photo_url: '',
   social_bindings: [],
 })
 
@@ -365,6 +502,22 @@ async function handleAvatarUpload(options) {
   }
 }
 
+async function handlePhotoUpload(options) {
+  const { file } = options
+  try {
+    uploadingPhoto.value = true
+    const res = await uploadImageByFile(file)
+    if (res && res.url) {
+      form.photo_url = res.url
+      ElMessage.success('照片上传成功')
+    }
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '照片上传失败')
+  } finally {
+    uploadingPhoto.value = false
+  }
+}
+
 function beforeAvatarUpload(file) {
   const isImage = file.type.startsWith('image/')
   const isLt2M = file.size / 1024 / 1024 < 5
@@ -389,8 +542,10 @@ async function loadAccount() {
     form.style_description = data.style_description || ''
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
+    form.photo_url = data.photo_url || ''
     form.social_bindings = data.social_bindings ? JSON.parse(JSON.stringify(data.social_bindings)) : []
     boundBloggers.value = data.tiktok_bloggers || []
+    boundTags.value = data.bound_tags || []
 
     // 加载已绑定平台的频道列表
     for (const binding of form.social_bindings) {
@@ -417,6 +572,7 @@ async function handleSave() {
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
+        photo_url: form.photo_url || null,
         social_bindings: form.social_bindings.length > 0 ? form.social_bindings : null,
       }
       if (isEdit.value) {
@@ -436,6 +592,251 @@ async function handleSave() {
     }
   })
 }
+
+// ── 标签绑定 ──────────────────────────────────────────────────────────────────
+const boundTags = ref([])
+const showTagBindDialog = ref(false)
+const allTags = ref([])
+const tagBindingId = ref(null)
+const tagUnbindingId = ref(null)
+
+async function loadBoundTags() {
+  if (!isEdit.value) return
+  try {
+    boundTags.value = await fetchAccountTags(route.params.id)
+  } catch {
+    // fallback
+  }
+}
+
+async function loadAllTags() {
+  try {
+    allTags.value = await fetchTags()
+  } catch {
+    allTags.value = []
+  }
+}
+
+function isBoundTag(tagId) {
+  return boundTags.value.some(t => t.id === tagId)
+}
+
+async function openTagBindDialog() {
+  await loadAllTags()
+  showTagBindDialog.value = true
+}
+
+async function handleBindTag(tag) {
+  if (tagBindingId.value) return
+  tagBindingId.value = tag.id
+  try {
+    await bindTagToAccount(route.params.id, tag.id)
+    if (!boundTags.value.some(t => t.id === tag.id)) {
+      boundTags.value.push(tag)
+    }
+    ElMessage.success(`已绑定标签：${tag.name}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '绑定失败')
+  } finally {
+    tagBindingId.value = null
+  }
+}
+
+async function handleUnbindTag(tag) {
+  if (tagUnbindingId.value) return
+  tagUnbindingId.value = tag.id
+  try {
+    await unbindTagFromAccount(route.params.id, tag.id)
+    boundTags.value = boundTags.value.filter(t => t.id !== tag.id)
+    ElMessage.success(`已解绑标签：${tag.name}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '解绑失败')
+  } finally {
+    tagUnbindingId.value = null
+  }
+}
+
+// ── AI 生成 ──────────────────────────────────────────────────────────────────
+const showAIGenDialog = ref(false)
+const aiGenSelectedTagIds = ref([])
+const aiGenerating = ref(false)
+const aiProgressStep = ref(0)
+const aiStatusText = ref('')
+const currentAccountId = ref(null)  // 新建账号时，保存后的 ID
+const aiLastStatus = ref('idle')  // 记录上次的生成状态，用于显示续跑/重试按钮
+let _aiPollTimer = null
+
+const AI_STATUS_MAP = {
+  pending: { step: 0, text: '等待处理...' },
+  video_analyzing: { step: 1, text: '正在分析视频...' },
+  name_generating: { step: 2, text: '正在生成博主名称...' },
+  avatar_generating: { step: 3, text: '正在生成博主头像...' },
+  photo_generating: { step: 4, text: '正在生成博主照片...' },
+  completed: { step: 5, text: '生成完成！' },
+  failed: { step: -1, text: '生成失败' },
+}
+
+function toggleAITag(tagId) {
+  const idx = aiGenSelectedTagIds.value.indexOf(tagId)
+  if (idx === -1) aiGenSelectedTagIds.value.push(tagId)
+  else aiGenSelectedTagIds.value.splice(idx, 1)
+}
+
+async function startAIGeneration() {
+  if (aiGenSelectedTagIds.value.length === 0) {
+    ElMessage.warning('请至少选择一个标签')
+    return
+  }
+  if (aiGenerating.value) return
+
+  // 先检查选中标签下是否有视频
+  try {
+    const result = await fetchTagsVideoCount(aiGenSelectedTagIds.value)
+    if (result.total_video_count === 0) {
+      ElMessage.error('选中的标签没有关联的视频，无法生成博主内容')
+      return
+    }
+  } catch (err) {
+    ElMessage.error('检查标签视频失败')
+    return
+  }
+
+  // 新建模式：先自动创建账号（用临时占位名，AI生成后会覆盖）
+  if (!isEdit.value && !currentAccountId.value) {
+    try {
+      aiStatusText.value = '正在创建账号...'
+      const payload = {
+        account_name: form.account_name.trim() || '新建账号（AI生成中）',
+        style_description: form.style_description || null,
+        model_appearance: form.model_appearance || null,
+        avatar_url: form.avatar_url || null,
+        photo_url: form.photo_url || null,
+        social_bindings: form.social_bindings.length > 0 ? form.social_bindings : null,
+      }
+      const created = await createAccount(payload)
+      currentAccountId.value = created.id
+    } catch (err) {
+      if (isDuplicateRequestError(err)) return
+      ElMessage.error(err?.response?.data?.detail || '创建账号失败')
+      return
+    }
+  }
+
+  aiGenerating.value = true
+  aiProgressStep.value = 0
+  aiStatusText.value = '正在提交任务...'
+
+  const accountId = currentAccountId.value || route.params.id
+  try {
+    await triggerAIAccountGeneration(accountId, aiGenSelectedTagIds.value)
+    pollAIStatus()
+  } catch (err) {
+    aiGenerating.value = false
+    ElMessage.error(err?.response?.data?.detail || '启动生成失败')
+  }
+}
+
+function pollAIStatus() {
+  clearTimeout(_aiPollTimer)
+  const accountId = currentAccountId.value || route.params.id
+  _aiPollTimer = setTimeout(async () => {
+    try {
+      const status = await fetchAIGenerationStatus(accountId)
+      const mapped = AI_STATUS_MAP[status.status] || { step: 0, text: status.status }
+      aiLastStatus.value = status.status
+      aiProgressStep.value = mapped.step
+      aiStatusText.value = mapped.text
+
+      if (status.status === 'completed') {
+        aiGenerating.value = false
+        if (status.generated_name) form.account_name = status.generated_name
+        if (status.generated_avatar_url) form.avatar_url = status.generated_avatar_url
+        if (status.generated_photo_url) form.photo_url = status.generated_photo_url
+        showAIGenDialog.value = false
+        ElMessage.success('AI 生成完成，已填充账号信息')
+        // 新建模式：跳转到编辑页保存生成结果
+        if (!isEdit.value && currentAccountId.value) {
+          router.push(`/dashboard/accounts/${currentAccountId.value}/edit`)
+        }
+        return
+      }
+      if (status.status === 'failed') {
+        aiGenerating.value = false
+        ElMessage.error(`AI 生成失败：${status.error_message}`)
+        return
+      }
+      if (aiGenerating.value) pollAIStatus()
+    } catch {
+      if (aiGenerating.value) pollAIStatus()
+    }
+  }, 2000)
+}
+
+async function handleResumeAIGeneration() {
+  if (aiGenerating.value) return
+  const accountId = currentAccountId.value || route.params.id
+  if (!accountId) return
+  aiGenerating.value = true
+  aiProgressStep.value = 0
+  aiStatusText.value = '正在恢复任务...'
+  try {
+    await resumeAIAccountGeneration(accountId)
+    pollAIStatus()
+  } catch (err) {
+    aiGenerating.value = false
+    ElMessage.error(err?.response?.data?.detail || '恢复失败')
+  }
+}
+
+async function handleRestartAIGeneration() {
+  if (aiGenerating.value) return
+  const accountId = currentAccountId.value || route.params.id
+  if (!accountId) return
+  aiGenerating.value = true
+  aiProgressStep.value = 0
+  aiStatusText.value = '正在重新生成...'
+  try {
+    await restartAIAccountGeneration(accountId)
+    pollAIStatus()
+  } catch (err) {
+    aiGenerating.value = false
+    ElMessage.error(err?.response?.data?.detail || '重试失败')
+  }
+}
+
+watch(showAIGenDialog, async (val) => {
+  if (val) {
+    aiGenSelectedTagIds.value = boundTags.value.map(t => t.id)
+    await loadAllTags()
+    if (isEdit.value || currentAccountId.value) {
+      // Load bound tags for existing account
+      const accountId = currentAccountId.value || route.params.id
+      try {
+        boundTags.value = await fetchAccountTags(accountId)
+        aiGenSelectedTagIds.value = boundTags.value.map(t => t.id)
+      } catch { /* silent */ }
+    }
+    // 如果账号已存在，加载当前生成状态
+    const accountId = currentAccountId.value || route.params.id
+    if (accountId) {
+      try {
+        const status = await fetchAIGenerationStatus(accountId)
+        aiLastStatus.value = status.status
+        // 如果正在生成中，自动恢复轮询
+        const runningStatuses = ['pending', 'video_analyzing', 'name_generating', 'avatar_generating', 'photo_generating']
+        if (runningStatuses.includes(status.status)) {
+          aiGenerating.value = true
+          const mapped = AI_STATUS_MAP[status.status] || { step: 0, text: status.status }
+          aiProgressStep.value = mapped.step
+          aiStatusText.value = mapped.text
+          pollAIStatus()
+        }
+      } catch { /* ignore */ }
+    }
+  } else {
+    clearTimeout(_aiPollTimer)
+  }
+})
 
 // ── TikTok 博主绑定 ───────────────────────────────────────────────────────────
 const boundBloggers = ref([])
@@ -516,6 +917,7 @@ async function handleUnbindBlogger(blogger) {
 onMounted(async () => {
   await loadAccount()
   await loadBoundBloggers()
+  await loadBoundTags()
   // 如果是新建，预加载 YouTube 频道列表
   if (!isEdit.value) {
     await loadChannels('youtube')
@@ -836,6 +1238,170 @@ onMounted(async () => {
 .blogger-search-item.is-bound {
   opacity: 0.6;
   cursor: default;
+}
+
+/* Photo upload */
+.ac-photo-uploader {
+  margin-top: 4px;
+}
+
+.ac-photo-uploader :deep(.el-upload) {
+  border: 2px dashed #cbd5e1;
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  width: 120px;
+  height: 80px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #f8fafc;
+  transition: all 0.2s ease;
+}
+
+.ac-photo-uploader :deep(.el-upload:hover) {
+  border-color: #818cf8;
+  background: #eef2ff;
+}
+
+.ac-photo {
+  width: 120px;
+  height: 80px;
+  border-radius: 12px;
+  object-fit: cover;
+  display: block;
+}
+
+.ac-photo-uploader-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+}
+
+/* Tag bound list */
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-bound-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #334155;
+}
+
+.tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #818cf8;
+  flex-shrink: 0;
+}
+
+.tag-name {
+  font-weight: 500;
+}
+
+/* Tag bind dialog */
+.tag-bind-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.tag-bind-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 13px;
+  color: #334155;
+}
+
+.tag-bind-item:hover:not(.is-bound) {
+  background: #f1f5f9;
+}
+
+.tag-bind-item.is-bound {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* AI tag select */
+.ai-tag-select-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ai-tag-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  font-size: 13px;
+  color: #334155;
+  transition: all 0.15s;
+}
+
+.ai-tag-chip:hover {
+  border-color: #818cf8;
+  background: #eef2ff;
+}
+
+.ai-tag-chip.selected {
+  border-color: #818cf8;
+  background: #eef2ff;
+  color: #6366f1;
+  font-weight: 600;
+}
+
+/* AI gen progress */
+.ai-gen-progress {
+  padding: 8px 0;
+}
+
+.ai-gen-status-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #64748b;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.ai-gen-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Empty texts */

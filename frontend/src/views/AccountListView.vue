@@ -7,12 +7,115 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           查看每日任务
         </el-button>
+        <el-button class="al-config-btn" @click="openAISettings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          AI博主配置
+        </el-button>
+        <el-button
+          class="al-restart-btn"
+          @click="handleBulkRestartAIGeneration"
+          :loading="bulkRestarting"
+          :disabled="items.length === 0"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          批量重启 AI 生成
+        </el-button>
         <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新建账号
         </el-button>
       </div>
     </div>
+
+    <!-- AI博主配置弹窗 -->
+    <el-dialog
+      v-model="showAISettingsDialog"
+      title="AI博主配置"
+      width="700px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div v-loading="aiSettingsLoading" class="ai-cfg-body">
+
+        <!-- 阶段一：视频理解 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">阶段一：视频理解</span>
+            <span class="ai-cfg-desc">并发分析选中标签对应的视频，生成文字描述</span>
+          </div>
+          <el-form-item label="视频分析提示词">
+            <el-input v-model="aiSettingsForm.ai_account_video_prompt" type="textarea" :rows="4" placeholder="请输入视频分析提示词..." />
+          </el-form-item>
+          <el-form-item label="视频理解模型">
+            <el-input v-model="aiSettingsForm.ai_account_video_model" placeholder="e.g. gemini-2.5-flash" />
+          </el-form-item>
+        </div>
+
+        <!-- 阶段二：名称生成 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">阶段二：名称生成</span>
+            <span class="ai-cfg-desc">基于视频描述，调用 Gemini 生成博主名称</span>
+          </div>
+          <el-form-item label="名称生成提示词">
+            <el-input v-model="aiSettingsForm.ai_account_name_prompt" type="textarea" :rows="4" placeholder="请输入名称生成提示词..." />
+          </el-form-item>
+          <el-form-item label="名称生成模型">
+            <el-input v-model="aiSettingsForm.ai_account_name_model" placeholder="e.g. gemini-2.5-flash" />
+          </el-form-item>
+        </div>
+
+        <!-- 阶段三：头像生成 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">阶段三：头像生成</span>
+            <span class="ai-cfg-desc">基于视频描述，调用 Nano2 生成博主头像</span>
+          </div>
+          <el-form-item label="头像生成提示词">
+            <el-input v-model="aiSettingsForm.ai_account_avatar_prompt" type="textarea" :rows="4" placeholder="请输入头像生成提示词..." />
+          </el-form-item>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+            <el-form-item label="头像生成模型">
+              <el-input v-model="aiSettingsForm.ai_account_avatar_model" placeholder="e.g. nano2" />
+            </el-form-item>
+            <el-form-item label="头像尺寸">
+              <el-select v-model="aiSettingsForm.ai_account_avatar_size" style="width:100%">
+                <el-option label="1:1 (正方形)" value="1:1" />
+                <el-option label="9:16 (竖版)" value="9:16" />
+                <el-option label="16:9 (横版)" value="16:9" />
+                <el-option label="3:4" value="3:4" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="头像质量">
+              <el-select v-model="aiSettingsForm.ai_account_avatar_quality" style="width:100%">
+                <el-option label="1K" value="1K" />
+                <el-option label="2K" value="2K" />
+                <el-option label="4K" value="4K" />
+              </el-select>
+            </el-form-item>
+          </div>
+        </div>
+
+        <!-- 阶段四：照片生成 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">阶段四：照片生成</span>
+            <span class="ai-cfg-desc">随机选一个视频，先用 Gemini 生成描述，再用 Nano2 生成照片</span>
+          </div>
+          <el-form-item label="视频理解提示词（阶段4-1）">
+            <el-input v-model="aiSettingsForm.ai_account_photo_video_prompt" type="textarea" :rows="3" placeholder="描述视频中人物外貌特征，用于生成写实人物照片..." />
+          </el-form-item>
+          <el-form-item label="照片生成提示词（阶段4-2）">
+            <el-input v-model="aiSettingsForm.ai_account_photo_image_prompt" type="textarea" :rows="3" placeholder="Nano2 生图提示词前缀，将与视频描述拼接后调用生图..." />
+          </el-form-item>
+        </div>
+
+      </div>
+      <template #footer>
+        <el-button @click="showAISettingsDialog = false">取消</el-button>
+        <el-button type="primary" :loading="aiSettingsSaving" @click="saveAISettings">保存配置</el-button>
+      </template>
+    </el-dialog>
 
     <!-- Card grid -->
     <div v-loading="loading" class="al-grid">
@@ -22,12 +125,30 @@
         class="ac"
         @click="goToDetail(item)"
       >
-        <!-- Avatar area -->
-        <div class="ac-avatar-wrap">
-          <img v-if="item.avatar_url" :src="item.avatar_url" class="ac-avatar-img" :alt="item.account_name" />
-          <div v-else class="ac-avatar-placeholder">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        <!-- Media area -->
+        <div class="ac-media-wrap">
+          <img
+            v-if="item.photo_url"
+            :src="item.photo_url"
+            class="ac-photo-img"
+            :alt="`${item.account_name} 照片`"
+            @click.stop="previewMedia(item, 'photo')"
+          />
+          <div v-else class="ac-photo-placeholder">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.7"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-5.5-5.5a2 2 0 0 0-2.828 0L4 21V5z"/><circle cx="15" cy="9" r="2"/></svg>
+            <span>暂无照片</span>
           </div>
+          <button
+            type="button"
+            class="ac-avatar-float"
+            :class="{ 'is-clickable': !!item.avatar_url }"
+            @click.stop="previewMedia(item, 'avatar')"
+          >
+            <img v-if="item.avatar_url" :src="item.avatar_url" class="ac-avatar-img" :alt="`${item.account_name} 头像`" />
+            <div v-else class="ac-avatar-placeholder">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            </div>
+          </button>
           <!-- Platform badges -->
           <div class="ac-platforms">
             <span
@@ -45,6 +166,18 @@
           <div class="ac-name">{{ item.account_name }}</div>
           <div v-if="item.style_description" class="ac-style">{{ item.style_description }}</div>
           <div v-if="!item.social_bindings?.length && !item.tiktok_bloggers?.length" class="ac-no-binding">未绑定平台</div>
+
+          <!-- Bound tags -->
+          <div v-if="item.bound_tags && item.bound_tags.length > 0" class="ac-tags">
+            <div
+              v-for="tag in item.bound_tags"
+              :key="tag.id"
+              class="ac-tag-chip"
+            >
+              <span class="ac-tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+              {{ tag.name }}
+            </div>
+          </div>
 
           <!-- Bound TikTok bloggers -->
           <div v-if="item.tiktok_bloggers?.length" class="ac-bloggers">
@@ -90,6 +223,19 @@
 
     <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" :image-size="80" />
 
+    <el-dialog
+      v-model="previewVisible"
+      width="min(92vw, 960px)"
+      top="5vh"
+      append-to-body
+      class="ac-preview-dialog"
+    >
+      <img v-if="previewImage.url" :src="previewImage.url" :alt="previewImage.title" class="ac-preview-image" />
+      <template #header>
+        <div class="ac-preview-title">{{ previewImage.title }}</div>
+      </template>
+    </el-dialog>
+
     <!-- Footer pagination -->
     <div v-if="total > 0" class="al-footer">
       <div class="al-pagination-left">
@@ -114,8 +260,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchAccounts, deleteAccount } from '../api/accounts'
+import { fetchAccounts, deleteAccount, restartAIAccountGeneration } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
+import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
 const router = useRouter()
 
@@ -124,16 +271,99 @@ const PLATFORM_ICONS = { youtube: '▶', tiktok: '♪', instagram: '◈' }
 
 const loading = ref(false)
 const deleting = ref(null)
+const bulkRestarting = ref(false)
 const items = ref([])
+const previewVisible = ref(false)
+const previewImage = ref({ url: '', title: '' })
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+
+// AI 博主配置弹窗
+const showAISettingsDialog = ref(false)
+const aiSettingsLoading = ref(false)
+const aiSettingsSaving = ref(false)
+const aiSettingsForm = ref({
+  _pipeline: null,
+  ai_account_video_prompt: '',
+  ai_account_video_model: 'gemini-3.1-pro-preview',
+  ai_account_name_prompt: '',
+  ai_account_name_model: 'gemini-2.5-flash',
+  ai_account_avatar_prompt: '',
+  ai_account_avatar_model: 'gemini-3.1-flash-image-preview',
+  ai_account_avatar_size: '1:1',
+  ai_account_avatar_quality: '1K',
+  ai_account_photo_video_prompt: '',
+  ai_account_photo_image_prompt: '',
+})
+
+async function openAISettings() {
+  showAISettingsDialog.value = true
+  aiSettingsLoading.value = true
+  try {
+    const data = await fetchPipelineSettings()
+    aiSettingsForm.value._pipeline = data
+    aiSettingsForm.value.ai_account_video_prompt = data.ai_account_video_prompt || ''
+    aiSettingsForm.value.ai_account_video_model = data.ai_account_video_model || 'gemini-3.1-pro-preview'
+    aiSettingsForm.value.ai_account_name_prompt = data.ai_account_name_prompt || ''
+    aiSettingsForm.value.ai_account_name_model = data.ai_account_name_model || 'gemini-2.5-flash'
+    aiSettingsForm.value.ai_account_avatar_prompt = data.ai_account_avatar_prompt || ''
+    aiSettingsForm.value.ai_account_avatar_model = data.ai_account_avatar_model || 'gemini-3.1-flash-image-preview'
+    aiSettingsForm.value.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'
+    aiSettingsForm.value.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
+    aiSettingsForm.value.ai_account_photo_video_prompt = data.ai_account_photo_video_prompt || ''
+    aiSettingsForm.value.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '加载配置失败')
+  } finally {
+    aiSettingsLoading.value = false
+  }
+}
+
+async function saveAISettings() {
+  if (aiSettingsSaving.value) return
+  aiSettingsSaving.value = true
+  try {
+    const base = aiSettingsForm.value._pipeline || {}
+    const payload = {
+      ...base,
+      ai_account_video_prompt: aiSettingsForm.value.ai_account_video_prompt,
+      ai_account_video_model: aiSettingsForm.value.ai_account_video_model,
+      ai_account_name_prompt: aiSettingsForm.value.ai_account_name_prompt,
+      ai_account_name_model: aiSettingsForm.value.ai_account_name_model,
+      ai_account_avatar_prompt: aiSettingsForm.value.ai_account_avatar_prompt,
+      ai_account_avatar_model: aiSettingsForm.value.ai_account_avatar_model,
+      ai_account_avatar_size: aiSettingsForm.value.ai_account_avatar_size,
+      ai_account_avatar_quality: aiSettingsForm.value.ai_account_avatar_quality,
+      ai_account_photo_video_prompt: aiSettingsForm.value.ai_account_photo_video_prompt,
+      ai_account_photo_image_prompt: aiSettingsForm.value.ai_account_photo_image_prompt,
+    }
+    await updatePipelineSettings(payload)
+    ElMessage.success('配置已保存')
+    showAISettingsDialog.value = false
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '保存失败')
+  } finally {
+    aiSettingsSaving.value = false
+  }
+}
 
 const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1)
 const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value))
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 function platformIcon(p) { return PLATFORM_ICONS[p] || '●' }
+
+function previewMedia(item, type) {
+  const isAvatar = type === 'avatar'
+  const url = isAvatar ? item.avatar_url : item.photo_url
+  if (!url) return
+  previewImage.value = {
+    url,
+    title: `${item.account_name}${isAvatar ? '头像' : '照片'}`
+  }
+  previewVisible.value = true
+}
 
 function goToDetail(item) {
   router.push(`/dashboard/accounts/${item.id}`)
@@ -162,6 +392,37 @@ function handleSizeChange(val) {
   pageSize.value = val
   page.value = 1
   loadData()
+}
+
+async function handleBulkRestartAIGeneration() {
+  if (bulkRestarting.value) return
+
+  const failedAccounts = items.value.filter(i => i.ai_generation_status === 'failed')
+  if (failedAccounts.length === 0) {
+    ElMessage.info('没有失败的 AI 生成任务')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定批量重启 ${failedAccounts.length} 个失败的 AI 生成任务？`,
+      '确认重启',
+      { confirmButtonText: '确认重启', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  bulkRestarting.value = true
+  try {
+    await Promise.all(failedAccounts.map(i => restartAIAccountGeneration(i.id)))
+    ElMessage.success(`已重启 ${failedAccounts.length} 个任务`)
+    await loadData()
+  } catch (err) {
+    ElMessage.error('批量重启失败')
+  } finally {
+    bulkRestarting.value = false
+  }
 }
 
 async function handleDelete(item) {
@@ -247,15 +508,52 @@ onMounted(loadData)
   transform: translateY(-2px);
 }
 
-/* Avatar */
-.ac-avatar-wrap {
+/* Media */
+.ac-media-wrap {
   position: relative;
-  height: 120px;
+  height: 168px;
   background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+  overflow: hidden;
+}
+
+.ac-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  cursor: zoom-in;
+}
+
+.ac-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 12px;
+  background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
+}
+
+.ac-avatar-float {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+}
+
+.ac-avatar-float.is-clickable {
+  cursor: zoom-in;
 }
 
 .ac-avatar-img {
@@ -276,6 +574,19 @@ onMounted(loadData)
   align-items: center;
   justify-content: center;
   box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+
+.ac-media-tip {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+  padding: 4px 8px;
+  border-radius: 999px;
 }
 
 .ac-platforms {
@@ -399,6 +710,34 @@ onMounted(loadData)
   flex-wrap: wrap;
 }
 
+/* Account card bound tags */
+.ac-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ac-tag-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #334155;
+  font-weight: 500;
+}
+
+.ac-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .ac-tag {
   font-size: 11px;
   font-weight: 600;
@@ -497,6 +836,21 @@ onMounted(loadData)
   gap: 8px;
 }
 
+.ac-preview-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.ac-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
 .pg-btn {
   font-size: 13px;
   font-weight: 500;
@@ -550,5 +904,101 @@ onMounted(loadData)
 
 .al-tasks-btn:active {
   transform: translateY(1px);
+}
+
+.al-config-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(139,92,246,0.2) !important;
+  background: rgba(139,92,246,0.05) !important;
+  color: #7c3aed !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.al-config-btn:hover {
+  background: rgba(139,92,246,0.12) !important;
+  border-color: rgba(139,92,246,0.4) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139,92,246,0.15);
+}
+
+.al-config-btn:active {
+  transform: translateY(1px);
+}
+
+.al-restart-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(245,158,11,0.2) !important;
+  background: rgba(245,158,11,0.05) !important;
+  color: #d97706 !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.al-restart-btn:hover {
+  background: rgba(245,158,11,0.12) !important;
+  border-color: rgba(245,158,11,0.4) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245,158,11,0.15);
+}
+
+.al-restart-btn:active {
+  transform: translateY(1px);
+}
+
+.al-restart-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* AI 配置弹窗内容 */
+.ai-cfg-body {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.ai-cfg-section {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  border: 1px solid #e2e8f0;
+}
+
+.ai-cfg-section:last-child { margin-bottom: 0; }
+
+.ai-cfg-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ai-cfg-tag {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+  background: #e2e8f0;
+  padding: 3px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.ai-cfg-desc {
+  font-size: 12px;
+  color: #94a3b8;
 }
 </style>

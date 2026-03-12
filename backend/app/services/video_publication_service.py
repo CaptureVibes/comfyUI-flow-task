@@ -171,8 +171,8 @@ class OpenAPIClient:
 
         signed_params = self._sign_params(params)
 
-        # trust_env=False 禁用系统代理
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        # trust_env=False 禁用系统代理；渠道列表是 UI 辅助接口，超时缩短到 5s
+        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
             response = await client.get(
                 f"{self.base_url}/open-api/v1/channels",
                 params=signed_params,

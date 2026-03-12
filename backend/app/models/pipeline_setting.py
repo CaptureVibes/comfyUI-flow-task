@@ -42,6 +42,18 @@ class PipelineSetting(Base):
     # 第五阶段：图片超分（Pillow LANCZOS）
     upscaling_scale: Mapped[int] = mapped_column(nullable=False, default=1024)
 
+    # AI 账号生成配置
+    ai_account_video_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_account_video_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    ai_account_name_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_account_avatar_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_account_photo_video_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_account_photo_image_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_account_name_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-2.5-flash")
+    ai_account_avatar_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")
+    ai_account_avatar_size: Mapped[str] = mapped_column(String(20), nullable=False, default="1:1")
+    ai_account_avatar_quality: Mapped[str] = mapped_column(String(10), nullable=False, default="1K")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

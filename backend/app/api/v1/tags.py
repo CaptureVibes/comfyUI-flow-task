@@ -88,6 +88,33 @@ async def delete_tag(
     return Response(status_code=204)
 
 
+class TagVideoCountBody(BaseModel):
+    tag_ids: list[uuid.UUID]
+
+
+class TagVideoCountResult(BaseModel):
+    total_video_count: int
+
+
+@router.post("/video-count", response_model=TagVideoCountResult)
+async def get_tags_video_count(
+    payload: TagVideoCountBody,
+    owner_id: uuid.UUID | None = Depends(_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TagVideoCountResult:
+    """批量查询多个标签下关联的视频总数。"""
+    if not payload.tag_ids:
+        return TagVideoCountResult(total_video_count=0)
+
+    from sqlalchemy import func
+
+    stmt = select(func.count(func.distinct(VideoSourceTag.video_source_id))).where(
+        VideoSourceTag.tag_id.in_(payload.tag_ids)
+    )
+    count = await session.scalar(stmt) or 0
+    return TagVideoCountResult(total_video_count=count)
+
+
 # ── 视频标签关联 ───────────────────────────────────────────────────────────────
 
 @router.get("/video-sources/{vs_id}/tags", response_model=list[TagRead])

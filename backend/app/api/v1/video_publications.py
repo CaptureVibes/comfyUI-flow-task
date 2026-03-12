@@ -1,6 +1,7 @@
 import uuid
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,6 +183,9 @@ async def fetch_channels(
 
     try:
         return await service.fetch_channels(platform, is_active=is_active)
+    except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException):
+        # Open API 服务不可达时返回空列表，前端降级为手动输入
+        return {"items": [], "total": 0}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取渠道列表失败: {str(e)}")
 

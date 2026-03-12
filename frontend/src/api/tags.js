@@ -13,3 +13,8 @@ export async function createTag(payload) {
 export async function deleteTag(id) {
   await http.delete(`/tags/${id}`)
 }
+
+export async function fetchTagsVideoCount(tagIds) {
+  const { data } = await http.post('/tags/video-count', { tag_ids: tagIds })
+  return data
+}
