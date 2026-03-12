@@ -34,6 +34,20 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+async def _upload_remote_image_to_cdn(image_url: str, filename: str) -> str:
+    """Download upstream image and re-upload to our CDN, returning the CDN URL."""
+    from app.services.upload_service import UpstreamImageUploadService
+
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        dl = await client.get(image_url)
+        dl.raise_for_status()
+
+    content_type = dl.headers.get("content-type", "image/png").split(";", 1)[0].strip() or "image/png"
+    svc = UpstreamImageUploadService()
+    upload_result = await svc.upload_image(dl.content, content_type, filename)
+    return upload_result.url
+
+
 # =============================================================================
 # 状态管理
 # =============================================================================
@@ -154,7 +168,7 @@ async def _call_evolink_text(
     masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
     logger.info("EvoLink text API: model=%s, api_key=%s, prompt_len=%d", model_name, masked_key, len(prompt))
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
         resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
         if not resp.is_success:
             logger.error("EvoLink text API error: status=%d, body=%s", resp.status_code, resp.text[:1000])
@@ -194,7 +208,7 @@ async def _call_evolink_video(
     }
     logger.info("EvoLink video API: model=%s, video_url=%s", model_name, video_url)
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
         resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
         if not resp.is_success:
             logger.error("EvoLink video API error: status=%d, body=%s", resp.status_code, resp.text[:1000])
@@ -222,8 +236,9 @@ async def _submit_nano2_avatar_job(
     model: str,
     size: str,
     quality: str,
+    image_urls: list[str] | None = None,
 ) -> str:
-    """提交 Nano2 文生图任务（纯文本 → 头像），返回 task_id。"""
+    """提交 Nano2 生图任务，支持纯文本或附带参考图，返回 task_id。"""
     url = f"{api_base_url.rstrip('/')}/v1/images/generations"
     payload = {
         "model": model,
@@ -231,7 +246,9 @@ async def _submit_nano2_avatar_job(
         "size": size,
         "quality": quality,
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    if image_urls:
+        payload["image_urls"] = image_urls
+    async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
         resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
         if not resp.is_success:
             logger.error("Nano2 avatar submit error: status=%d, body=%s", resp.status_code, resp.text)
@@ -254,7 +271,7 @@ async def _poll_nano2_task(
     url = f"{api_base_url.rstrip('/')}/v1/tasks/{task_id}"
     deadline = asyncio.get_event_loop().time() + _IMAGEGEN_POLL_TIMEOUT
     while True:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
             resp.raise_for_status()
             data = resp.json()
@@ -347,20 +364,8 @@ async def _generate_photo(
     if last_exc is not None:
         raise last_exc  # type: ignore[misc]
 
-    # 上传到 CDN
-    from app.services.upload_service import UpstreamImageUploadService
-    cdn_url = result_url
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            dl = await client.get(result_url)
-            dl.raise_for_status()
-        svc = UpstreamImageUploadService()
-        upload_result = await svc.upload_image(dl.content, "image/png", "photo.png")
-        cdn_url = upload_result.url
-        logger.info("[%s] Photo uploaded to CDN: %s", account_id, cdn_url[:80])
-    except Exception as exc:
-        logger.warning("[%s] Failed to re-upload photo to CDN, using original URL: %s", account_id, exc)
-
+    cdn_url = await _upload_remote_image_to_cdn(result_url, "photo.png")
+    logger.info("[%s] Photo uploaded to CDN: %s", account_id, cdn_url[:80])
     return cdn_url
 
 
@@ -482,6 +487,7 @@ async def _stage_name_generation(
 async def _stage_avatar_generation(
     account_id: str,
     combined_description: str,
+    reference_photo_url: str,
     api_base_url: str,
     api_key: str,
     avatar_model: str,
@@ -489,7 +495,7 @@ async def _stage_avatar_generation(
     avatar_size: str,
     avatar_quality: str,
 ) -> str:
-    """阶段3: 基于视频描述，调用 Nano2 生成博主头像，上传到 CDN，返回头像 URL。"""
+    """基于参考照片和视频描述，调用 Nano2 生成博主头像，上传到 CDN，返回头像 URL。"""
     state = ai_account_states.get(account_id, {})
     if "avatar_generating" in state.get("completed_stages", []):
         logger.info("[%s] avatar_generating skipped (already completed)", account_id)
@@ -498,7 +504,13 @@ async def _stage_avatar_generation(
     _set_status(account_id, "avatar_generating")
     logger.info("[%s] avatar_generating started", account_id)
 
-    full_prompt = f"{avatar_prompt}\n\n参考视频内容描述：\n{combined_description}" if avatar_prompt else f"根据以下描述生成一张博主头像：\n{combined_description}"
+    prompt_parts: list[str] = []
+    if avatar_prompt:
+        prompt_parts.append(avatar_prompt)
+    else:
+        prompt_parts.append("请基于参考照片和以下视频内容描述生成一张博主头像。")
+    prompt_parts.append(f"参考视频内容描述：\n{combined_description}")
+    full_prompt = "\n\n".join(prompt_parts)
 
     last_exc: Exception | None = None
     result_url = ""
@@ -511,6 +523,7 @@ async def _stage_avatar_generation(
                 model=avatar_model,
                 size=avatar_size,
                 quality=avatar_quality,
+                image_urls=[reference_photo_url] if reference_photo_url else None,
             )
             logger.info("[%s] Nano2 avatar task submitted: %s, polling… (attempt %d/3)", account_id, task_id, attempt)
             result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
@@ -522,19 +535,8 @@ async def _stage_avatar_generation(
     if last_exc is not None:
         raise last_exc  # type: ignore[misc]
 
-    # 下载并上传到我们的 CDN
-    from app.services.upload_service import UpstreamImageUploadService
-    cdn_url = result_url
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            dl = await client.get(result_url)
-            dl.raise_for_status()
-        svc = UpstreamImageUploadService()
-        upload_result = await svc.upload_image(dl.content, "image/png", "avatar.png")
-        cdn_url = upload_result.url
-        logger.info("[%s] Avatar uploaded to CDN: %s", account_id, cdn_url[:80])
-    except Exception as exc:
-        logger.warning("[%s] Failed to re-upload avatar to CDN, using original URL: %s", account_id, exc)
+    cdn_url = await _upload_remote_image_to_cdn(result_url, "avatar.png")
+    logger.info("[%s] Avatar uploaded to CDN: %s", account_id, cdn_url[:80])
 
     state = ai_account_states[account_id]
     state["generated_avatar_url"] = cdn_url
@@ -693,20 +695,8 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 name_prompt=name_prompt,
             )
 
-            # 阶段3：生成博主头像
-            await _stage_avatar_generation(
-                account_id=account_id,
-                combined_description=combined_description,
-                api_base_url=api_base_url,
-                api_key=api_key,
-                avatar_model=avatar_model,
-                avatar_prompt=avatar_prompt,
-                avatar_size=avatar_size,
-                avatar_quality=avatar_quality,
-            )
-
-            # 阶段4：生成博主照片
-            await _stage_photo_generation(
+            # 阶段3：先生成博主照片
+            generated_photo_url = await _stage_photo_generation(
                 account_id=account_id,
                 video_urls=video_urls,
                 photo_video_prompt=photo_video_prompt,
@@ -715,6 +705,19 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 api_key=api_key,
                 understand_model=video_model,
                 avatar_model=avatar_model,
+                avatar_size=avatar_size,
+                avatar_quality=avatar_quality,
+            )
+
+            # 阶段4：基于照片 + 配置提示词 + 视频描述生成博主头像
+            await _stage_avatar_generation(
+                account_id=account_id,
+                combined_description=combined_description,
+                reference_photo_url=generated_photo_url,
+                api_base_url=api_base_url,
+                api_key=api_key,
+                avatar_model=avatar_model,
+                avatar_prompt=avatar_prompt,
                 avatar_size=avatar_size,
                 avatar_quality=avatar_quality,
             )

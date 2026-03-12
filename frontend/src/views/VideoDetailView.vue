@@ -104,6 +104,23 @@
                   <span class="vsd-info-label">原始链接</span>
                   <el-link :href="video.source_url" target="_blank" type="primary" :underline="false">前往观看</el-link>
                 </div>
+                <div class="vsd-info-row vsd-info-row-tags">
+                  <span class="vsd-info-label">标签</span>
+                  <div class="vsd-tags-block">
+                    <div v-if="video.tags?.length" class="vsd-tags">
+                      <span
+                        v-for="tag in video.tags"
+                        :key="tag.id"
+                        class="vsd-tag-chip"
+                      >
+                        <span class="vsd-tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+                        {{ tag.name }}
+                      </span>
+                    </div>
+                    <span v-else class="vsd-info-val">未绑定标签</span>
+                    <el-button size="small" plain @click="openTagDialog">更换标签</el-button>
+                  </div>
+                </div>
                 <div class="vsd-info-row">
                   <span class="vsd-info-label">入库时间</span>
                   <span class="vsd-info-val">{{ formatDateTime(video.created_at) }}</span>
@@ -353,6 +370,30 @@
         </div>
       </template>
     </div>
+
+    <el-dialog v-model="showTagDialog" title="更换标签" width="520px" :close-on-click-modal="false">
+      <div v-if="tagsLoading" style="padding: 24px 0" v-loading="true"></div>
+      <template v-else>
+        <div v-if="allTags.length === 0" class="vsd-tags-empty">暂无可用标签</div>
+        <div v-else class="vsd-tag-select-grid">
+          <button
+            v-for="tag in allTags"
+            :key="tag.id"
+            type="button"
+            class="vsd-tag-select-item"
+            :class="{ active: selectedTagIds.includes(tag.id) }"
+            @click="toggleTag(tag.id)"
+          >
+            <span class="vsd-tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+            {{ tag.name }}
+          </button>
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="showTagDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingTags" @click="handleSaveTags">保存标签</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -360,7 +401,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoSource, deleteVideoSource, downloadVideoSource, fetchVideoSourceStatsHistory } from '../api/video_sources'
+import { fetchVideoSource, deleteVideoSource, downloadVideoSource, fetchVideoSourceStatsHistory, replaceVideoSourceTags } from '../api/video_sources'
+import { fetchTags } from '../api/tags'
 
 const route = useRoute()
 const router = useRouter()
@@ -371,6 +413,11 @@ const video = ref(null)
 const statsItems = ref([])
 const downloading = ref(false)
 const deleting = ref(false)
+const showTagDialog = ref(false)
+const tagsLoading = ref(false)
+const savingTags = ref(false)
+const allTags = ref([])
+const selectedTagIds = ref([])
 const tooltip = ref({ visible: false, x: 0, y: 0, date: '', value: 0, type: '' })
 let pollTimer = null
 
@@ -460,6 +507,39 @@ async function handleDelete() {
     ElMessage.error(err?.response?.data?.detail || '删除失败')
   } finally {
     deleting.value = false
+  }
+}
+
+async function openTagDialog() {
+  showTagDialog.value = true
+  tagsLoading.value = true
+  try {
+    allTags.value = await fetchTags()
+    selectedTagIds.value = (video.value?.tags || []).map(tag => tag.id)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '加载标签失败')
+  } finally {
+    tagsLoading.value = false
+  }
+}
+
+function toggleTag(tagId) {
+  const idx = selectedTagIds.value.indexOf(tagId)
+  if (idx === -1) selectedTagIds.value.push(tagId)
+  else selectedTagIds.value.splice(idx, 1)
+}
+
+async function handleSaveTags() {
+  if (!video.value || savingTags.value) return
+  savingTags.value = true
+  try {
+    video.value = await replaceVideoSourceTags(videoId, selectedTagIds.value)
+    ElMessage.success('标签已更新')
+    showTagDialog.value = false
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '更新标签失败')
+  } finally {
+    savingTags.value = false
   }
 }
 
@@ -832,6 +912,10 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
+.vsd-info-row-tags {
+  align-items: flex-start;
+}
+
 .vsd-info-label {
   color: #64748b;
   font-weight: 500;
@@ -840,6 +924,67 @@ onUnmounted(() => {
 .vsd-info-val {
   color: #334155;
   font-weight: 600;
+}
+
+.vsd-tags-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 70%;
+}
+
+.vsd-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.vsd-tag-chip,
+.vsd-tag-select-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.vsd-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.vsd-tag-select-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.vsd-tag-select-item {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vsd-tag-select-item.active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.vsd-tags-empty {
+  padding: 16px 0;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 .vsd-actions {

@@ -25,6 +25,11 @@ export async function fetchVideoSource(id) {
   return data
 }
 
+export async function replaceVideoSourceTags(id, tagIds) {
+  const { data } = await http.patch(`/video-sources/${id}/tags`, { tag_ids: tagIds })
+  return data
+}
+
 export async function deleteVideoSource(id) {
   await http.delete(`/video-sources/${id}`)
 }

@@ -26,6 +26,7 @@ from app.schemas.video_source import (
     VideoSourceRead,
     VideoSourceStatHistoryResponse,
     VideoSourceStatsResponse,
+    VideoSourceTagsUpdate,
 )
 from app.services.video_source_service import (
     create_video_source,
@@ -35,6 +36,7 @@ from app.services.video_source_service import (
     get_video_source_stats,
     list_video_sources,
     parse_video_url,
+    replace_video_source_tags,
     trigger_download_and_upload,
 )
 
@@ -224,6 +226,17 @@ async def download_video_source_endpoint(
 ) -> VideoSourceRead:
     """Trigger background download via yt-dlp and upload to permanent storage."""
     vs = await trigger_download_and_upload(session, vs_id, owner_id)
+    return await _vs_to_read(session, vs)
+
+
+@router.patch("/{vs_id}/tags", response_model=VideoSourceRead)
+async def replace_video_source_tags_endpoint(
+    vs_id: uuid.UUID,
+    payload: VideoSourceTagsUpdate,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> VideoSourceRead:
+    vs = await replace_video_source_tags(session, vs_id, payload.tag_ids, owner_id)
     return await _vs_to_read(session, vs)
 
 

@@ -10,12 +10,13 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.tag import Tag, VideoSourceTag
+from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
 from app.models.video_source_stat import VideoSourceStat
 from app.schemas.video_source import VideoSourceCreate, VideoSourceParseResult
@@ -350,6 +351,53 @@ async def get_video_source_or_404(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="视频源不存在")
     if owner_id is not None and vs.owner_id != owner_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="视频源不存在")
+    return vs
+
+
+async def replace_video_source_tags(
+    session: AsyncSession,
+    vs_id: UUID,
+    tag_ids: list[UUID],
+    owner_id: UUID | None = None,
+) -> VideoSource:
+    vs = await get_video_source_or_404(session, vs_id, owner_id)
+    template = await session.scalar(
+        select(VideoAITemplate).where(VideoAITemplate.video_source_id == vs.id)
+    )
+
+    unique_tag_ids = list(dict.fromkeys(tag_ids))
+    if unique_tag_ids:
+        tags = (
+            await session.execute(select(Tag).where(Tag.id.in_(unique_tag_ids)))
+        ).scalars().all()
+        found_ids = {tag.id for tag in tags}
+        missing_ids = [tid for tid in unique_tag_ids if tid not in found_ids]
+        if missing_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"标签不存在: {missing_ids[0]}",
+            )
+
+    delete_conditions = [VideoSourceTag.video_source_id == vs_id]
+    if template:
+        delete_conditions.append(VideoSourceTag.video_ai_template_id == template.id)
+    await session.execute(
+        delete(VideoSourceTag).where(or_(*delete_conditions))
+    )
+
+    for tag_id in unique_tag_ids:
+        session.add(
+            VideoSourceTag(
+                owner_id=vs.owner_id,
+                video_source_id=vs.id,
+                video_ai_template_id=template.id if template else None,
+                tag_id=tag_id,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+    await session.commit()
+    await session.refresh(vs)
     return vs
 
 

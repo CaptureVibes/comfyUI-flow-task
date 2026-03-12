@@ -82,6 +82,10 @@ class VideoSourceCreate(BaseModel):
     repeatable: bool = False
 
 
+class VideoSourceTagsUpdate(BaseModel):
+    tag_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
 class VideoSourceRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
