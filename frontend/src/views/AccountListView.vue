@@ -13,12 +13,12 @@
         </el-button>
         <el-button
           class="al-restart-btn"
-          @click="handleBulkRestartAIGeneration"
+          @click="handleBulkContinueAIGeneration"
           :loading="bulkRestarting"
           :disabled="items.length === 0"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-          批量重启 AI 生成
+          一键继续 AI 生成
         </el-button>
         <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -260,7 +260,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchAccounts, deleteAccount, restartAIAccountGeneration } from '../api/accounts'
+import { fetchAccounts, deleteAccount, restartAIAccountGeneration, resumeAIAccountGeneration } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
@@ -394,20 +394,23 @@ function handleSizeChange(val) {
   loadData()
 }
 
-async function handleBulkRestartAIGeneration() {
+async function handleBulkContinueAIGeneration() {
   if (bulkRestarting.value) return
 
-  const failedAccounts = items.value.filter(i => i.ai_generation_status === 'failed')
-  if (failedAccounts.length === 0) {
-    ElMessage.info('没有失败的 AI 生成任务')
+  const actionableAccounts = items.value.filter(i => i.ai_generation_status !== 'completed')
+  if (actionableAccounts.length === 0) {
+    ElMessage.info('没有需要继续的 AI 生成任务')
     return
   }
 
+  const failedAccounts = actionableAccounts.filter(i => i.ai_generation_status === 'failed')
+  const resumableAccounts = actionableAccounts.filter(i => i.ai_generation_status !== 'failed')
+
   try {
     await ElMessageBox.confirm(
-      `确定批量重启 ${failedAccounts.length} 个失败的 AI 生成任务？`,
-      '确认重启',
-      { confirmButtonText: '确认重启', cancelButtonText: '取消', type: 'warning' }
+      `确定继续 ${actionableAccounts.length} 个未完成任务？失败任务将从头重跑，其余任务将断点续跑。`,
+      '确认继续',
+      { confirmButtonText: '确认继续', cancelButtonText: '取消', type: 'warning' }
     )
   } catch {
     return
@@ -415,11 +418,14 @@ async function handleBulkRestartAIGeneration() {
 
   bulkRestarting.value = true
   try {
-    await Promise.all(failedAccounts.map(i => restartAIAccountGeneration(i.id)))
-    ElMessage.success(`已重启 ${failedAccounts.length} 个任务`)
+    await Promise.all([
+      ...failedAccounts.map(i => restartAIAccountGeneration(i.id)),
+      ...resumableAccounts.map(i => resumeAIAccountGeneration(i.id)),
+    ])
+    ElMessage.success(`已继续 ${actionableAccounts.length} 个任务`)
     await loadData()
   } catch (err) {
-    ElMessage.error('批量重启失败')
+    ElMessage.error('一键继续失败')
   } finally {
     bulkRestarting.value = false
   }

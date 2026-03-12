@@ -479,6 +479,83 @@ async def list_templates_by_blogger(
     return items_read
 
 
+@router.get("/by-tags", response_model=list[VideoAITemplateListItem])
+async def list_templates_by_tags(
+    tag_ids: str = Query(..., description="逗号分隔的 tag_id，用于按标签过滤"),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[VideoAITemplateListItem]:
+    """按标签查询所有成功模板，不要求先选博主。模板必须包含所有指定标签。"""
+    from sqlalchemy import exists
+
+    filter_tag_ids = [uuid.UUID(t.strip()) for t in tag_ids.split(",") if t.strip()]
+    if not filter_tag_ids:
+        return []
+
+    stmt = (
+        select(VideoAITemplate)
+        .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
+        .order_by(VideoAITemplate.created_at.desc())
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
+
+    for tid in filter_tag_ids:
+        stmt = stmt.where(
+            exists().where(
+                VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
+            ).where(VideoSourceTag.tag_id == tid)
+        )
+
+    rows = (await session.execute(stmt)).scalars().all()
+
+    vs_ids = list({r.video_source_id for r in rows if r.video_source_id is not None})
+    vs_map: dict[uuid.UUID, VideoSource] = {}
+    if vs_ids:
+        video_sources = (await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))).scalars().all()
+        for v in video_sources:
+            vs_map[v.id] = v
+
+    tpl_ids = [r.id for r in rows]
+    tags_map: dict[uuid.UUID, list[TagRead]] = {r.id: [] for r in rows}
+    if tpl_ids:
+        tag_stmt = (
+            select(VideoSourceTag.video_ai_template_id, Tag)
+            .join(Tag, Tag.id == VideoSourceTag.tag_id)
+            .where(VideoSourceTag.video_ai_template_id.in_(tpl_ids))
+            .order_by(Tag.name.asc())
+        )
+        for tpl_id, tag in (await session.execute(tag_stmt)).all():
+            if tpl_id in tags_map:
+                tags_map[tpl_id].append(TagRead.model_validate(tag))
+
+    items_read = []
+    for r in rows:
+        vs = None
+        if r.video_source_id and r.video_source_id in vs_map:
+            vs = VideoSourceSummary.model_validate(vs_map[r.video_source_id])
+        items_read.append(VideoAITemplateListItem(
+            id=r.id,
+            owner_id=r.owner_id,
+            title=r.title,
+            description=r.description,
+            video_source_id=r.video_source_id,
+            video_source=vs,
+            process_status=r.process_status,
+            process_error=r.process_error,
+            prompt_description=r.prompt_description,
+            extracted_shots=r.extracted_shots,
+            is_used=r.is_used,
+            repeatable=r.repeatable,
+            tiktok_blogger_id=r.tiktok_blogger_id,
+            tags=tags_map.get(r.id, []),
+            extra=r.extra,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        ))
+    return items_read
+
+
 @router.get("/stats", response_model=dict[str, int])
 async def get_template_stats(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
@@ -675,5 +752,4 @@ async def upload_shot_image(
     svc = UpstreamImageUploadService()
     result = await svc.upload_image(content, content_type, file.filename)
     return {"url": result.url}
-
 

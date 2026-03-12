@@ -649,9 +649,17 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                     avatar_size = "1:1"
                     avatar_quality = "1K"
 
-                # 获取账号绑定的标签
-                state = ai_account_states.get(account_id, {})
-                tag_ids = state.get("selected_tag_ids", [])
+                # 标签来源以数据库为准。触发生成前会先把标签绑定到账号，
+                # 因此这里直接查询账号当前绑定的标签，不依赖内存状态。
+                bound_tag_ids = (
+                    await session.execute(
+                        select(AccountTag.tag_id).where(AccountTag.account_id == acc.id)
+                    )
+                ).scalars().all()
+                tag_ids = [str(tag_id) for tag_id in bound_tag_ids]
+                state = ai_account_states.setdefault(account_id, _new_state(account_id, "pending"))
+                state["selected_tag_ids"] = tag_ids
+                _mark_dirty(account_id)
 
                 # 根据标签查询关联的视频（最多10个，优先使用已下载的本地URL）
                 video_urls: list[str] = []

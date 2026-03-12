@@ -115,3 +115,11 @@ export async function fetchTemplatesByBlogger(bloggerId, tagIds = []) {
   const { data } = await http.get(`/video-ai-templates/by-blogger/${bloggerId}`, { params })
   return data
 }
+
+export async function fetchTemplatesByTags(tagIds) {
+  if (!tagIds?.length) return []
+  const { data } = await http.get('/video-ai-templates/by-tags', {
+    params: { tag_ids: tagIds.join(',') },
+  })
+  return data
+}

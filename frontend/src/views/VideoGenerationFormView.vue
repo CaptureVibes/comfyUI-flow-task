@@ -149,9 +149,62 @@
           >{{ tag.name }}</span>
         </div>
 
-        <div v-if="checkedBloggerIds.length === 0" class="vgf-tpl-empty">
+        <div v-if="checkedBloggerIds.length === 0 && selectedTagIds.length === 0" class="vgf-tpl-empty">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" style="margin-bottom:8px"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <div>请先在左侧选择博主</div>
+          <div>请先在左侧选择博主，或直接点击上方标签筛选模板</div>
+        </div>
+
+        <div v-else-if="checkedBloggerIds.length === 0" class="vgf-tpl-scroll" v-loading="templatesLoading">
+          <div
+            v-for="item in tagOnlyTemplates"
+            :key="item.tpl.id"
+            class="vgf-tpl-item"
+            :class="{
+              'is-selected': batchSelected.includes(item.tpl.id),
+              'is-used': item.tpl.is_used,
+            }"
+            @click="toggleBatchItem(item.tpl.id)"
+          >
+            <label class="vg-checkbox-wrapper" @click.stop>
+              <input
+                type="checkbox"
+                class="vg-checkbox-input"
+                :checked="batchSelected.includes(item.tpl.id)"
+                @change="toggleBatchItem(item.tpl.id)"
+              />
+              <span class="vg-checkbox-box"></span>
+            </label>
+            <img
+              v-if="item.tpl.video_source?.thumbnail_url"
+              :src="item.tpl.video_source.thumbnail_url"
+              class="vgf-tpl-thumb"
+            />
+            <div v-else class="vgf-tpl-thumb vgf-tpl-thumb-empty">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <div class="vgf-tpl-info">
+              <div class="vgf-tpl-title">{{ item.tpl.title || item.tpl.video_source?.video_title || '未命名模板' }}</div>
+              <div class="vgf-tpl-meta">
+                <span class="vgf-tpl-status" :class="`status-${item.tpl.process_status}`">{{ item.tpl.process_status }}</span>
+                <span v-if="item.tpl.repeatable" class="vgf-tpl-repeatable-badge">可重复</span>
+                <span v-if="item.tpl.is_used" class="vgf-tpl-used-badge">已使用</span>
+                <span v-if="item.tpl.video_source?.duration" style="color:#94a3b8;font-size:11px">
+                  {{ formatDuration(item.tpl.video_source.duration) }}
+                </span>
+              </div>
+              <div v-if="item.tpl.tags?.length" class="vgf-tpl-tags">
+                <span v-for="tag in item.tpl.tags" :key="tag.id" class="vgf-tpl-tag">{{ tag.name }}</span>
+              </div>
+              <div v-if="item.tpl.extracted_shots?.length" style="font-size:11px;color:#10b981">
+                {{ item.tpl.extracted_shots.length }} 张造型图
+              </div>
+              <div v-else style="font-size:11px;color:#f59e0b">暂无造型图</div>
+            </div>
+          </div>
+
+          <div v-if="!templatesLoading && tagOnlyTemplates.length === 0 && selectedTagIds.length > 0" class="vgf-tpl-empty">
+            当前标签下暂无可用模板
+          </div>
         </div>
 
         <div v-else class="vgf-tpl-scroll" v-loading="templatesLoading">
@@ -231,7 +284,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccount, fetchAccountBloggers } from '../api/accounts'
 import { searchBloggers } from '../api/tiktok_bloggers'
-import { fetchTemplatesByBlogger } from '../api/video_ai_templates'
+import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
 import { fetchTags } from '../api/tags'
 import { createVideoTask } from '../api/video_tasks'
 
@@ -257,6 +310,7 @@ const bloggerMap = ref({})
 
 // templatesByBlogger: id -> [{tpl}]
 const templatesByBlogger = ref({})
+const tagOnlyTemplates = ref([])
 
 // batchSelected
 const batchSelected = ref([])
@@ -267,7 +321,9 @@ const selectedTagIds = ref([])
 
 // allTemplates: flat list across all checked bloggers, repeatable first
 const allTemplates = computed(() => {
-  const items = checkedBloggerIds.value.flatMap(id => templatesByBlogger.value[id] || [])
+  const items = checkedBloggerIds.value.length > 0
+    ? checkedBloggerIds.value.flatMap(id => templatesByBlogger.value[id] || [])
+    : tagOnlyTemplates.value
   return [...items].sort((a, b) => (b.tpl.repeatable ? 1 : 0) - (a.tpl.repeatable ? 1 : 0))
 })
 
@@ -332,10 +388,16 @@ async function reloadAllTemplates() {
   for (const id of checkedBloggerIds.value) {
     delete templatesByBlogger.value[id]
   }
+  tagOnlyTemplates.value = []
   batchSelected.value = []
   templatesLoading.value = true
   try {
-    await Promise.all(checkedBloggerIds.value.map(id => loadTemplatesForBlogger(id)))
+    if (checkedBloggerIds.value.length > 0) {
+      await Promise.all(checkedBloggerIds.value.map(id => loadTemplatesForBlogger(id)))
+    } else if (selectedTagIds.value.length > 0) {
+      const templates = await fetchTemplatesByTags(selectedTagIds.value)
+      tagOnlyTemplates.value = templates.map(tpl => ({ tpl }))
+    }
   } finally {
     templatesLoading.value = false
   }
@@ -356,9 +418,19 @@ async function toggleBlogger(blogger) {
     const tplIds = new Set((templatesByBlogger.value[id] || []).map(item => item.tpl.id))
     batchSelected.value = batchSelected.value.filter(tid => !tplIds.has(tid))
     delete templatesByBlogger.value[id]
+    if (checkedBloggerIds.value.length === 0 && selectedTagIds.value.length > 0) {
+      templatesLoading.value = true
+      try {
+        const templates = await fetchTemplatesByTags(selectedTagIds.value)
+        tagOnlyTemplates.value = templates.map(tpl => ({ tpl }))
+      } finally {
+        templatesLoading.value = false
+      }
+    }
   } else {
     checkedBloggerIds.value.push(id)
     bloggerMap.value[id] = blogger
+    tagOnlyTemplates.value = []
     templatesLoading.value = true
     await loadTemplatesForBlogger(id)
     templatesLoading.value = false
