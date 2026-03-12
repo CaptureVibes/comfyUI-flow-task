@@ -2,10 +2,10 @@
   <div class="bl-page">
     <div class="bl-header">
       <h1 class="bl-title">TikTok博主</h1>
-      <el-button type="primary" class="bl-add-btn" @click="showAddDialog = true">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <button class="bl-add-btn" @click="showAddDialog = true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px;flex-shrink:0"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         新建博主
-      </el-button>
+      </button>
     </div>
 
     <!-- Platform filter tabs -->
@@ -66,20 +66,41 @@
     </div>
 
     <!-- Add dialog -->
-    <el-dialog v-model="showAddDialog" title="新建博主" width="480px" @close="profileUrl = ''">
+    <el-dialog
+      v-model="showAddDialog"
+      title="新建博主"
+      width="500px"
+      align-center
+      destroy-on-close
+      @close="profileUrl = ''"
+    >
       <div class="add-dialog-body">
-        <p class="add-hint">粘贴该博主的主页链接（如 https://www.tiktok.com/@username），系统将自动解析博主信息。</p>
-        <el-input
-          v-model="profileUrl"
-          placeholder="https://www.tiktok.com/@username"
-          :disabled="adding"
-        />
+        <div class="add-hint-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <p class="add-hint">粘贴该博主的主页链接（如 https://www.tiktok.com/@username），系统将自动解析博主信息。</p>
+        </div>
+        <div class="add-input-wrap" :class="{ focused: inputFocused }">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" class="add-input-icon"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          <input
+            v-model="profileUrl"
+            placeholder="https://www.tiktok.com/@username"
+            :disabled="adding"
+            class="add-input"
+            @focus="inputFocused = true"
+            @blur="inputFocused = false"
+            @keyup.enter="handleAdd"
+          />
+        </div>
       </div>
       <template #footer>
-        <el-button @click="showAddDialog = false" :disabled="adding">取消</el-button>
-        <el-button type="primary" :loading="adding" :disabled="!profileUrl.trim()" @click="handleAdd">
-          解析并添加
-        </el-button>
+        <div class="dialog-footer">
+          <button class="dlg-btn-cancel" @click="showAddDialog = false" :disabled="adding">取消</button>
+          <button class="dlg-btn-primary" :class="{ loading: adding }" :disabled="!profileUrl.trim() || adding" @click="handleAdd">
+            <span v-if="adding" class="btn-spin"></span>
+            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="margin-right:6px"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            {{ adding ? '解析中…' : '解析并添加' }}
+          </button>
+        </div>
       </template>
     </el-dialog>
 
@@ -104,6 +125,7 @@ const selectedPlatform = ref('')
 const showAddDialog = ref(false)
 const profileUrl = ref('')
 const adding = ref(false)
+const inputFocused = ref(false)
 
 const platformTabs = [
   { label: '全部', value: '' },
@@ -153,11 +175,16 @@ function viewVideos(item) {
 
 async function handleDelete(item) {
   try {
-    await ElMessageBox.confirm(`确认删除博主「${item.blogger_name}」？删除后视频关联将断开，视频本身不受影响。`, '删除确认', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(
+      `确认删除博主「${item.blogger_name}」？删除后视频关联将断开，视频本身不受影响。`,
+      '删除确认',
+      {
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        customClass: 'premium-delete-dialog',
+      }
+    )
   } catch {
     return
   }
@@ -174,6 +201,7 @@ async function handleDelete(item) {
 }
 
 async function handleAdd() {
+  if (!profileUrl.value.trim() || adding.value) return
   adding.value = true
   try {
     await createBlogger({ profile_url: profileUrl.value.trim() })
@@ -193,16 +221,68 @@ onMounted(loadData)
 </script>
 
 <style scoped>
-.bl-page { padding: 24px 28px; }
-.bl-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.bl-title { font-size: 22px; font-weight: 700; color: #1e1e2e; margin: 0; }
+.bl-page {
+  padding: 28px 32px;
+  min-height: 100%;
+  animation: rise 0.3s ease;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.bl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.bl-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+
+/* ── 新建按钮 —— 渐变风格与视频库一致 ── */
+.bl-add-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.35);
+}
+
+.bl-add-btn:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.bl-add-btn:active {
+  transform: translateY(0);
+}
+
+/* ── Platform tabs ── */
 .bl-tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
 .bl-tab { padding: 6px 16px; border-radius: 20px; border: 1.5px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 13px; color: #64748b; transition: all 0.15s; }
 .bl-tab.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+
+/* ── Grid ── */
 .bl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; min-height: 100px; }
 
-.bc { background: #fff; border-radius: 12px; border: 1.5px solid #e2e8f0; padding: 16px; cursor: default; transition: box-shadow 0.15s; display: flex; flex-direction: column; gap: 12px; }
-.bc:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.bc { background: #fff; border-radius: 14px; border: 1.5px solid #e2e8f0; padding: 16px; cursor: default; transition: box-shadow 0.15s; display: flex; flex-direction: column; gap: 12px; }
+.bc:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
 
 .bc-avatar-wrap { position: relative; display: flex; justify-content: center; }
 .bc-avatar-img { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; }
@@ -224,15 +304,132 @@ onMounted(loadData)
 .bc-btn-del:hover { background: #ef4444; color: #fff; }
 .bc-btn-del.loading { opacity: 0.6; pointer-events: none; }
 
+/* ── Pagination ── */
 .bl-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 24px; }
 .bl-pagination-left { display: flex; align-items: center; gap: 12px; }
-.bl-count-text { font-size: 13px; color: #64748b; }
-.bl-simple-select { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; }
+.bl-count-text { font-size: 13px; color: #94a3b8; }
+.bl-simple-select { border: none; background: transparent; color: #94a3b8; font-size: 13px; font-weight: 500; cursor: pointer; outline: none; padding: 0 4px; }
 .bl-pagination { display: flex; gap: 8px; }
-.pg-btn { padding: 6px 14px; border-radius: 6px; border: 1.5px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 13px; color: #374151; }
-.pg-btn:disabled { opacity: 0.4; cursor: default; }
-.pg-btn:not(:disabled):hover { background: #f1f5f9; }
+.pg-btn { font-size: 13px; font-weight: 500; padding: 7px 16px; border-radius: 9px; border: 1px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer; transition: all 0.15s; }
+.pg-btn:hover:not(:disabled) { border-color: #6366f1; color: #6366f1; background: #eef2ff; }
+.pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.add-dialog-body { display: flex; flex-direction: column; gap: 12px; }
-.add-hint { font-size: 13px; color: #64748b; margin: 0; line-height: 1.5; }
+/* ── Add dialog body ── */
+.add-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 0 8px;
+}
+
+.add-hint-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.add-hint {
+  font-size: 13px;
+  color: #4338ca;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.add-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0 14px;
+  height: 44px;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+
+.add-input-wrap.focused {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+}
+
+.add-input-icon { flex-shrink: 0; }
+
+.add-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  color: #334155;
+  background: transparent;
+}
+
+.add-input::placeholder { color: #cbd5e1; }
+.add-input:disabled { opacity: 0.6; }
+
+/* ── Dialog footer buttons ── */
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.dlg-btn-cancel {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dlg-btn-cancel:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.dlg-btn-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dlg-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 9px;
+  border: none;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+}
+
+.dlg-btn-primary:hover:not(:disabled) { opacity: 0.9; }
+.dlg-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dlg-btn-primary.loading { cursor: not-allowed; }
+
+.btn-spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 </style>

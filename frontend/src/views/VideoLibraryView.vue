@@ -4,16 +4,12 @@
     <div class="vl-header">
       <h1 class="vl-title">视频库</h1>
 
-      <!-- Tag management entry -->
-      <div class="vl-tag-mgr-wrap">
-        <button class="vl-tag-mgr-btn" @click="openTagManager">
+      <div class="vl-header-actions">
+        <el-button class="vl-tag-mgr-btn" @click="openTagManager">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;flex-shrink:0"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
           标签管理
           <span v-if="tags.length" class="vl-tag-count">{{ tags.length }}</span>
-        </button>
-      </div>
-
-      <div class="vl-header-actions">
+        </el-button>
         <el-button class="vl-create-tpl-btn" :loading="batchCreatingTemplate" @click="handleBatchCreateTemplates">
           <svg v-if="!batchCreatingTemplate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
           一键生成模板
@@ -824,27 +820,16 @@ onUnmounted(() => {
   margin: 0;
 }
 
-.vl-tag-mgr-wrap {
+.vl-tag-mgr-btn {
   display: flex;
   align-items: center;
-  margin: 0 24px;
-}
-
-.vl-tag-mgr-btn {
-  display: inline-flex;
-  align-items: center;
-  height: 36px;
-  padding: 0 14px;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  color: #475569;
-  font-size: 13px;
   font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
-  flex-shrink: 0;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  background: #fff;
 }
 
 .vl-tag-mgr-btn:hover {
