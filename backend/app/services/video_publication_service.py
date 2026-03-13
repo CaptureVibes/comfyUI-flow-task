@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.account import Account
 from app.models.video_publication import VideoPublication
 from app.schemas.video_publication import VideoPublicationCreate
 
@@ -511,3 +512,105 @@ class VideoPublicationService:
     ) -> dict:
         """获取渠道列表（代理到 Open API）"""
         return await self.open_api.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)
+
+    async def fetch_channels_filtered(
+        self,
+        platform: str,
+        owner_id: uuid.UUID,
+        page: int = 1,
+        page_size: int = 20,
+        is_active: bool | None = None,
+        current_account_id: uuid.UUID | None = None,
+    ) -> dict:
+        """过滤掉当前用户下已被其他账号绑定过的渠道，并对过滤后的结果重新分页。"""
+        excluded_channel_ids = await self._load_excluded_channel_ids(
+            owner_id=owner_id,
+            platform=platform,
+            current_account_id=current_account_id,
+        )
+        logger.info(
+            "Open API fetch_channels filtered request: platform=%s owner_id=%s page=%s page_size=%s current_account_id=%s excluded=%s",
+            platform,
+            owner_id,
+            page,
+            page_size,
+            current_account_id,
+            len(excluded_channel_ids),
+        )
+        if not excluded_channel_ids:
+            return await self.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)
+
+        upstream_page = 1
+        upstream_page_size = max(page_size, 100)
+        upstream_total = 0
+        filtered_items: list[dict[str, Any]] = []
+
+        while True:
+            response = await self.open_api.fetch_channels(
+                platform,
+                page=upstream_page,
+                page_size=upstream_page_size,
+                is_active=is_active,
+            )
+            data = response.get("data", {}) if isinstance(response, dict) else {}
+            raw_items = data.get("items") or []
+            upstream_total = max(upstream_total, int(data.get("total") or 0))
+            filtered_items.extend(
+                item
+                for item in raw_items
+                if str(item.get("channel_id") or "").strip() not in excluded_channel_ids
+            )
+            if len(raw_items) < upstream_page_size:
+                break
+            if upstream_total and upstream_page * upstream_page_size >= upstream_total:
+                break
+            upstream_page += 1
+
+        start = max(page - 1, 0) * page_size
+        end = start + page_size
+        page_items = filtered_items[start:end]
+        logger.info(
+            "Open API fetch_channels filtered response: platform=%s owner_id=%s upstream_total=%s filtered_total=%s page=%s page_size=%s returned=%s",
+            platform,
+            owner_id,
+            upstream_total,
+            len(filtered_items),
+            page,
+            page_size,
+            len(page_items),
+        )
+        return {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "items": page_items,
+                "total": len(filtered_items),
+                "page": page,
+                "page_size": page_size,
+            },
+        }
+
+    async def _load_excluded_channel_ids(
+        self,
+        owner_id: uuid.UUID,
+        platform: str,
+        current_account_id: uuid.UUID | None = None,
+    ) -> set[str]:
+        stmt = select(Account.id, Account.social_bindings).where(Account.owner_id == owner_id)
+        if current_account_id is not None:
+            stmt = stmt.where(Account.id != current_account_id)
+        rows = (await self.db.execute(stmt)).all()
+
+        excluded_channel_ids: set[str] = set()
+        for _, bindings in rows:
+            if not isinstance(bindings, list):
+                continue
+            for binding in bindings:
+                if not isinstance(binding, dict):
+                    continue
+                if binding.get("platform") != platform:
+                    continue
+                channel_id = str(binding.get("channel_id") or "").strip()
+                if channel_id:
+                    excluded_channel_ids.add(channel_id)
+        return excluded_channel_ids

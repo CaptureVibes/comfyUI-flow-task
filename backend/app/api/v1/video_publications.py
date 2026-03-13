@@ -5,6 +5,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
 from app.schemas.video_publication import (
     VideoPublicationCreate,
@@ -179,23 +180,34 @@ async def fetch_channels(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量，最大 100"),
     is_active: bool | None = Query(None, description="是否只获取启用的渠道"),
+    account_id: uuid.UUID | None = Query(None, description="当前编辑中的账号 ID，用于保留它自己已绑定的频道"),
+    current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取 Open API 渠道列表（代理）"""
     service = VideoPublicationService(db)
     logger.info(
-        "Open API channels proxy request: platform=%s page=%s page_size=%s is_active=%s",
+        "Open API channels proxy request: platform=%s page=%s page_size=%s is_active=%s account_id=%s user_id=%s",
         platform,
         page,
         page_size,
         is_active,
+        account_id,
+        current_user.user_id,
     )
 
     try:
-        response = await service.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)
+        response = await service.fetch_channels_filtered(
+            platform,
+            owner_id=current_user.user_id,
+            page=page,
+            page_size=page_size,
+            is_active=is_active,
+            current_account_id=account_id,
+        )
         data = response.get("data", {}) if isinstance(response, dict) else {}
         logger.info(
-            "Open API channels proxy response: platform=%s page=%s page_size=%s code=%s total=%s items=%s message=%s",
+            "Open API channels proxy response: platform=%s page=%s page_size=%s code=%s total=%s items=%s message=%s account_id=%s user_id=%s",
             platform,
             page,
             page_size,
@@ -203,25 +215,31 @@ async def fetch_channels(
             data.get("total"),
             len(data.get("items") or []),
             response.get("message") if isinstance(response, dict) else None,
+            account_id,
+            current_user.user_id,
         )
         return response
     except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException):
         # Open API 服务不可达时返回空列表，前端降级为手动输入
         logger.warning(
-            "Open API channels proxy network fallback: platform=%s page=%s page_size=%s is_active=%s",
+            "Open API channels proxy network fallback: platform=%s page=%s page_size=%s is_active=%s account_id=%s user_id=%s",
             platform,
             page,
             page_size,
             is_active,
+            account_id,
+            current_user.user_id,
         )
         return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "page": page, "page_size": page_size}}
     except Exception as e:
         logger.exception(
-            "Open API channels proxy failed: platform=%s page=%s page_size=%s is_active=%s",
+            "Open API channels proxy failed: platform=%s page=%s page_size=%s is_active=%s account_id=%s user_id=%s",
             platform,
             page,
             page_size,
             is_active,
+            account_id,
+            current_user.user_id,
         )
         raise HTTPException(status_code=500, detail=f"获取渠道列表失败: {str(e)}")
 

@@ -481,9 +481,15 @@ async function loadChannels(platform, { reset = false } = {}) {
   if (state.loaded && !hasMoreChannels(platform)) return
 
   const nextPage = state.page + 1
+  const accountId = isEdit.value ? route.params.id : null
   try {
     state.loading = true
-    const response = await fetchChannels(platform, { isActive: true, page: nextPage, pageSize: CHANNEL_PAGE_SIZE })
+    const response = await fetchChannels(platform, {
+      isActive: true,
+      page: nextPage,
+      pageSize: CHANNEL_PAGE_SIZE,
+      accountId,
+    })
     const data = response?.data || {}
     const pageItems = data.items || []
     state.page = Number(data.page || nextPage)

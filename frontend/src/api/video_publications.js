@@ -14,6 +14,9 @@ export async function fetchChannels(platform, options = {}) {
   if (options.isActive !== undefined) {
     params.is_active = options.isActive
   }
+  if (options.accountId) {
+    params.account_id = options.accountId
+  }
   const { data } = await http.get('/open-api/channels', { params })
   return data
 }
