@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -17,7 +18,7 @@ from app.models.tiktok_blogger import TiktokBlogger
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
     BoundBloggerRead, BoundTagRead, ScheduledPublishConfig,
-    AIGenerateBody, AIGenerateStatusResponse, BindTagBody,
+    AIGenerateBody, AIGenerateStatusResponse, BindTagBody, SelectPhotoCandidateBody,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -29,6 +30,7 @@ from app.services.account_service import (
 )
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+logger = logging.getLogger("app.accounts")
 
 
 class BindBloggerBody(BaseModel):
@@ -62,6 +64,25 @@ def _account_read(account, bloggers: list[BoundBloggerRead], tags: list[BoundTag
     data.tiktok_bloggers = bloggers
     data.bound_tags = tags or []
     return data
+
+
+def _ai_generation_response(account_id: uuid.UUID, state: dict, account) -> AIGenerateStatusResponse:
+    return AIGenerateStatusResponse(
+        account_id=str(account_id),
+        status=state.get("status", account.ai_generation_status or "idle"),
+        error_message=state.get("error_message", account.ai_generation_error or ""),
+        all_video_count=state.get("all_video_count", 0),
+        analysis_sample_size=state.get("analysis_sample_size", 10),
+        analysis_video_ids=state.get("analysis_video_ids", []) or [],
+        analysis_items=state.get("analysis_items", []) or [],
+        generated_name=state.get("generated_name", ""),
+        generated_avatar_url=state.get("generated_avatar_url", account.avatar_url or ""),
+        generated_photo_url=state.get("generated_photo_url", account.photo_url or ""),
+        photo_candidate_count=state.get("photo_candidate_count", 0),
+        photo_candidates=state.get("photo_candidates", []) or [],
+        selected_photo_candidate_id=state.get("selected_photo_candidate_id"),
+        combined_description=state.get("combined_description", ""),
+    )
 
 
 def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
@@ -304,29 +325,10 @@ async def get_ai_generation_status(
 
     account = await get_account_or_404(session, account_id, owner_id)
 
-    # 优先从内存获取实时状态
     state = get_ai_account_state(str(account_id))
-    if state:
-        return AIGenerateStatusResponse(
-            account_id=str(account_id),
-            status=state.get("status", "idle"),
-            error_message=state.get("error_message", ""),
-            generated_name=state.get("generated_name", ""),
-            generated_avatar_url=state.get("generated_avatar_url", ""),
-            generated_photo_url=state.get("generated_photo_url", ""),
-            combined_description=state.get("combined_description", ""),
-        )
-
-    # 回退到数据库中的状态
-    return AIGenerateStatusResponse(
-        account_id=str(account_id),
-        status=account.ai_generation_status or "idle",
-        error_message=account.ai_generation_error or "",
-        generated_name="",
-        generated_avatar_url=account.avatar_url or "",
-        generated_photo_url=account.photo_url or "",
-        combined_description="",
-    )
+    if not state:
+        state = account.ai_generation_state or {}
+    return _ai_generation_response(account_id, state, account)
 
 
 @router.post("/{account_id}/ai-generate/resume", status_code=202)
@@ -338,8 +340,8 @@ async def resume_ai_generation(
     """断点续跑：从上次失败/暂停的阶段继续。"""
     from app.services.ai_account_service import resume_ai_account_generation
     await get_account_or_404(session, account_id, owner_id)
-    await resume_ai_account_generation(str(account_id))
-    return {"status": "resuming"}
+    status_value = await resume_ai_account_generation(str(account_id))
+    return {"status": status_value}
 
 
 @router.post("/{account_id}/ai-generate/restart", status_code=202)
@@ -353,6 +355,25 @@ async def restart_ai_generation(
     await get_account_or_404(session, account_id, owner_id)
     await restart_ai_account_generation(str(account_id))
     return {"status": "restarting"}
+
+
+@router.post("/{account_id}/ai-generate/select-photo", response_model=AIGenerateStatusResponse)
+async def select_ai_generation_photo(
+    account_id: uuid.UUID,
+    body: SelectPhotoCandidateBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> AIGenerateStatusResponse:
+    from app.services.ai_account_service import select_ai_account_photo_candidate
+
+    account = await get_account_or_404(session, account_id, owner_id)
+    try:
+        state = await select_ai_account_photo_candidate(str(account_id), body.candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    refreshed_account = await get_account_or_404(session, account_id, owner_id)
+    return _ai_generation_response(account_id, state, refreshed_account)
 
 
 class BulkRestartAIBody(BaseModel):

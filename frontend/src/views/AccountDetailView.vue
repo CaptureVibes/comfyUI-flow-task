@@ -87,6 +87,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             {{ account.publish_enabled ? '定时发布中' : '定时发布' }}
           </button>
+          <button class="ad-ai-btn" @click="openAIDialog">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+            {{ aiDialogButtonText }}
+          </button>
           <button class="ad-edit-btn" @click="$router.push(`/dashboard/accounts/${account.id}/edit`)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             编辑账号
@@ -357,6 +361,107 @@
     </el-dialog>
 
     <el-dialog
+      v-model="showAIDialog"
+      width="min(94vw, 1100px)"
+      top="4vh"
+      append-to-body
+      class="ad-ai-dialog"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="ad-ai-header">
+          <div>
+            <div class="ad-ai-title">AI 博主生成候选</div>
+            <div class="ad-ai-subtitle">{{ aiStatusLabel(aiState?.status || account?.ai_generation_status || 'idle') }}</div>
+          </div>
+          <el-button size="small" :loading="aiStateLoading" @click="loadAIState">刷新状态</el-button>
+        </div>
+      </template>
+
+      <div v-loading="aiStateLoading" class="ad-ai-body">
+        <div v-if="aiState?.error_message" class="ad-ai-error">{{ aiState.error_message }}</div>
+
+        <div class="ad-ai-summary">
+          <div class="ad-ai-summary-item">
+            <span>标签视频总数</span>
+            <strong>{{ aiState?.all_video_count ?? 0 }}</strong>
+          </div>
+          <div class="ad-ai-summary-item">
+            <span>分析样本数</span>
+            <strong>{{ aiState?.analysis_sample_size ?? 0 }}</strong>
+          </div>
+          <div class="ad-ai-summary-item">
+            <span>照片候选数</span>
+            <strong>{{ aiState?.photo_candidates?.length ?? 0 }}</strong>
+          </div>
+          <div class="ad-ai-summary-item">
+            <span>生成名称</span>
+            <strong>{{ aiState?.generated_name || '未生成' }}</strong>
+          </div>
+        </div>
+
+        <div class="ad-ai-section">
+          <div class="ad-ai-section-head">
+            <h3>视频分析样本</h3>
+            <span>{{ aiState?.analysis_items?.length || 0 }} 条</span>
+          </div>
+          <div v-if="!aiState?.analysis_items?.length" class="ad-ai-empty">暂无分析结果</div>
+          <div v-else class="ad-ai-analysis-list">
+            <div v-for="item in aiState.analysis_items" :key="`${item.video_source_id}-${item.video_url}`" class="ad-ai-analysis-card">
+              <video :src="item.video_url" class="ad-ai-video" controls preload="metadata" />
+              <div class="ad-ai-analysis-meta">
+                <span class="ad-ai-status-pill" :class="`is-${item.status}`">{{ aiCandidateStatusLabel(item.status) }}</span>
+                <span class="ad-ai-video-id">视频 {{ item.video_source_id.slice(0, 8) }}</span>
+              </div>
+              <div class="ad-ai-text">{{ item.description || item.error_message || '处理中...' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ad-ai-section">
+          <div class="ad-ai-section-head">
+            <h3>照片候选</h3>
+            <span>{{ aiState?.photo_candidates?.length || 0 }} 个</span>
+          </div>
+          <div v-if="!aiState?.photo_candidates?.length" class="ad-ai-empty">暂无照片候选</div>
+          <div v-else class="ad-ai-photo-grid">
+            <div
+              v-for="candidate in aiState.photo_candidates"
+              :key="candidate.candidate_id"
+              class="ad-ai-photo-card"
+              :class="{ 'is-selected': aiState.selected_photo_candidate_id === candidate.candidate_id }"
+            >
+              <button
+                v-if="candidate.generated_photo_url"
+                type="button"
+                class="ad-ai-photo-preview"
+                @click="openMediaPreview(candidate.generated_photo_url, '照片候选预览')"
+              >
+                <img :src="candidate.generated_photo_url" class="ad-ai-photo-img" />
+              </button>
+              <div v-else class="ad-ai-photo-placeholder">{{ aiCandidateStatusLabel(candidate.status) }}</div>
+              <div class="ad-ai-analysis-meta">
+                <span class="ad-ai-status-pill" :class="`is-${candidate.status}`">{{ aiCandidateStatusLabel(candidate.status) }}</span>
+                <span class="ad-ai-video-id">视频 {{ candidate.video_source_id.slice(0, 8) }}</span>
+              </div>
+              <div class="ad-ai-text">{{ candidate.analysis_description || candidate.error_message || '处理中...' }}</div>
+              <el-button
+                v-if="candidate.status === 'completed'"
+                type="primary"
+                size="small"
+                :loading="selectingCandidateId === candidate.candidate_id"
+                :disabled="aiState.status !== 'awaiting_photo_selection'"
+                @click="handleSelectCandidate(candidate)"
+              >
+                {{ aiState.selected_photo_candidate_id === candidate.candidate_id ? '已选用' : '选用此照片' }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <el-dialog
       v-model="previewVisible"
       width="min(92vw, 1080px)"
       top="5vh"
@@ -372,10 +477,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchAccount, updateScheduledPublish } from '../api/accounts'
+import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish } from '../api/accounts'
 import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask } from '../api/video_tasks'
 import { fetchSubTaskPublications } from '../api/video_publications'
 import http from '../api/http'
@@ -427,6 +532,11 @@ const enqueuing = ref(null)
 const dequeuing = ref(null)
 const previewVisible = ref(false)
 const previewImage = ref({ url: '', title: '' })
+const showAIDialog = ref(false)
+const aiStateLoading = ref(false)
+const aiState = ref(null)
+const selectingCandidateId = ref(null)
+let aiPollTimer = null
 
 // 拖拽状态
 const draggingId = ref(null)
@@ -503,6 +613,97 @@ function openMediaPreview(url, title) {
   if (!url) return
   previewImage.value = { url, title }
   previewVisible.value = true
+}
+
+const aiDialogButtonText = computed(() => {
+  const status = aiState.value?.status || account.value?.ai_generation_status || 'idle'
+  return status === 'awaiting_photo_selection' ? '选择照片候选' : '查看 AI 候选'
+})
+
+function aiStatusLabel(status) {
+  const map = {
+    idle: '未开始',
+    pending: '排队中',
+    video_analyzing: '分析视频中',
+    name_generating: '生成名称中',
+    photo_generating: '生成照片候选中',
+    awaiting_photo_selection: '等待人工选择照片',
+    avatar_generating: '生成头像中',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return map[status] || status
+}
+
+function aiCandidateStatusLabel(status) {
+  const map = {
+    pending: '等待中',
+    running: '处理中',
+    analyzing: '分析中',
+    generating: '生图中',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return map[status] || status
+}
+
+function clearAIPollTimer() {
+  clearTimeout(aiPollTimer)
+  aiPollTimer = null
+}
+
+function scheduleAIPoll() {
+  clearAIPollTimer()
+  const running = ['pending', 'video_analyzing', 'name_generating', 'photo_generating', 'avatar_generating']
+  if (!running.includes(aiState.value?.status)) return
+  aiPollTimer = setTimeout(async () => {
+    await loadAIState()
+    scheduleAIPoll()
+  }, 2500)
+}
+
+async function loadAIState() {
+  aiStateLoading.value = true
+  try {
+    const data = await fetchAIGenerationStatus(route.params.id)
+    aiState.value = data
+    if (account.value) account.value.ai_generation_status = data.status
+    if (data.generated_name && account.value) account.value.account_name = data.generated_name
+    if (data.generated_photo_url && account.value) account.value.photo_url = data.generated_photo_url
+    if (data.generated_avatar_url && account.value) account.value.avatar_url = data.generated_avatar_url
+    if (['completed', 'failed', 'awaiting_photo_selection'].includes(data.status)) {
+      clearAIPollTimer()
+    }
+    if (data.status === 'completed') {
+      await loadAccount()
+    }
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '加载 AI 生成状态失败')
+  } finally {
+    aiStateLoading.value = false
+  }
+}
+
+async function openAIDialog() {
+  showAIDialog.value = true
+  await loadAIState()
+  scheduleAIPoll()
+}
+
+async function handleSelectCandidate(candidate) {
+  if (selectingCandidateId.value) return
+  selectingCandidateId.value = candidate.candidate_id
+  try {
+    const data = await selectAIPhotoCandidate(route.params.id, candidate.candidate_id)
+    aiState.value = data
+    if (data.generated_photo_url && account.value) account.value.photo_url = data.generated_photo_url
+    ElMessage.success('已选中照片候选，正在继续生成头像')
+    scheduleAIPoll()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '选择照片候选失败')
+  } finally {
+    selectingCandidateId.value = null
+  }
 }
 
 // 打开发布对话框
@@ -589,6 +790,10 @@ watch(activeTab, (tab) => {
   if (tab === 'published') {
     loadPublishedPublications()
   }
+})
+
+watch(showAIDialog, (visible) => {
+  if (!visible) clearAIPollTimer()
 })
 
 async function loadAccount() {
@@ -760,6 +965,10 @@ async function handleSaveSchedule() {
 onMounted(async () => {
   await loadAccount()
   await loadTasks()
+})
+
+onUnmounted(() => {
+  clearAIPollTimer()
 })
 </script>
 
@@ -967,6 +1176,15 @@ onMounted(async () => {
   box-shadow: 0 2px 8px rgba(99,102,241,0.25);
 }
 .ad-gen-btn:hover { background: #4f46e5; transform: translateY(-1px); }
+
+.ad-ai-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
+  font-size: 13px; font-weight: 700; padding: 9px 18px;
+  border-radius: 10px; border: 1px solid #fde68a;
+  background: #fef3c7; color: #b45309; cursor: pointer; transition: all 0.15s;
+}
+.ad-ai-btn:hover { background: #fde68a; transform: translateY(-1px); }
 
 .ad-edit-btn {
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -1313,6 +1531,207 @@ onMounted(async () => {
 }
 .ad-card-detail-btn:hover { border-color: #c7d2fe; background: #eef2ff; color: #6366f1; }
 
+.ad-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ad-ai-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.ad-ai-subtitle {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.ad-ai-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ad-ai-error {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.ad-ai-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ad-ai-summary-item {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.ad-ai-summary-item strong {
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.ad-ai-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ad-ai-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ad-ai-section-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.ad-ai-section-head span {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.ad-ai-empty {
+  padding: 18px;
+  text-align: center;
+  border-radius: 12px;
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.ad-ai-analysis-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ad-ai-analysis-card,
+.ad-ai-photo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.ad-ai-photo-card.is-selected {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12);
+}
+
+.ad-ai-video,
+.ad-ai-photo-img {
+  width: 100%;
+  border-radius: 12px;
+  background: #0f172a;
+  object-fit: cover;
+}
+
+.ad-ai-video {
+  aspect-ratio: 16 / 9;
+}
+
+.ad-ai-photo-preview {
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ad-ai-photo-img {
+  aspect-ratio: 3 / 4;
+}
+
+.ad-ai-photo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 3 / 4;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #94a3b8;
+  font-size: 13px;
+  border: 1px dashed #cbd5e1;
+}
+
+.ad-ai-analysis-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ad-ai-status-pill {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.ad-ai-status-pill.is-running,
+.ad-ai-status-pill.is-analyzing,
+.ad-ai-status-pill.is-generating {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ad-ai-status-pill.is-completed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.ad-ai-status-pill.is-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.ad-ai-video-id {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ad-ai-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #475569;
+  max-height: 132px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.ad-ai-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .ad-preview-title {
   font-size: 14px;
   font-weight: 700;
@@ -1335,6 +1754,7 @@ onMounted(async () => {
 
 @media (max-width: 1100px) {
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
+  .ad-ai-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   .ad-hero { flex-direction: column; text-align: center; }
@@ -1342,6 +1762,9 @@ onMounted(async () => {
   .ad-hero-platforms { justify-content: center; }
   .ad-hero-meta { justify-content: center; }
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
+  .ad-ai-summary,
+  .ad-ai-analysis-list,
+  .ad-ai-photo-grid { grid-template-columns: 1fr; }
   .ad-page { padding: 16px; }
 }
 </style>

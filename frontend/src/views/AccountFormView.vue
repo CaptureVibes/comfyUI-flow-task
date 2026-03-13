@@ -293,12 +293,13 @@
         <el-steps :active="aiProgressStep" finish-status="success" simple style="margin-bottom: 20px;">
           <el-step title="视频分析" />
           <el-step title="名称生成" />
+          <el-step title="照片候选" />
+          <el-step title="待选照片" />
           <el-step title="头像生成" />
-          <el-step title="照片生成" />
           <el-step title="完成" />
         </el-steps>
         <div class="ai-gen-status-text">
-          <span class="ai-gen-spinner" v-if="aiProgressStep < 5"></span>
+          <span class="ai-gen-spinner" v-if="aiProgressStep < 6"></span>
           {{ aiStatusText }}
         </div>
       </div>
@@ -670,9 +671,10 @@ const AI_STATUS_MAP = {
   pending: { step: 0, text: '等待处理...' },
   video_analyzing: { step: 1, text: '正在分析视频...' },
   name_generating: { step: 2, text: '正在生成博主名称...' },
-  avatar_generating: { step: 3, text: '正在生成博主头像...' },
-  photo_generating: { step: 4, text: '正在生成博主照片...' },
-  completed: { step: 5, text: '生成完成！' },
+  photo_generating: { step: 3, text: '正在生成照片候选...' },
+  awaiting_photo_selection: { step: 4, text: '等待人工选择照片...' },
+  avatar_generating: { step: 5, text: '正在生成博主头像...' },
+  completed: { step: 6, text: '生成完成！' },
   failed: { step: -1, text: '生成失败' },
 }
 
@@ -760,6 +762,14 @@ function pollAIStatus() {
         }
         return
       }
+      if (status.status === 'awaiting_photo_selection') {
+        aiGenerating.value = false
+        showAIGenDialog.value = false
+        if (status.generated_name) form.account_name = status.generated_name
+        ElMessage.info('照片候选已生成，请在账号详情页选择一张后继续生成头像')
+        router.push(`/dashboard/accounts/${accountId}`)
+        return
+      }
       if (status.status === 'failed') {
         aiGenerating.value = false
         ElMessage.error(`AI 生成失败：${status.error_message}`)
@@ -822,8 +832,15 @@ watch(showAIGenDialog, async (val) => {
       try {
         const status = await fetchAIGenerationStatus(accountId)
         aiLastStatus.value = status.status
+        if (status.status === 'awaiting_photo_selection') {
+          showAIGenDialog.value = false
+          aiGenerating.value = false
+          ElMessage.info('该账号正在等待人工选择照片，请前往详情页继续')
+          router.push(`/dashboard/accounts/${accountId}`)
+          return
+        }
         // 如果正在生成中，自动恢复轮询
-        const runningStatuses = ['pending', 'video_analyzing', 'name_generating', 'avatar_generating', 'photo_generating']
+        const runningStatuses = ['pending', 'video_analyzing', 'name_generating', 'photo_generating', 'avatar_generating']
         if (runningStatuses.includes(status.status)) {
           aiGenerating.value = true
           const mapped = AI_STATUS_MAP[status.status] || { step: 0, text: status.status }

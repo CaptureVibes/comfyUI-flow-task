@@ -52,6 +52,7 @@ class PipelineSettingsPayload(BaseModel):
     # 第五阶段：图片超分（Pillow LANCZOS）
     upscaling_scale: int = 1024
     # AI 账号生成配置
+    ai_account_analysis_sample_size: int = 10
     ai_account_video_prompt: str = ""
     ai_account_video_model: str = "gemini-3.1-pro-preview"
     ai_account_name_prompt: str = ""

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,7 @@ class PipelineSetting(Base):
     upscaling_scale: Mapped[int] = mapped_column(nullable=False, default=1024)
 
     # AI 账号生成配置
+    ai_account_analysis_sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     ai_account_video_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_video_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     ai_account_name_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")

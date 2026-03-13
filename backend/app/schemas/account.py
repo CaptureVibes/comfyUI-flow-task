@@ -57,13 +57,44 @@ class AIGenerateBody(BaseModel):
     tag_ids: list[uuid.UUID]
 
 
+class AIGenerationAnalysisItem(BaseModel):
+    video_source_id: str
+    video_url: str
+    status: str = "pending"
+    description: str = ""
+    error_message: str = ""
+
+
+class AIGenerationPhotoCandidate(BaseModel):
+    candidate_id: str
+    video_source_id: str
+    video_url: str
+    status: str = "pending"
+    analysis_description: str = ""
+    generated_photo_url: str = ""
+    error_message: str = ""
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class SelectPhotoCandidateBody(BaseModel):
+    candidate_id: str
+
+
 class AIGenerateStatusResponse(BaseModel):
     account_id: str
-    status: str  # pending, video_analyzing, name_generating, avatar_generating, photo_generating, completed, failed
+    status: str
     error_message: str = ""
+    all_video_count: int = 0
+    analysis_sample_size: int = 10
+    analysis_video_ids: list[str] = Field(default_factory=list)
+    analysis_items: list[AIGenerationAnalysisItem] = Field(default_factory=list)
     generated_name: str = ""
     generated_avatar_url: str = ""
     generated_photo_url: str = ""
+    photo_candidate_count: int = 0
+    photo_candidates: list[AIGenerationPhotoCandidate] = Field(default_factory=list)
+    selected_photo_candidate_id: str | None = None
     combined_description: str = ""
 
 

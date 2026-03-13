@@ -41,8 +41,11 @@
         <div class="ai-cfg-section">
           <div class="ai-cfg-section-header">
             <span class="ai-cfg-tag">阶段一：视频理解</span>
-            <span class="ai-cfg-desc">并发分析选中标签对应的视频，生成文字描述</span>
+            <span class="ai-cfg-desc">从标签关联的全部视频里随机抽样，生成理解结果并用于名称生成</span>
           </div>
+          <el-form-item label="分析样本数">
+            <el-input-number v-model="aiSettingsForm.ai_account_analysis_sample_size" :min="1" :max="50" style="width: 160px" />
+          </el-form-item>
           <el-form-item label="视频分析提示词">
             <el-input v-model="aiSettingsForm.ai_account_video_prompt" type="textarea" :rows="4" placeholder="请输入视频分析提示词..." />
           </el-form-item>
@@ -65,11 +68,25 @@
           </el-form-item>
         </div>
 
-        <!-- 阶段三：头像生成 -->
+        <!-- 阶段三：照片候选生成 -->
         <div class="ai-cfg-section">
           <div class="ai-cfg-section-header">
-            <span class="ai-cfg-tag">阶段三：头像生成</span>
-            <span class="ai-cfg-desc">基于视频描述，调用 Nano2 生成博主头像</span>
+            <span class="ai-cfg-tag">阶段三：照片候选生成</span>
+            <span class="ai-cfg-desc">并发生成 10 个照片候选，用户后续手动选择一张进入头像生成</span>
+          </div>
+          <el-form-item label="视频理解提示词（阶段3-1）">
+            <el-input v-model="aiSettingsForm.ai_account_photo_video_prompt" type="textarea" :rows="3" placeholder="描述视频中人物外貌特征，用于生成写实人物照片..." />
+          </el-form-item>
+          <el-form-item label="照片生成提示词（阶段3-2）">
+            <el-input v-model="aiSettingsForm.ai_account_photo_image_prompt" type="textarea" :rows="3" placeholder="Nano2 生图提示词前缀，将与视频描述拼接后调用生图..." />
+          </el-form-item>
+        </div>
+
+        <!-- 阶段四：头像生成 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">阶段四：头像生成</span>
+            <span class="ai-cfg-desc">基于人工选中的照片候选和视频描述生成博主头像</span>
           </div>
           <el-form-item label="头像生成提示词">
             <el-input v-model="aiSettingsForm.ai_account_avatar_prompt" type="textarea" :rows="4" placeholder="请输入头像生成提示词..." />
@@ -94,20 +111,6 @@
               </el-select>
             </el-form-item>
           </div>
-        </div>
-
-        <!-- 阶段四：照片生成 -->
-        <div class="ai-cfg-section">
-          <div class="ai-cfg-section-header">
-            <span class="ai-cfg-tag">阶段四：照片生成</span>
-            <span class="ai-cfg-desc">随机选一个视频，先用 Gemini 生成描述，再用 Nano2 生成照片</span>
-          </div>
-          <el-form-item label="视频理解提示词（阶段4-1）">
-            <el-input v-model="aiSettingsForm.ai_account_photo_video_prompt" type="textarea" :rows="3" placeholder="描述视频中人物外貌特征，用于生成写实人物照片..." />
-          </el-form-item>
-          <el-form-item label="照片生成提示词（阶段4-2）">
-            <el-input v-model="aiSettingsForm.ai_account_photo_image_prompt" type="textarea" :rows="3" placeholder="Nano2 生图提示词前缀，将与视频描述拼接后调用生图..." />
-          </el-form-item>
         </div>
 
       </div>
@@ -163,7 +166,12 @@
 
         <!-- Body -->
         <div class="ac-body">
-          <div class="ac-name">{{ item.account_name }}</div>
+          <div class="ac-name-row">
+            <div class="ac-name">{{ item.account_name }}</div>
+            <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
+              {{ aiGenerationStatusLabel(item.ai_generation_status) }}
+            </span>
+          </div>
           <div v-if="item.style_description" class="ac-style">{{ item.style_description }}</div>
           <div v-if="!item.social_bindings?.length && !item.tiktok_bloggers?.length" class="ac-no-binding">未绑定平台</div>
 
@@ -285,6 +293,7 @@ const aiSettingsLoading = ref(false)
 const aiSettingsSaving = ref(false)
 const aiSettingsForm = ref({
   _pipeline: null,
+  ai_account_analysis_sample_size: 10,
   ai_account_video_prompt: '',
   ai_account_video_model: 'gemini-3.1-pro-preview',
   ai_account_name_prompt: '',
@@ -303,6 +312,7 @@ async function openAISettings() {
   try {
     const data = await fetchPipelineSettings()
     aiSettingsForm.value._pipeline = data
+    aiSettingsForm.value.ai_account_analysis_sample_size = data.ai_account_analysis_sample_size ?? 10
     aiSettingsForm.value.ai_account_video_prompt = data.ai_account_video_prompt || ''
     aiSettingsForm.value.ai_account_video_model = data.ai_account_video_model || 'gemini-3.1-pro-preview'
     aiSettingsForm.value.ai_account_name_prompt = data.ai_account_name_prompt || ''
@@ -327,6 +337,7 @@ async function saveAISettings() {
     const base = aiSettingsForm.value._pipeline || {}
     const payload = {
       ...base,
+      ai_account_analysis_sample_size: aiSettingsForm.value.ai_account_analysis_sample_size,
       ai_account_video_prompt: aiSettingsForm.value.ai_account_video_prompt,
       ai_account_video_model: aiSettingsForm.value.ai_account_video_model,
       ai_account_name_prompt: aiSettingsForm.value.ai_account_name_prompt,
@@ -353,6 +364,19 @@ const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value)
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 function platformIcon(p) { return PLATFORM_ICONS[p] || '●' }
+function aiGenerationStatusLabel(status) {
+  const map = {
+    pending: '排队中',
+    video_analyzing: '分析视频',
+    name_generating: '生成名称',
+    photo_generating: '生成照片候选',
+    awaiting_photo_selection: '待选照片',
+    avatar_generating: '生成头像',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return map[status] || status
+}
 
 function previewMedia(item, type) {
   const isAvatar = type === 'avatar'
@@ -397,9 +421,14 @@ function handleSizeChange(val) {
 async function handleBulkContinueAIGeneration() {
   if (bulkRestarting.value) return
 
-  const actionableAccounts = items.value.filter(i => i.ai_generation_status !== 'completed')
+  const waitingSelectionAccounts = items.value.filter(i => i.ai_generation_status === 'awaiting_photo_selection')
+  const actionableAccounts = items.value.filter(i => !['completed', 'awaiting_photo_selection'].includes(i.ai_generation_status))
   if (actionableAccounts.length === 0) {
-    ElMessage.info('没有需要继续的 AI 生成任务')
+    if (waitingSelectionAccounts.length > 0) {
+      ElMessage.info(`有 ${waitingSelectionAccounts.length} 个账号正在等待人工选照片`)
+    } else {
+      ElMessage.info('没有需要继续的 AI 生成任务')
+    }
     return
   }
 
@@ -408,7 +437,7 @@ async function handleBulkContinueAIGeneration() {
 
   try {
     await ElMessageBox.confirm(
-      `确定继续 ${actionableAccounts.length} 个未完成任务？失败任务将从头重跑，其余任务将断点续跑。`,
+      `确定继续 ${actionableAccounts.length} 个未完成任务？失败任务将从头重跑，其余任务将断点续跑。${waitingSelectionAccounts.length ? `另有 ${waitingSelectionAccounts.length} 个账号等待人工选照片，本次将跳过。` : ''}`,
       '确认继续',
       { confirmButtonText: '确认继续', cancelButtonText: '取消', type: 'warning' }
     )
@@ -628,14 +657,56 @@ onMounted(loadData)
   flex-direction: column;
 }
 
+.ac-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 .ac-name {
   font-size: 15px;
   font-weight: 700;
   color: #0f172a;
-  margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.ac-ai-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.ac-ai-status.is-pending,
+.ac-ai-status.is-video_analyzing,
+.ac-ai-status.is-name_generating,
+.ac-ai-status.is-photo_generating,
+.ac-ai-status.is-avatar_generating {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ac-ai-status.is-awaiting_photo_selection {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.ac-ai-status.is-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.ac-ai-status.is-completed {
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .ac-style {

@@ -27,7 +27,7 @@ class Account(Base):
     social_bindings: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # AI 生成状态
-    ai_generation_status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")  # idle, video_analyzing, name_generating, avatar_generating, completed, failed
+    ai_generation_status: Mapped[str] = mapped_column(String(40), nullable=False, default="idle")
     ai_generation_state: Mapped[dict | None] = mapped_column(PGJSON, nullable=True)  # 生成过程状态
     ai_generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)  # 错误信息
 
