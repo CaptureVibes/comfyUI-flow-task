@@ -362,8 +362,8 @@
 
     <el-dialog
       v-model="showAIDialog"
-      width="min(94vw, 1100px)"
-      top="4vh"
+      width="96vw"
+      top="2vh"
       append-to-body
       class="ad-ai-dialog"
       destroy-on-close
@@ -1593,10 +1593,32 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
+.ad-ai-dialog :deep(.el-dialog) {
+  width: 96vw;
+  max-width: 1800px;
+  height: 94vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.ad-ai-dialog :deep(.el-dialog__header) {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+}
+
+.ad-ai-dialog :deep(.el-dialog__body) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 8px;
+}
+
 .ad-ai-body {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 100%;
 }
 
 .ad-ai-error {
