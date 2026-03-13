@@ -1628,7 +1628,7 @@ onUnmounted(() => {
 
 .ad-ai-analysis-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1669,7 +1669,9 @@ onUnmounted(() => {
 }
 
 .ad-ai-video {
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 9 / 16;
+  max-width: 168px;
+  margin: 0 auto;
 }
 
 .ad-ai-source-video {
