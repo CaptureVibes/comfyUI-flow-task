@@ -33,6 +33,7 @@ _IMAGEGEN_POLL_TIMEOUT = 300.0
 _IMAGE_PROMPT_MAX_CHARS = 2200
 _PHOTO_CANDIDATE_COUNT = 10
 _DEFAULT_ANALYSIS_SAMPLE_SIZE = 5
+_EVOLINK_MAX_ATTEMPTS = 5
 _RUNNING_STATUSES = {
     "pending",
     "video_analyzing",
@@ -276,6 +277,13 @@ def _pick_photo_candidate_videos(videos: list[dict[str, str]], count: int) -> li
     while len(picks) < count:
         picks.append(random.choice(videos))
     return picks
+
+
+
+def _pick_photo_source_video(videos: list[dict[str, str]]) -> dict[str, str] | None:
+    if not videos:
+        return None
+    return random.choice(videos)
 
 
 
@@ -669,14 +677,16 @@ async def _stage_photo_generation(
         return
 
     _set_status(account_id, "photo_generating")
-    picked_videos = _pick_photo_candidate_videos(all_videos, _PHOTO_CANDIDATE_COUNT)
+    source_video = _pick_photo_source_video(all_videos)
+    if not source_video:
+        raise ValueError("没有可用于生成照片候选的视频")
     state = ai_account_states[account_id]
     state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
     state["photo_candidates"] = [
         {
             "candidate_id": str(uuid4()),
-            "video_source_id": video["video_source_id"],
-            "video_url": video["video_url"],
+            "video_source_id": source_video["video_source_id"],
+            "video_url": source_video["video_url"],
             "status": "pending",
             "analysis_description": "",
             "generated_photo_url": "",
@@ -684,7 +694,7 @@ async def _stage_photo_generation(
             "started_at": None,
             "finished_at": None,
         }
-        for video in picked_videos
+        for _ in range(_PHOTO_CANDIDATE_COUNT)
     ]
     ai_account_states[account_id] = state
     await _save_state(account_id)
@@ -1007,6 +1017,10 @@ async def resume_ai_account_generation(account_id: str) -> str:
     if state is None:
         state = _new_state(account_id, "pending")
         ai_account_states[account_id] = state
+
+    if state.get("status") in _RUNNING_STATUSES:
+        await _save_state(account_id)
+        return "already_running"
 
     if state.get("status") == "awaiting_photo_selection":
         await _save_state(account_id)

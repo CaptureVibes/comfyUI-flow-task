@@ -6,19 +6,21 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
+from app.models.account import Account
 from app.models.account_blogger_binding import AccountBloggerBinding
 from app.models.account_tag import AccountTag
 from app.models.tag import Tag
+from app.models.tag import VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
     BoundBloggerRead, BoundTagRead, ScheduledPublishConfig,
-    AIGenerateBody, AIGenerateStatusResponse, BindTagBody, SelectPhotoCandidateBody,
+    AIGenerateBody, AIGenerateStatusResponse, BindTagBody, BulkGenerateAIAccountsResponse, SelectPhotoCandidateBody,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -378,6 +380,68 @@ async def select_ai_generation_photo(
 
 class BulkRestartAIBody(BaseModel):
     account_ids: list[str]
+
+
+@router.post("/bulk-generate-ai-bloggers", response_model=BulkGenerateAIAccountsResponse, status_code=202)
+async def bulk_generate_ai_bloggers(
+    creator_id: uuid.UUID = Depends(_get_creator_id),
+    session: AsyncSession = Depends(get_db),
+) -> BulkGenerateAIAccountsResponse:
+    """为还没有绑定 AI 博主账号的标签批量创建账号并入队生成。"""
+    from app.services.ai_account_service import enqueue_ai_account_generation
+
+    tags_stmt = (
+        select(Tag)
+        .where(Tag.owner_id == creator_id)
+        .where(
+            exists(
+                select(VideoSourceTag.id)
+                .where(VideoSourceTag.tag_id == Tag.id)
+                .where(VideoSourceTag.owner_id == creator_id)
+                .where(VideoSourceTag.video_source_id.is_not(None))
+            )
+        )
+        .where(
+            ~exists(
+                select(AccountTag.id)
+                .join(Account, Account.id == AccountTag.account_id)
+                .where(AccountTag.tag_id == Tag.id)
+                .where(Account.owner_id == creator_id)
+            )
+        )
+        .order_by(Tag.created_at.asc())
+    )
+    tags = (await session.execute(tags_stmt)).scalars().all()
+    if not tags:
+        return BulkGenerateAIAccountsResponse(status="no_tags")
+
+    created_accounts: list[Account] = []
+    created_tag_ids: list[str] = []
+    for tag in tags:
+        account = Account(
+            owner_id=creator_id,
+            account_name=f"AI博主生成中 · {tag.name}",
+            ai_generation_status="idle",
+        )
+        session.add(account)
+        await session.flush()
+        session.add(AccountTag(account_id=account.id, tag_id=tag.id))
+        created_accounts.append(account)
+        created_tag_ids.append(str(tag.id))
+
+    await session.commit()
+
+    for account, tag_id in zip(created_accounts, created_tag_ids, strict=False):
+        await enqueue_ai_account_generation(str(account.id), [tag_id])
+
+    return BulkGenerateAIAccountsResponse(
+        status="queued",
+        created_count=len(created_accounts),
+        skipped_count=0,
+        queued_count=len(created_accounts),
+        created_account_ids=[str(account.id) for account in created_accounts],
+        skipped_tag_ids=[],
+    )
 
 
 @router.post("/bulk-restart-ai-generation", status_code=202)

@@ -12,6 +12,14 @@
           AI博主配置
         </el-button>
         <el-button
+          class="al-config-btn"
+          @click="handleBulkGenerateAIAccounts"
+          :loading="bulkGenerating"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M4 4h16v16H4z" opacity=".2"/></svg>
+          一键生成AI博主
+        </el-button>
+        <el-button
           class="al-restart-btn"
           @click="handleBulkContinueAIGeneration"
           :loading="bulkRestarting"
@@ -268,7 +276,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchAccounts, deleteAccount, restartAIAccountGeneration, resumeAIAccountGeneration } from '../api/accounts'
+import { bulkGenerateAIAccounts, fetchAccounts, deleteAccount, restartAIAccountGeneration, resumeAIAccountGeneration } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
@@ -279,6 +287,7 @@ const PLATFORM_ICONS = { youtube: '▶', tiktok: '♪', instagram: '◈' }
 
 const loading = ref(false)
 const deleting = ref(null)
+const bulkGenerating = ref(false)
 const bulkRestarting = ref(false)
 const items = ref([])
 const previewVisible = ref(false)
@@ -421,11 +430,15 @@ function handleSizeChange(val) {
 async function handleBulkContinueAIGeneration() {
   if (bulkRestarting.value) return
 
+  const runningStatuses = ['pending', 'video_analyzing', 'name_generating', 'photo_generating', 'avatar_generating']
   const waitingSelectionAccounts = items.value.filter(i => i.ai_generation_status === 'awaiting_photo_selection')
-  const actionableAccounts = items.value.filter(i => !['completed', 'awaiting_photo_selection'].includes(i.ai_generation_status))
+  const runningAccounts = items.value.filter(i => runningStatuses.includes(i.ai_generation_status))
+  const actionableAccounts = items.value.filter(i => ['failed', 'idle'].includes(i.ai_generation_status))
   if (actionableAccounts.length === 0) {
     if (waitingSelectionAccounts.length > 0) {
       ElMessage.info(`有 ${waitingSelectionAccounts.length} 个账号正在等待人工选照片`)
+    } else if (runningAccounts.length > 0) {
+      ElMessage.info(`有 ${runningAccounts.length} 个账号正在运行或排队中，无需重复继续`)
     } else {
       ElMessage.info('没有需要继续的 AI 生成任务')
     }
@@ -437,7 +450,7 @@ async function handleBulkContinueAIGeneration() {
 
   try {
     await ElMessageBox.confirm(
-      `确定继续 ${actionableAccounts.length} 个未完成任务？失败任务将从头重跑，其余任务将断点续跑。${waitingSelectionAccounts.length ? `另有 ${waitingSelectionAccounts.length} 个账号等待人工选照片，本次将跳过。` : ''}`,
+      `确定继续 ${actionableAccounts.length} 个任务？失败任务将从头重跑，其余可继续任务将断点续跑。${runningAccounts.length ? `另有 ${runningAccounts.length} 个账号正在运行或排队中，本次将跳过。` : ''}${waitingSelectionAccounts.length ? `另有 ${waitingSelectionAccounts.length} 个账号等待人工选照片，本次将跳过。` : ''}`,
       '确认继续',
       { confirmButtonText: '确认继续', cancelButtonText: '取消', type: 'warning' }
     )
@@ -457,6 +470,35 @@ async function handleBulkContinueAIGeneration() {
     ElMessage.error('一键继续失败')
   } finally {
     bulkRestarting.value = false
+  }
+}
+
+async function handleBulkGenerateAIAccounts() {
+  if (bulkGenerating.value) return
+
+  try {
+    await ElMessageBox.confirm(
+      '将根据“已有关联视频、但尚未绑定任何 AI 博主账号”的标签批量创建账号，并统一进入后端队列排队生成。确定继续？',
+      '确认生成',
+      { confirmButtonText: '开始生成', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  bulkGenerating.value = true
+  try {
+    const result = await bulkGenerateAIAccounts()
+    if (result.status === 'no_tags') {
+      ElMessage.info('没有可生成的标签，所有有视频的标签都已绑定 AI 博主')
+      return
+    }
+    ElMessage.success(`已创建并入队 ${result.created_count || 0} 个 AI 博主`)
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '一键生成失败')
+  } finally {
+    bulkGenerating.value = false
   }
 }
 

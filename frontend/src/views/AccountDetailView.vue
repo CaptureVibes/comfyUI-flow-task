@@ -431,6 +431,10 @@
               class="ad-ai-photo-card"
               :class="{ 'is-selected': aiState.selected_photo_candidate_id === candidate.candidate_id }"
             >
+              <div class="ad-ai-source-wrap">
+                <div class="ad-ai-source-label">候选来源视频</div>
+                <video :src="candidate.video_url" class="ad-ai-video ad-ai-source-video" controls preload="metadata" />
+              </div>
               <button
                 v-if="candidate.generated_photo_url"
                 type="button"
@@ -1644,6 +1648,18 @@ onUnmounted(() => {
   box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12);
 }
 
+.ad-ai-source-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ad-ai-source-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+
 .ad-ai-video,
 .ad-ai-photo-img {
   width: 100%;
@@ -1654,6 +1670,10 @@ onUnmounted(() => {
 
 .ad-ai-video {
   aspect-ratio: 16 / 9;
+}
+
+.ad-ai-source-video {
+  border: 1px solid #e2e8f0;
 }
 
 .ad-ai-photo-preview {

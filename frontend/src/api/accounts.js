@@ -66,6 +66,11 @@ export async function restartAIAccountGeneration(accountId) {
   return res.data
 }
 
+export async function bulkGenerateAIAccounts() {
+  const { data } = await http.post('/accounts/bulk-generate-ai-bloggers')
+  return data
+}
+
 export async function selectAIPhotoCandidate(accountId, candidateId) {
   const { data } = await http.post(`/accounts/${accountId}/ai-generate/select-photo`, { candidate_id: candidateId })
   return data

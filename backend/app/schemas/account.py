@@ -81,6 +81,15 @@ class SelectPhotoCandidateBody(BaseModel):
     candidate_id: str
 
 
+class BulkGenerateAIAccountsResponse(BaseModel):
+    status: str
+    created_count: int = 0
+    skipped_count: int = 0
+    queued_count: int = 0
+    created_account_ids: list[str] = Field(default_factory=list)
+    skipped_tag_ids: list[str] = Field(default_factory=list)
+
+
 class AIGenerateStatusResponse(BaseModel):
     account_id: str
     status: str
