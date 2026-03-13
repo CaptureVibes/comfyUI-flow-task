@@ -80,7 +80,7 @@
         <div class="ai-cfg-section">
           <div class="ai-cfg-section-header">
             <span class="ai-cfg-tag">阶段三：照片候选生成</span>
-            <span class="ai-cfg-desc">并发生成 10 个照片候选，用户后续手动选择一张进入头像生成</span>
+            <span class="ai-cfg-desc">随机选择最多 3 个不同视频，每个视频并发生成 3 张照片候选，用户后续手动选择一张进入头像生成</span>
           </div>
           <el-form-item label="视频理解提示词（阶段3-1）">
             <el-input v-model="aiSettingsForm.ai_account_photo_video_prompt" type="textarea" :rows="3" placeholder="描述视频中人物外貌特征，用于生成写实人物照片..." />

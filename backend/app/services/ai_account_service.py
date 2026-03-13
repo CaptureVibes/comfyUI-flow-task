@@ -31,7 +31,9 @@ _PERSIST_INTERVAL = 2.0
 _IMAGEGEN_POLL_INTERVAL = 5.0
 _IMAGEGEN_POLL_TIMEOUT = 300.0
 _IMAGE_PROMPT_MAX_CHARS = 2200
-_PHOTO_CANDIDATE_COUNT = 10
+_PHOTO_SOURCE_VIDEO_COUNT = 3
+_PHOTO_CANDIDATES_PER_VIDEO = 3
+_PHOTO_CANDIDATE_COUNT = _PHOTO_SOURCE_VIDEO_COUNT * _PHOTO_CANDIDATES_PER_VIDEO
 _DEFAULT_ANALYSIS_SAMPLE_SIZE = 5
 _EVOLINK_MAX_ATTEMPTS = 5
 _RUNNING_STATUSES = {
@@ -267,23 +269,10 @@ def _pick_analysis_videos(videos: list[dict[str, str]], sample_size: int) -> lis
 
 
 
-def _pick_photo_candidate_videos(videos: list[dict[str, str]], count: int) -> list[dict[str, str]]:
+def _pick_photo_source_videos(videos: list[dict[str, str]], count: int = _PHOTO_SOURCE_VIDEO_COUNT) -> list[dict[str, str]]:
     if not videos:
         return []
-    if len(videos) >= count:
-        return random.sample(videos, count)
-    picks = list(videos)
-    random.shuffle(picks)
-    while len(picks) < count:
-        picks.append(random.choice(videos))
-    return picks
-
-
-
-def _pick_photo_source_video(videos: list[dict[str, str]]) -> dict[str, str] | None:
-    if not videos:
-        return None
-    return random.choice(videos)
+    return random.sample(videos, min(count, len(videos)))
 
 
 
@@ -568,29 +557,16 @@ async def _stage_name_generation(
     return name
 
 
-async def _run_photo_candidate(
+async def _analyze_photo_source(
     *,
     account_id: str,
-    candidate_index: int,
+    source_video_url: str,
     photo_video_prompt: str,
-    photo_image_prompt: str,
     api_base_url: str,
     api_key: str,
     understand_model: str,
-    avatar_model: str,
-    avatar_size: str,
-    avatar_quality: str,
-) -> None:
-    state = ai_account_states[account_id]
-    candidate = state["photo_candidates"][candidate_index]
-    candidate["status"] = "analyzing"
-    candidate["error_message"] = ""
-    candidate["started_at"] = _utcnow_iso()
-    await _save_state(account_id)
-
-    video_url = candidate["video_url"]
+) -> str:
     desc_prompt = photo_video_prompt or "请详细描述视频中人物的外貌特征、肤色、发型、表情、体型等，用于生成写实人物照片。"
-
     last_exc: Exception | None = None
     description = ""
     for attempt in range(1, 4):
@@ -599,26 +575,38 @@ async def _run_photo_candidate(
                 api_base_url=api_base_url,
                 api_key=api_key,
                 model_name=understand_model,
-                video_url=video_url,
+                video_url=source_video_url,
                 prompt=desc_prompt,
-                temperature=1.0
+                temperature=1.0,
             )
             last_exc = None
             break
         except Exception as exc:
             last_exc = exc
-            logger.warning("[%s] photo candidate analysis attempt %d/3 failed: %s", account_id, attempt, exc)
+            logger.warning("[%s] photo source analysis attempt %d/3 failed: %s", account_id, attempt, exc)
+    if last_exc is not None:
+        raise last_exc
+    return description
+
+
+async def _run_photo_candidate(
+    *,
+    account_id: str,
+    candidate_index: int,
+    description: str,
+    photo_image_prompt: str,
+    api_base_url: str,
+    api_key: str,
+    avatar_model: str,
+    avatar_size: str,
+    avatar_quality: str,
+) -> None:
     state = ai_account_states[account_id]
     candidate = state["photo_candidates"][candidate_index]
-    if last_exc is not None:
-        candidate["status"] = "failed"
-        candidate["error_message"] = str(last_exc)
-        candidate["finished_at"] = _utcnow_iso()
-        await _save_state(account_id)
-        return
-
-    candidate["analysis_description"] = description
     candidate["status"] = "generating"
+    candidate["error_message"] = ""
+    candidate["started_at"] = _utcnow_iso()
+    candidate["analysis_description"] = description
     await _save_state(account_id)
 
     limited_description = _limit_image_prompt_context(description)
@@ -677,44 +665,89 @@ async def _stage_photo_generation(
         return
 
     _set_status(account_id, "photo_generating")
-    source_video = _pick_photo_source_video(all_videos)
-    if not source_video:
+    source_videos = _pick_photo_source_videos(all_videos)
+    if not source_videos:
         raise ValueError("没有可用于生成照片候选的视频")
     state = ai_account_states[account_id]
-    state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
-    state["photo_candidates"] = [
-        {
-            "candidate_id": str(uuid4()),
-            "video_source_id": source_video["video_source_id"],
-            "video_url": source_video["video_url"],
-            "status": "pending",
-            "analysis_description": "",
-            "generated_photo_url": "",
-            "error_message": "",
-            "started_at": None,
-            "finished_at": None,
-        }
-        for _ in range(_PHOTO_CANDIDATE_COUNT)
-    ]
+    photo_candidates: list[dict[str, Any]] = []
+    for source_index, video in enumerate(source_videos, start=1):
+        for candidate_number in range(1, _PHOTO_CANDIDATES_PER_VIDEO + 1):
+            photo_candidates.append(
+                {
+                    "candidate_id": str(uuid4()),
+                    "video_source_id": video["video_source_id"],
+                    "video_url": video["video_url"],
+                    "source_group_index": source_index,
+                    "candidate_number": candidate_number,
+                    "status": "pending",
+                    "analysis_description": "",
+                    "generated_photo_url": "",
+                    "error_message": "",
+                    "started_at": None,
+                    "finished_at": None,
+                }
+            )
+    state["photo_candidate_count"] = len(photo_candidates)
+    state["photo_candidates"] = photo_candidates
     ai_account_states[account_id] = state
     await _save_state(account_id)
 
-    await asyncio.gather(
-        *[
-            _run_photo_candidate(
+    async def _run_source_group(source_index: int, video: dict[str, str]) -> None:
+        candidate_indexes = [
+            index
+            for index, candidate in enumerate(ai_account_states[account_id]["photo_candidates"])
+            if candidate.get("source_group_index") == source_index
+        ]
+        for candidate_index in candidate_indexes:
+            candidate = ai_account_states[account_id]["photo_candidates"][candidate_index]
+            candidate["status"] = "analyzing"
+            candidate["error_message"] = ""
+            candidate["started_at"] = _utcnow_iso()
+        await _save_state(account_id)
+
+        try:
+            description = await _analyze_photo_source(
                 account_id=account_id,
-                candidate_index=index,
+                source_video_url=video["video_url"],
                 photo_video_prompt=photo_video_prompt,
-                photo_image_prompt=photo_image_prompt,
                 api_base_url=api_base_url,
                 api_key=api_key,
                 understand_model=understand_model,
-                avatar_model=avatar_model,
-                avatar_size=avatar_size,
-                avatar_quality=avatar_quality,
             )
-            for index in range(len(state["photo_candidates"]))
-        ]
+        except Exception as exc:
+            for candidate_index in candidate_indexes:
+                candidate = ai_account_states[account_id]["photo_candidates"][candidate_index]
+                candidate["status"] = "failed"
+                candidate["error_message"] = str(exc)
+                candidate["finished_at"] = _utcnow_iso()
+            await _save_state(account_id)
+            return
+
+        for candidate_index in candidate_indexes:
+            candidate = ai_account_states[account_id]["photo_candidates"][candidate_index]
+            candidate["analysis_description"] = description
+            candidate["status"] = "pending"
+        await _save_state(account_id)
+
+        await asyncio.gather(
+            *[
+                _run_photo_candidate(
+                    account_id=account_id,
+                    candidate_index=candidate_index,
+                    description=description,
+                    photo_image_prompt=photo_image_prompt,
+                    api_base_url=api_base_url,
+                    api_key=api_key,
+                    avatar_model=avatar_model,
+                    avatar_size=avatar_size,
+                    avatar_quality=avatar_quality,
+                )
+                for candidate_index in candidate_indexes
+            ]
+        )
+
+    await asyncio.gather(
+        *[_run_source_group(source_index, video) for source_index, video in enumerate(source_videos, start=1)]
     )
 
     state = ai_account_states[account_id]

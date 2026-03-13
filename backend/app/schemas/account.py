@@ -69,6 +69,8 @@ class AIGenerationPhotoCandidate(BaseModel):
     candidate_id: str
     video_source_id: str
     video_url: str
+    source_group_index: int = 1
+    candidate_number: int = 1
     status: str = "pending"
     analysis_description: str = ""
     generated_photo_url: str = ""

@@ -424,41 +424,53 @@
             <span>{{ aiState?.photo_candidates?.length || 0 }} 个</span>
           </div>
           <div v-if="!aiState?.photo_candidates?.length" class="ad-ai-empty">暂无照片候选</div>
-          <div v-else class="ad-ai-photo-grid">
+          <div v-else class="ad-ai-photo-groups">
             <div
-              v-for="candidate in aiState.photo_candidates"
-              :key="candidate.candidate_id"
-              class="ad-ai-photo-card"
-              :class="{ 'is-selected': aiState.selected_photo_candidate_id === candidate.candidate_id }"
+              v-for="group in groupedPhotoCandidates"
+              :key="`group-${group.source_group_index}`"
+              class="ad-ai-photo-group"
             >
               <div class="ad-ai-source-wrap">
-                <div class="ad-ai-source-label">候选来源视频</div>
-                <video :src="candidate.video_url" class="ad-ai-video ad-ai-source-video" controls preload="metadata" />
+                <div class="ad-ai-source-label">来源视频 {{ group.source_group_index }}</div>
+                <video :src="group.video_url" class="ad-ai-video ad-ai-source-video" controls preload="metadata" />
               </div>
-              <button
-                v-if="candidate.generated_photo_url"
-                type="button"
-                class="ad-ai-photo-preview"
-                @click="openMediaPreview(candidate.generated_photo_url, '照片候选预览')"
-              >
-                <img :src="candidate.generated_photo_url" class="ad-ai-photo-img" />
-              </button>
-              <div v-else class="ad-ai-photo-placeholder">{{ aiCandidateStatusLabel(candidate.status) }}</div>
               <div class="ad-ai-analysis-meta">
-                <span class="ad-ai-status-pill" :class="`is-${candidate.status}`">{{ aiCandidateStatusLabel(candidate.status) }}</span>
-                <span class="ad-ai-video-id">视频 {{ candidate.video_source_id.slice(0, 8) }}</span>
+                <span class="ad-ai-video-id">视频 {{ group.video_source_id.slice(0, 8) }}</span>
               </div>
-              <div class="ad-ai-text">{{ candidate.analysis_description || candidate.error_message || '处理中...' }}</div>
-              <el-button
-                v-if="candidate.status === 'completed'"
-                type="primary"
-                size="small"
-                :loading="selectingCandidateId === candidate.candidate_id"
-                :disabled="aiState.status !== 'awaiting_photo_selection'"
-                @click="handleSelectCandidate(candidate)"
-              >
-                {{ aiState.selected_photo_candidate_id === candidate.candidate_id ? '已选用' : '选用此照片' }}
-              </el-button>
+              <div class="ad-ai-text">{{ group.analysis_description || group.error_message || '处理中...' }}</div>
+
+              <div class="ad-ai-photo-grid">
+                <div
+                  v-for="candidate in group.candidates"
+                  :key="candidate.candidate_id"
+                  class="ad-ai-photo-card"
+                  :class="{ 'is-selected': aiState.selected_photo_candidate_id === candidate.candidate_id }"
+                >
+                  <button
+                    v-if="candidate.generated_photo_url"
+                    type="button"
+                    class="ad-ai-photo-preview"
+                    @click="openMediaPreview(candidate.generated_photo_url, `照片候选 ${candidate.candidate_number}`)"
+                  >
+                    <img :src="candidate.generated_photo_url" class="ad-ai-photo-img" />
+                  </button>
+                  <div v-else class="ad-ai-photo-placeholder">{{ aiCandidateStatusLabel(candidate.status) }}</div>
+                  <div class="ad-ai-analysis-meta">
+                    <span class="ad-ai-status-pill" :class="`is-${candidate.status}`">{{ aiCandidateStatusLabel(candidate.status) }}</span>
+                    <span class="ad-ai-video-id">候选 {{ candidate.candidate_number }}</span>
+                  </div>
+                  <el-button
+                    v-if="candidate.status === 'completed'"
+                    type="primary"
+                    size="small"
+                    :loading="selectingCandidateId === candidate.candidate_id"
+                    :disabled="aiState.status !== 'awaiting_photo_selection'"
+                    @click="handleSelectCandidate(candidate)"
+                  >
+                    {{ aiState.selected_photo_candidate_id === candidate.candidate_id ? '已选用' : '选用此照片' }}
+                  </el-button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -622,6 +634,33 @@ function openMediaPreview(url, title) {
 const aiDialogButtonText = computed(() => {
   const status = aiState.value?.status || account.value?.ai_generation_status || 'idle'
   return status === 'awaiting_photo_selection' ? '选择照片候选' : '查看 AI 候选'
+})
+
+const groupedPhotoCandidates = computed(() => {
+  const groups = new Map()
+  for (const candidate of aiState.value?.photo_candidates || []) {
+    const key = candidate.source_group_index || candidate.video_source_id
+    if (!groups.has(key)) {
+      groups.set(key, {
+        source_group_index: candidate.source_group_index || 1,
+        video_source_id: candidate.video_source_id,
+        video_url: candidate.video_url,
+        analysis_description: candidate.analysis_description,
+        error_message: candidate.error_message,
+        candidates: [],
+      })
+    }
+    const group = groups.get(key)
+    if (!group.analysis_description && candidate.analysis_description) group.analysis_description = candidate.analysis_description
+    if (!group.error_message && candidate.error_message) group.error_message = candidate.error_message
+    group.candidates.push(candidate)
+  }
+  return Array.from(groups.values())
+    .sort((a, b) => a.source_group_index - b.source_group_index)
+    .map(group => ({
+      ...group,
+      candidates: [...group.candidates].sort((a, b) => (a.candidate_number || 0) - (b.candidate_number || 0)),
+    }))
 })
 
 function aiStatusLabel(status) {
@@ -1632,6 +1671,22 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.ad-ai-photo-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.ad-ai-photo-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
 .ad-ai-analysis-card,
 .ad-ai-photo-card {
   display: flex;
@@ -1776,6 +1831,7 @@ onUnmounted(() => {
 
 @media (max-width: 1100px) {
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
+  .ad-ai-photo-groups,
   .ad-ai-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
@@ -1786,6 +1842,7 @@ onUnmounted(() => {
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
   .ad-ai-summary,
   .ad-ai-analysis-list,
+  .ad-ai-photo-groups,
   .ad-ai-photo-grid { grid-template-columns: 1fr; }
   .ad-page { padding: 16px; }
 }
