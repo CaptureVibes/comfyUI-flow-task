@@ -110,7 +110,7 @@ async def create_video_source_endpoint(
 @router.get("", response_model=VideoSourceListResponse)
 async def list_video_sources_endpoint(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     platform: str | None = Query(None),
     blogger_name: str | None = Query(None),
     tiktok_blogger_id: uuid.UUID | None = Query(None),
