@@ -129,7 +129,7 @@
               </div>
 
               <!-- 频道选择 (从 Open API 获取) -->
-              <template v-if="binding.platform && channelsMap[binding.platform]?.length">
+              <template v-if="binding.platform && shouldShowChannelSelect(binding.platform)">
                 <el-form-item :label="`${platformLabel(binding.platform)} 频道`">
                   <el-select
                     v-model="binding.channel_id"
@@ -157,12 +157,19 @@
                         <span style="color: #94a3b8; font-size: 12px;">(@{{ channel.username || 'N/A' }})</span>
                       </div>
                     </el-option>
+                    <el-option
+                      v-if="isChannelsLoading(binding.platform)"
+                      key="__loading__"
+                      label="加载中..."
+                      value="__loading__"
+                      disabled
+                    />
                   </el-select>
                 </el-form-item>
               </template>
 
               <!-- 手动输入 Channel ID (当没有从 API 获取到频道时) -->
-              <template v-if="binding.platform && !channelsMap[binding.platform]?.length">
+              <template v-if="binding.platform && shouldShowManualChannelInput(binding.platform)">
                 <el-form-item :label="`${platformLabel(binding.platform)} Channel ID`">
                   <el-input
                     v-model="binding.channel_id"
@@ -433,11 +440,24 @@ const rules = {
 }
 
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
+const CHANNEL_PAGE_SIZE = 50
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
 function isChannelsLoading(platform) {
   return platform ? channelPageState[platform]?.loading : false
+}
+
+function shouldShowChannelSelect(platform) {
+  if (!platform) return false
+  const state = channelPageState[platform]
+  return !!(channelsMap.value[platform]?.length || state?.loading || state?.loaded)
+}
+
+function shouldShowManualChannelInput(platform) {
+  if (!platform) return false
+  const state = channelPageState[platform]
+  return !!(state?.loaded && !state?.loading && !(channelsMap.value[platform]?.length))
 }
 
 function hasMoreChannels(platform) {
@@ -464,7 +484,7 @@ async function loadChannels(platform, { reset = false } = {}) {
   const nextPage = state.page + 1
   try {
     state.loading = true
-    const response = await fetchChannels(platform, { isActive: true, page: nextPage, pageSize: 20 })
+    const response = await fetchChannels(platform, { isActive: true, page: nextPage, pageSize: CHANNEL_PAGE_SIZE })
     const data = response?.data || {}
     const pageItems = data.items || []
     state.page = Number(data.page || nextPage)
