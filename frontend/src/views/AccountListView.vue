@@ -215,10 +215,11 @@
             <div class="ac-binding-tags">
               <span
                 v-for="binding in (item.social_bindings || [])"
-                :key="binding.platform"
+                :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
                 class="ac-tag"
                 :class="`ac-tag-${binding.platform}`"
-              >{{ platformLabel(binding.platform) }}</span>
+                :title="bindingDisplayLabel(binding)"
+              >{{ bindingDisplayLabel(binding) }}</span>
             </div>
             <div class="ac-actions" @click.stop>
               <button
@@ -373,6 +374,12 @@ const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value)
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 function platformIcon(p) { return PLATFORM_ICONS[p] || '●' }
+function bindingDisplayLabel(binding) {
+  const platform = platformLabel(binding.platform)
+  const channelName = binding.channel_name?.trim()
+  const channelId = binding.channel_id?.trim()
+  return channelName ? `${platform} · ${channelName}` : channelId ? `${platform} · ${channelId}` : platform
+}
 function aiGenerationStatusLabel(status) {
   const map = {
     pending: '排队中',

@@ -139,7 +139,6 @@
                     style="width: 100%"
                     :loading="isChannelsLoading(binding.platform)"
                     @visible-change="visible => handleChannelDropdownVisible(binding, visible)"
-                    @popup-scroll="event => handleChannelPopupScroll(binding, event)"
                     @change="handleChannelSelect(binding)"
                   >
                     <el-option
@@ -382,7 +381,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -487,20 +486,40 @@ async function loadChannels(platform, { reset = false } = {}) {
 }
 
 async function handleChannelDropdownVisible(binding, visible) {
-  if (!visible || !binding?.platform) return
+  if (!binding?.platform) return
+  if (!visible) {
+    detachChannelScrollListener(binding)
+    return
+  }
   if (!channelPageState[binding.platform].loaded) {
     await loadChannels(binding.platform, { reset: true })
   }
+  await attachChannelScrollListener(binding)
 }
 
-async function handleChannelPopupScroll(binding, event) {
-  if (!binding?.platform) return
-  const target = event?.target
-  if (!target) return
-  const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24
-  if (nearBottom && hasMoreChannels(binding.platform)) {
-    await loadChannels(binding.platform)
+function detachChannelScrollListener(binding) {
+  if (binding?._channelScrollEl && binding?._channelScrollHandler) {
+    binding._channelScrollEl.removeEventListener('scroll', binding._channelScrollHandler)
   }
+  delete binding?._channelScrollEl
+  delete binding?._channelScrollHandler
+}
+
+async function attachChannelScrollListener(binding) {
+  await nextTick()
+  detachChannelScrollListener(binding)
+  const wraps = Array.from(document.querySelectorAll('.el-select-dropdown__wrap'))
+  const target = wraps.at(-1)
+  if (!target) return
+  const onScroll = async () => {
+    const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24
+    if (nearBottom && hasMoreChannels(binding.platform)) {
+      await loadChannels(binding.platform)
+    }
+  }
+  target.addEventListener('scroll', onScroll, { passive: true })
+  binding._channelScrollEl = target
+  binding._channelScrollHandler = onScroll
 }
 
 // 监听平台选择变化，自动加载对应频道列表
@@ -538,6 +557,7 @@ async function addBinding() {
 }
 
 function removeBinding(idx) {
+  detachChannelScrollListener(form.social_bindings[idx])
   form.social_bindings.splice(idx, 1)
 }
 
@@ -998,6 +1018,9 @@ onMounted(async () => {
 onUnmounted(() => {
   clearTimeout(_aiPollTimer)
   clearTimeout(_searchTimer)
+  for (const binding of form.social_bindings) {
+    detachChannelScrollListener(binding)
+  }
 })
 </script>
 

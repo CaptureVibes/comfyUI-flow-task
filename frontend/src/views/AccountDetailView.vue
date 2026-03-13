@@ -53,9 +53,14 @@
             </span>
           </div>
           <div class="ad-hero-platforms">
-            <span v-for="binding in (account.social_bindings || [])" :key="binding.platform"
-              class="ad-platform-badge" :class="`ad-platform-${binding.platform}`">
-              {{ platformLabel(binding.platform) }}
+            <span
+              v-for="binding in (account.social_bindings || [])"
+              :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
+              class="ad-platform-badge"
+              :class="`ad-platform-${binding.platform}`"
+              :title="bindingDisplayLabel(binding)"
+            >
+              {{ bindingDisplayLabel(binding) }}
             </span>
             <span v-if="!account.social_bindings?.length" class="ad-no-platform">未绑定平台</span>
           </div>
@@ -615,6 +620,12 @@ const tabCounts = computed(() => {
 const emptyText = computed(() => EMPTY_TEXTS[activeTab.value] || '暂无内容')
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
+function bindingDisplayLabel(binding) {
+  const platform = platformLabel(binding.platform)
+  const channelName = binding.channel_name?.trim()
+  const channelId = binding.channel_id?.trim()
+  return channelName ? `${platform} · ${channelName}` : channelId ? `${platform} · ${channelId}` : platform
+}
 
 function canRollback(sub) {
   return sub.status === 'generating'
