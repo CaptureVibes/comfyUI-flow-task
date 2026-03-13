@@ -137,7 +137,6 @@
                     class="vtfd-beautiful-input"
                     filterable
                     style="width: 100%"
-                    :loading="isChannelsLoading(binding.platform)"
                     @visible-change="visible => handleChannelDropdownVisible(binding, visible)"
                     @change="handleChannelSelect(binding)"
                   >
