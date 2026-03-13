@@ -9,7 +9,7 @@ export async function fetchChannels(platform, options = {}) {
   const params = {
     platform,
     page: options.page ?? 1,
-    page_size: options.pageSize ?? 20,
+    page_size: options.pageSize ?? 50,
   }
   if (options.isActive !== undefined) {
     params.is_active = options.isActive

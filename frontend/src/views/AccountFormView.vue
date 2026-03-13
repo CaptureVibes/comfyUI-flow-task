@@ -661,13 +661,18 @@ async function handleSave() {
     if (!valid) return
     saving.value = true
     try {
+      const normalizedBindings = form.social_bindings.map(binding => ({
+        platform: binding.platform,
+        channel_id: binding.channel_id || '',
+        channel_name: binding.channel_name || '',
+      }))
       const payload = {
         account_name: form.account_name.trim(),
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
         photo_url: form.photo_url || null,
-        social_bindings: form.social_bindings.length > 0 ? form.social_bindings : null,
+        social_bindings: isEdit.value ? normalizedBindings : (normalizedBindings.length > 0 ? normalizedBindings : null),
       }
       if (isEdit.value) {
         await patchAccount(route.params.id, payload)
