@@ -170,15 +170,34 @@ class OpenAPIClient:
             params["is_active"] = is_active
 
         signed_params = self._sign_params(params)
+        logged_params = dict(signed_params)
+        if "signature" in logged_params:
+            sig = str(logged_params["signature"])
+            logged_params["signature"] = f"{sig[:8]}...{sig[-6:]}" if len(sig) > 14 else "***"
+        logger.info(
+            "Open API fetch_channels outbound request: base_url=%s params=%s",
+            self.base_url,
+            logged_params,
+        )
 
         # trust_env=False 禁用系统代理；渠道列表是 UI 辅助接口，超时缩短到 5s
-        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
             response = await client.get(
                 f"{self.base_url}/open-api/v1/channels",
                 params=signed_params,
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            data = result.get("data", {}) if isinstance(result, dict) else {}
+            logger.info(
+                "Open API fetch_channels outbound response: status=%s code=%s total=%s items=%s message=%s",
+                response.status_code,
+                result.get("code") if isinstance(result, dict) else None,
+                data.get("total"),
+                len(data.get("items") or []),
+                result.get("message") if isinstance(result, dict) else None,
+            )
+            return result
 
     async def create_upload_task(self, payload: dict) -> dict:
         """创建视频上传任务"""
@@ -483,6 +502,12 @@ class VideoPublicationService:
 
         return publication
 
-    async def fetch_channels(self, platform: str, is_active: bool | None = None) -> dict:
+    async def fetch_channels(
+        self,
+        platform: str,
+        page: int = 1,
+        page_size: int = 20,
+        is_active: bool | None = None,
+    ) -> dict:
         """获取渠道列表（代理到 Open API）"""
-        return await self.open_api.fetch_channels(platform, is_active=is_active)
+        return await self.open_api.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)

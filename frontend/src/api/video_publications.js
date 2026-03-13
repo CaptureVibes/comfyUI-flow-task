@@ -3,15 +3,42 @@ import http from './http'
 /**
  * 获取 Open API 渠道列表（通过后端代理）
  * @param {string} platform - 平台类型: tiktok/youtube/instagram
- * @param {Object} options - 额外参数 { is_active }
+ * @param {Object} options - 额外参数 { isActive, page, pageSize }
  */
 export async function fetchChannels(platform, options = {}) {
-  const params = { platform }
+  const params = {
+    platform,
+    page: options.page ?? 1,
+    page_size: options.pageSize ?? 20,
+  }
   if (options.isActive !== undefined) {
     params.is_active = options.isActive
   }
   const { data } = await http.get('/open-api/channels', { params })
   return data
+}
+
+export async function fetchAllChannels(platform, options = {}) {
+  const pageSize = options.pageSize ?? 100
+  let page = 1
+  let total = 0
+  const items = []
+
+  do {
+    const response = await fetchChannels(platform, {
+      ...options,
+      page,
+      pageSize,
+    })
+    const data = response?.data || {}
+    const pageItems = data.items || []
+    total = Number(data.total || 0)
+    items.push(...pageItems)
+    if (pageItems.length < pageSize) break
+    page += 1
+  } while (items.length < total || total === 0)
+
+  return items
 }
 
 /**

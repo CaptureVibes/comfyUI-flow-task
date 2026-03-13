@@ -15,6 +15,7 @@ from app.schemas.video_publication import (
 from app.services.video_publication_service import VideoPublicationService
 
 router = APIRouter()
+logger = __import__("logging").getLogger("app.video_publications")
 
 
 @router.post("/video-publications", response_model=VideoPublicationRead)
@@ -175,18 +176,53 @@ async def handle_publication_callback(
 @router.get("/open-api/channels")
 async def fetch_channels(
     platform: str = Query(..., description="平台类型: tiktok/youtube/instagram"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量，最大 100"),
     is_active: bool | None = Query(None, description="是否只获取启用的渠道"),
     db: AsyncSession = Depends(get_db),
 ):
     """获取 Open API 渠道列表（代理）"""
     service = VideoPublicationService(db)
+    logger.info(
+        "Open API channels proxy request: platform=%s page=%s page_size=%s is_active=%s",
+        platform,
+        page,
+        page_size,
+        is_active,
+    )
 
     try:
-        return await service.fetch_channels(platform, is_active=is_active)
+        response = await service.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        logger.info(
+            "Open API channels proxy response: platform=%s page=%s page_size=%s code=%s total=%s items=%s message=%s",
+            platform,
+            page,
+            page_size,
+            response.get("code") if isinstance(response, dict) else None,
+            data.get("total"),
+            len(data.get("items") or []),
+            response.get("message") if isinstance(response, dict) else None,
+        )
+        return response
     except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException):
         # Open API 服务不可达时返回空列表，前端降级为手动输入
-        return {"items": [], "total": 0}
+        logger.warning(
+            "Open API channels proxy network fallback: platform=%s page=%s page_size=%s is_active=%s",
+            platform,
+            page,
+            page_size,
+            is_active,
+        )
+        return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "page": page, "page_size": page_size}}
     except Exception as e:
+        logger.exception(
+            "Open API channels proxy failed: platform=%s page=%s page_size=%s is_active=%s",
+            platform,
+            page,
+            page_size,
+            is_active,
+        )
         raise HTTPException(status_code=500, detail=f"获取渠道列表失败: {str(e)}")
 
 

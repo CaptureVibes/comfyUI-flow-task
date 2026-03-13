@@ -137,6 +137,9 @@
                     class="vtfd-beautiful-input"
                     filterable
                     style="width: 100%"
+                    :loading="isChannelsLoading(binding.platform)"
+                    @visible-change="visible => handleChannelDropdownVisible(binding, visible)"
+                    @popup-scroll="event => handleChannelPopupScroll(binding, event)"
                     @change="handleChannelSelect(binding)"
                   >
                     <el-option
@@ -411,7 +414,11 @@ const channelsMap = ref({
   tiktok: [],
   instagram: [],
 })
-const channelsLoading = ref(false)
+const channelPageState = reactive({
+  youtube: { page: 0, total: 0, loading: false, loaded: false },
+  tiktok: { page: 0, total: 0, loading: false, loaded: false },
+  instagram: { page: 0, total: 0, loading: false, loaded: false },
+})
 
 const form = reactive({
   account_name: '',
@@ -430,23 +437,69 @@ const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Inst
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
-// 加载 Open API 频道列表
-async function loadChannels(platform) {
-  // 避免重复加载
-  if (channelsLoading.value) return
-  // 如果已经加载过，不再重复加载
-  if (channelsMap.value[platform]?.length > 0) return
+function isChannelsLoading(platform) {
+  return platform ? channelPageState[platform]?.loading : false
+}
 
+function hasMoreChannels(platform) {
+  if (!platform) return false
+  const state = channelPageState[platform]
+  if (!state) return false
+  if (!state.loaded) return true
+  if (state.total === 0) return false
+  return channelsMap.value[platform].length < state.total
+}
+
+async function loadChannels(platform, { reset = false } = {}) {
+  if (!platform || !channelPageState[platform]) return
+  const state = channelPageState[platform]
+  if (state.loading) return
+  if (reset) {
+    channelsMap.value[platform] = []
+    state.page = 0
+    state.total = 0
+    state.loaded = false
+  }
+  if (state.loaded && !hasMoreChannels(platform)) return
+
+  const nextPage = state.page + 1
   try {
-    channelsLoading.value = true
-    const response = await fetchChannels(platform, { is_active: true })
-    channelsMap.value[platform] = response.data?.items || []
+    state.loading = true
+    const response = await fetchChannels(platform, { isActive: true, page: nextPage, pageSize: 20 })
+    const data = response?.data || {}
+    const pageItems = data.items || []
+    state.page = Number(data.page || nextPage)
+    state.total = Number(data.total || 0)
+    state.loaded = true
+    channelsMap.value[platform] = reset ? pageItems : [...channelsMap.value[platform], ...pageItems]
   } catch (err) {
     console.error(`加载 ${platform} 频道失败:`, err)
     // 静默失败，不弹窗提示，允许用户手动输入
-    channelsMap.value[platform] = []
+    if (reset) {
+      channelsMap.value[platform] = []
+      state.loaded = true
+      state.total = 0
+      state.page = 1
+    }
   } finally {
-    channelsLoading.value = false
+    state.loading = false
+  }
+}
+
+async function handleChannelDropdownVisible(binding, visible) {
+  if (!visible || !binding?.platform) return
+  if (!channelPageState[binding.platform].loaded) {
+    await loadChannels(binding.platform, { reset: true })
+  }
+}
+
+async function handleChannelPopupScroll(binding, event) {
+  if (!binding?.platform) return
+  const target = event?.target
+  if (!target) return
+  const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24
+  if (nearBottom && hasMoreChannels(binding.platform)) {
+    await loadChannels(binding.platform)
   }
 }
 
@@ -462,7 +515,7 @@ async function handlePlatformChange(binding) {
 
   // 如果平台变了，加载新的频道列表
   if (newPlatform && newPlatform !== oldPlatform) {
-    await loadChannels(newPlatform)
+    await loadChannels(newPlatform, { reset: true })
   }
 }
 
@@ -474,13 +527,14 @@ function handleChannelSelect(binding) {
   }
 }
 
-function addBinding() {
+async function addBinding() {
   form.social_bindings.push({
     platform: 'youtube',
     _prevPlatform: '',
     channel_id: '',
     channel_name: ''
   })
+  await loadChannels('youtube', { reset: true })
 }
 
 function removeBinding(idx) {
@@ -552,7 +606,7 @@ async function loadAccount() {
     for (const binding of form.social_bindings) {
       if (binding.platform) {
         binding._prevPlatform = binding.platform
-        await loadChannels(binding.platform)
+        await loadChannels(binding.platform, { reset: true })
       }
     }
   } catch (err) {
@@ -937,7 +991,7 @@ onMounted(async () => {
   await loadBoundTags()
   // 如果是新建，预加载 YouTube 频道列表
   if (!isEdit.value) {
-    await loadChannels('youtube')
+    await loadChannels('youtube', { reset: true })
   }
 })
 
