@@ -430,16 +430,18 @@
               :key="`group-${group.source_group_index}`"
               class="ad-ai-photo-group"
             >
-              <div class="ad-ai-source-wrap">
-                <div class="ad-ai-source-label">来源视频 {{ group.source_group_index }}</div>
-                <video :src="group.video_url" class="ad-ai-video ad-ai-source-video" controls preload="metadata" />
+              <div class="ad-ai-photo-group-left">
+                <div class="ad-ai-source-wrap">
+                  <div class="ad-ai-source-label">来源视频 {{ group.source_group_index }}</div>
+                  <video :src="group.video_url" class="ad-ai-video ad-ai-source-video" controls preload="metadata" />
+                </div>
+                <div class="ad-ai-analysis-meta">
+                  <span class="ad-ai-video-id">视频 {{ group.video_source_id.slice(0, 8) }}</span>
+                </div>
+                <div class="ad-ai-text">{{ group.analysis_description || group.error_message || '处理中...' }}</div>
               </div>
-              <div class="ad-ai-analysis-meta">
-                <span class="ad-ai-video-id">视频 {{ group.video_source_id.slice(0, 8) }}</span>
-              </div>
-              <div class="ad-ai-text">{{ group.analysis_description || group.error_message || '处理中...' }}</div>
 
-              <div class="ad-ai-photo-grid">
+              <div class="ad-ai-photo-group-right">
                 <div
                   v-for="candidate in group.candidates"
                   :key="candidate.candidate_id"
@@ -1694,19 +1696,32 @@ onUnmounted(() => {
 }
 
 .ad-ai-photo-groups {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
 
 .ad-ai-photo-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
   padding: 12px;
   border-radius: 14px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
+  align-items: start;
+}
+
+.ad-ai-photo-group-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ad-ai-photo-group-right {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .ad-ai-analysis-card,
@@ -1853,7 +1868,10 @@ onUnmounted(() => {
 
 @media (max-width: 1100px) {
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
-  .ad-ai-photo-groups,
+  .ad-ai-photo-group {
+    grid-template-columns: 1fr;
+  }
+  .ad-ai-photo-group-right,
   .ad-ai-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
@@ -1864,7 +1882,7 @@ onUnmounted(() => {
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
   .ad-ai-summary,
   .ad-ai-analysis-list,
-  .ad-ai-photo-groups,
+  .ad-ai-photo-group-right,
   .ad-ai-photo-grid { grid-template-columns: 1fr; }
   .ad-page { padding: 16px; }
 }
