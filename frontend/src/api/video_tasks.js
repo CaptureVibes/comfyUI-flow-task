@@ -51,6 +51,11 @@ export async function fetchVideoTaskResults(dateStr) {
   return data
 }
 
+export async function resumeVideoTaskScoring(dateStr) {
+  const { data } = await http.post(`/video-tasks/daily/${dateStr}/resume-scoring`, undefined, { timeout: 60000 })
+  return data
+}
+
 export async function fetchVideoTaskStats(dateStr, { tiktokBloggerId } = {}) {
   const params = {}
   if (dateStr) params.target_date = dateStr

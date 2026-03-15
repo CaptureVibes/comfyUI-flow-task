@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.video_ai_template import VideoAITemplate
 from app.models.account import Account
 from app.models.system_setting import SystemSetting
@@ -23,6 +24,13 @@ from app.models.video_task_config import VideoTaskConfig
 from app.services.video_scoring_service import score_video_with_ai
 
 logger = logging.getLogger(__name__)
+
+video_scoring_queue: asyncio.Queue[str] = asyncio.Queue()
+video_scoring_worker_tasks: list[asyncio.Task] = []
+video_scoring_inflight_ids: set[str] = set()
+
+_SCORING_CONCURRENCY = 30
+_SCORING_RETRY_DELAY_SECONDS = 30
 
 VALID_STATUSES = {"pending", "generating", "scoring", "pending_publish", "queued", "publishing", "published", "publish_failed", "abandoned"}
 
@@ -80,6 +88,111 @@ def _extract_image_urls(shots: list | None) -> list[str]:
             if url:
                 urls.append(url)
     return urls
+
+
+async def enqueue_video_scoring_subtask(sub_task_id: uuid.UUID | str) -> bool:
+    sub_task_id_str = str(sub_task_id)
+    if sub_task_id_str in video_scoring_inflight_ids:
+        return False
+    video_scoring_inflight_ids.add(sub_task_id_str)
+    await video_scoring_queue.put(sub_task_id_str)
+    return True
+
+
+def _is_retryable_scoring_error(error_message: str) -> bool:
+    text = (error_message or "").lower()
+    retry_markers = (
+        "网络超时",
+        "api 服务不可用",
+        "api 调用重试",
+        "timed out",
+        "timeout",
+        "connect",
+        "connection",
+        "temporarily unavailable",
+        "server disconnected",
+        "cancelled",
+        "502",
+        "503",
+        "504",
+    )
+    return any(marker in text for marker in retry_markers)
+
+
+def _schedule_scoring_retry(sub_task_id: uuid.UUID | str, delay_seconds: int = _SCORING_RETRY_DELAY_SECONDS) -> None:
+    sub_task_id_str = str(sub_task_id)
+
+    async def _delayed_requeue() -> None:
+        await asyncio.sleep(delay_seconds)
+        queued = await enqueue_video_scoring_subtask(sub_task_id_str)
+        if queued:
+            logger.info("Requeued scoring sub-task %s after delay=%ss", sub_task_id_str, delay_seconds)
+        else:
+            logger.info("Skipped delayed requeue for scoring sub-task %s because it is already inflight", sub_task_id_str)
+
+    asyncio.get_running_loop().create_task(_delayed_requeue())
+
+
+async def _video_scoring_worker_loop(worker_index: int) -> None:
+    while True:
+        sub_task_id = await video_scoring_queue.get()
+        try:
+            async with SessionLocal() as session:
+                svc = VideoTaskService(db=session)
+                await svc.process_scoring_sub_task(sub_task_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Video scoring worker %s failed for sub_task=%s", worker_index, sub_task_id)
+        finally:
+            video_scoring_inflight_ids.discard(str(sub_task_id))
+            video_scoring_queue.task_done()
+
+
+def start_video_scoring_queue_processor() -> None:
+    global video_scoring_worker_tasks
+    alive_tasks = [task for task in video_scoring_worker_tasks if not task.done()]
+    if alive_tasks:
+        video_scoring_worker_tasks = alive_tasks
+        return
+    loop = asyncio.get_running_loop()
+    video_scoring_worker_tasks = [
+        loop.create_task(_video_scoring_worker_loop(index + 1))
+        for index in range(_SCORING_CONCURRENCY)
+    ]
+    logger.info("Video scoring queue processor started with concurrency=%s", _SCORING_CONCURRENCY)
+
+
+async def stop_video_scoring_queue_processor() -> None:
+    global video_scoring_worker_tasks
+    tasks = [task for task in video_scoring_worker_tasks if not task.done()]
+    video_scoring_worker_tasks = []
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Video scoring queue processor stopped")
+
+
+async def recover_stuck_video_scoring_on_startup() -> None:
+    async with SessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(VideoSubTask.id)
+                .join(VideoTask, VideoSubTask.task_id == VideoTask.id)
+                .where(VideoSubTask.status == "scoring")
+                .where(VideoSubTask.result_video_url.is_not(None))
+            )
+        ).scalars().all()
+    recovered = 0
+    for sub_task_id in rows:
+        if await enqueue_video_scoring_subtask(sub_task_id):
+            recovered += 1
+    if recovered:
+        logger.info("Recovered %s stuck video scoring subtasks on startup", recovered)
 
 
 class VideoTaskService:
@@ -329,7 +442,8 @@ class VideoTaskService:
         Read result videos from GCS for the given date using each sub-task's UUID as the path key.
         GCS path: jimeng/results/{YYYY-MM-DD}/{sub_task.id}/video.mp4
         Scans all tasks for the date and processes any sub-task with status=generating.
-        Uploads are processed concurrently. Then AI scoring is processed concurrently.
+        Uploads are processed concurrently. Successfully uploaded videos are then enqueued
+        into the background AI scoring queue.
         """
         # Fetch all tasks for the date (regardless of parent status) and filter by sub-task status
         tasks = await self.get_tasks(target_date, owner_id)
@@ -391,107 +505,20 @@ class VideoTaskService:
             task.status = _compute_parent_status(task.sub_tasks)
         await self.db.commit()
 
+        enqueued_for_scoring = 0
         if not successfully_uploaded:
             # All subtasks failed upload, update parent statuses and return
             for task in valid_tasks:
                 task.status = _compute_parent_status(task.sub_tasks)
             await self.db.commit()
-            return {"updated": updated, "skipped": skipped, "errors": errors}
+            return {"updated": updated, "skipped": skipped, "errors": errors, "queued_for_scoring": enqueued_for_scoring}
 
-        # 4. Concurrently run AI scoring for all uploaded videos
-        # Fetch configurations sequentially to avoid concurrent DB queries on the same session
-        owner_ids = {t.owner_id for t, _, _ in successfully_uploaded}
-        configs = {}
-        for uid in owner_ids:
-            configs[uid] = await self.db.get(VideoTaskConfig, uid)
-        sys_cfg = await self.db.get(SystemSetting, "default")
+        for _, sub, _ in successfully_uploaded:
+            if await enqueue_video_scoring_subtask(sub.id):
+                enqueued_for_scoring += 1
 
-        async def _score_task(task, sub, cdn_url):
-            logger.info("Calling _score_video for sub-task %s with CDN URL: %s", sub.id, cdn_url[:100])
-            config = configs.get(task.owner_id)
-            scoring_result = await self._score_video(sub, cdn_url, config=config, sys_cfg=sys_cfg)
-            return task, sub, scoring_result
-
-        # Use as_completed so each result is processed and committed immediately
-        score_futures = [
-            asyncio.ensure_future(_score_task(t, s, url))
-            for t, s, url in successfully_uploaded
-        ]
-
-        # 5. Process each scoring result as it completes — commit after each one
-        task_scored_subs: dict[uuid.UUID, list] = {}  # task.id → [(sub, score)]
-
-        for coro in asyncio.as_completed(score_futures):
-            task, sub, scoring_result = await coro
-            logger.info("_score_video returned for sub-task %s: %s", sub.id, "success" if scoring_result else "None")
-            if scoring_result:
-                final_score, round1_score, round2_score, round1_reason, round2_reason = scoring_result
-                sub.ai_score = int(final_score) if final_score >= 0 else None
-                sub.round1_score = int(round1_score) if round1_score else None
-                sub.round2_score = int(round2_score) if round2_score else None
-                sub.round1_reason = round1_reason
-                sub.round2_reason = round2_reason
-
-                # Check if video was abandoned due to low score in any round
-                if final_score < 0:
-                    sub.status = "abandoned"
-                    logger.info("Sub-task %s abandoned due to low round score: %s", sub.id, round2_reason or round1_reason)
-                else:
-                    logger.info("Sub-task %s AI scored: final=%.1f, r1=%.1f, r2=%.1f",
-                                sub.id, final_score, round1_score or 0, round2_score or 0)
-                    task_scored_subs.setdefault(task.id, []).append((task, sub, final_score))
-                updated += 1
-            else:
-                # AI scoring failed, abandon
-                sub.status = "abandoned"
-                updated += 1
-                logger.warning("Sub-task %s AI scoring failed, abandoned", sub.id)
-
-            # Immediately recompute parent status and commit
-            task.status = _compute_parent_status(task.sub_tasks)
-            await self.db.commit()
-
-        # 6. For each parent task, auto-select the best subtask
-        any_reviewed_template_ids = set()
-
-        for task_id, scored_list in task_scored_subs.items():
-            # Pick the subtask with the highest AI score
-            scored_list.sort(key=lambda x: x[2], reverse=True)
-            best_task, best_sub, best_score = scored_list[0]
-
-            # Check threshold
-            config = configs.get(best_task.owner_id)
-            threshold = config.final_threshold if config else 65.0
-
-            if best_score >= threshold:
-                best_sub.status = "pending_publish"
-                best_sub.selected = True
-                any_reviewed_template_ids.add(best_task.template_id)
-                logger.info("Sub-task %s auto-selected: highest score %.1f >= threshold %.1f",
-                            best_sub.id, best_score, threshold)
-            else:
-                best_sub.status = "abandoned"
-                logger.info("Sub-task %s best score %.1f < threshold %.1f, all abandoned",
-                            best_sub.id, best_score, threshold)
-
-            # Abandon the rest
-            for _, other_sub, _ in scored_list[1:]:
-                other_sub.status = "abandoned"
-                logger.info("Sub-task %s abandoned (not the best)", other_sub.id)
-
-        # 7. Update parent task statuses after auto-selection
-        for task in valid_tasks:
-            task.status = _compute_parent_status(task.sub_tasks)
-
-        # Mark templates used sequentially
-        for template_id in any_reviewed_template_ids:
-            if template_id:
-                tpl = await self.db.get(VideoAITemplate, template_id)
-                if tpl and not tpl.is_used:
-                    tpl.is_used = True
-
-        await self.db.commit()
-        return {"updated": updated, "skipped": skipped, "errors": errors}
+        logger.info("Queued %s subtasks for background AI scoring", enqueued_for_scoring)
+        return {"updated": updated, "skipped": skipped, "errors": errors, "queued_for_scoring": enqueued_for_scoring}
 
     async def patch_sub_task_status(
         self,
@@ -680,6 +707,145 @@ class VideoTaskService:
             }
             result.append(item)
         return result
+
+    async def resume_scoring_tasks(self, target_date: date, owner_id: uuid.UUID | None) -> dict[str, int]:
+        tasks = await self.get_tasks(target_date, owner_id)
+        queued = 0
+        skipped = 0
+        for task in tasks:
+            for sub in task.sub_tasks:
+                if sub.status != "scoring" or not sub.result_video_url:
+                    continue
+                if await enqueue_video_scoring_subtask(sub.id):
+                    queued += 1
+                else:
+                    skipped += 1
+        return {"queued": queued, "skipped": skipped}
+
+    async def process_scoring_sub_task(self, sub_task_id: uuid.UUID | str) -> dict[str, Any]:
+        q = (
+            select(VideoSubTask)
+            .where(VideoSubTask.id == sub_task_id)
+            .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+        )
+        sub = (await self.db.execute(q)).scalar_one_or_none()
+        if not sub:
+            logger.warning("Scoring queue skipped missing sub-task %s", sub_task_id)
+            return {"status": "missing"}
+        if sub.status != "scoring":
+            logger.info("Scoring queue skipped sub-task %s because status=%s", sub.id, sub.status)
+            return {"status": "skipped", "reason": f"status={sub.status}"}
+        if not sub.result_video_url:
+            sub.scoring_error = "缺少 result_video_url，无法进行 AI 打分"
+            await self.db.commit()
+            return {"status": "failed", "reason": "missing_result_video_url"}
+
+        config = await self.db.get(VideoTaskConfig, sub.task.owner_id)
+        sys_cfg = await self.db.get(SystemSetting, "default")
+
+        sub.scoring_error = None
+        sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+        await self.db.commit()
+
+        try:
+            result = await self._score_video(sub, sub.result_video_url, config=config, sys_cfg=sys_cfg)
+        except Exception as exc:
+            logger.exception("AI scoring crashed for sub-task %s", sub.id)
+            sub.scoring_error = str(exc)[:1000]
+            sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+            await self.db.commit()
+            _schedule_scoring_retry(sub.id)
+            return {"status": "failed", "reason": sub.scoring_error}
+
+        if not result:
+            sub.scoring_error = "AI 打分未返回结果"
+            sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+            await self.db.commit()
+            return {"status": "failed", "reason": sub.scoring_error}
+
+        if result[0] is None:
+            error_message = ""
+            if len(result) >= 3:
+                error_message = str(result[2] or "")
+            sub.scoring_error = error_message or "AI 打分失败"
+            sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+            await self.db.commit()
+            if _is_retryable_scoring_error(sub.scoring_error):
+                _schedule_scoring_retry(sub.id)
+            return {"status": "failed", "reason": sub.scoring_error}
+
+        final_score, round1_score, round2_score, round1_reason, round2_reason = result
+        sub.ai_score = int(final_score) if final_score >= 0 else None
+        sub.round1_score = int(round1_score) if round1_score is not None else None
+        sub.round2_score = int(round2_score) if round2_score is not None else None
+        sub.round1_reason = round1_reason
+        sub.round2_reason = round2_reason
+        sub.scoring_error = None
+
+        if final_score < 0:
+            sub.status = "abandoned"
+            logger.info("Sub-task %s abandoned due to low AI score", sub.id)
+        else:
+            logger.info("Sub-task %s AI scored successfully: final=%.1f", sub.id, final_score)
+
+        finalized = await self._finalize_scored_task_if_ready(sub.task, config)
+        if not finalized:
+            sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+        await self.db.commit()
+        return {"status": "completed", "finalized": finalized}
+
+    async def _finalize_scored_task_if_ready(
+        self,
+        task: VideoTask,
+        config: VideoTaskConfig | None,
+    ) -> bool:
+        retry_pending = [
+            st for st in task.sub_tasks
+            if st.status == "scoring" and st.scoring_error and st.ai_score is None and st.round1_score is None
+        ]
+        if retry_pending:
+            logger.info("Task %s still has %s scoring subtasks waiting for retry", task.id, len(retry_pending))
+            return False
+
+        in_progress = [
+            st for st in task.sub_tasks
+            if st.status == "scoring" and not st.scoring_error and st.ai_score is None and st.round1_score is None
+        ]
+        if in_progress:
+            return False
+
+        scored_subs = [
+            st for st in task.sub_tasks
+            if st.status == "scoring" and st.ai_score is not None
+        ]
+        if not scored_subs:
+            task.status = _compute_parent_status(task.sub_tasks)
+            return True
+
+        scored_subs.sort(key=lambda item: item.ai_score or -1, reverse=True)
+        best_sub = scored_subs[0]
+        best_score = float(best_sub.ai_score or 0)
+        threshold = float(config.final_threshold) if config else 65.0
+
+        if best_score >= threshold:
+            best_sub.status = "pending_publish"
+            best_sub.selected = True
+            if task.template_id:
+                tpl = await self.db.get(VideoAITemplate, task.template_id)
+                if tpl and not tpl.is_used:
+                    tpl.is_used = True
+            logger.info("Sub-task %s auto-selected after scoring queue: %.1f >= %.1f", best_sub.id, best_score, threshold)
+        else:
+            best_sub.status = "abandoned"
+            best_sub.selected = False
+            logger.info("Task %s best score %.1f below threshold %.1f, no pending_publish selected", task.id, best_score, threshold)
+
+        for other_sub in scored_subs[1:]:
+            other_sub.status = "abandoned"
+            other_sub.selected = False
+
+        task.status = _compute_parent_status(task.sub_tasks)
+        return True
 
     async def _score_video(
         self, sub: VideoSubTask, video_url: str, config: VideoTaskConfig | None = None, sys_cfg: SystemSetting | None = None

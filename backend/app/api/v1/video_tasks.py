@@ -202,6 +202,21 @@ async def fetch_video_task_results(
     }
 
 
+@router.post("/daily/{target_date}/resume-scoring", status_code=status.HTTP_200_OK)
+async def resume_video_task_scoring(
+    target_date: date,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    svc = VideoTaskService(db=session)
+    result = await svc.resume_scoring_tasks(target_date, owner_id)
+    return {
+        "status": "success",
+        "message": f"已加入 {result['queued']} 个 AI 打分任务，跳过 {result['skipped']} 个已在队列中的任务",
+        **result,
+    }
+
+
 # ── Sub-task endpoints ─────────────────────────────────────────────────────────
 
 @router.patch("/subtasks/{sub_task_id}/status", response_model=VideoSubTaskRead)
@@ -292,4 +307,3 @@ async def update_queue_order(
 
     await session.commit()
     return {"status": "ok"}
-

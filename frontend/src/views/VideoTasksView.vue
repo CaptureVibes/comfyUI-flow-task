@@ -68,6 +68,16 @@
           获取生成结果
         </button>
         <button
+          class="vt-btn vt-btn-warning"
+          :class="{ 'is-loading': continuingScoring }"
+          :disabled="continuingScoring || !(taskStats.scoring > 0)"
+          @click="handleResumeScoring"
+        >
+          <svg v-if="!continuingScoring" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          一键继续AI打分
+        </button>
+        <button
           class="vt-btn vt-btn-primary"
           :class="{ 'is-loading': uploading }"
           :disabled="uploading"
@@ -292,7 +302,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask } from '../api/video_tasks.js'
+import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, resumeVideoTaskScoring } from '../api/video_tasks.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -327,6 +337,7 @@ const tasks = ref([])
 const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
+const continuingScoring = ref(false)
 const taskStats = ref({})
 const activeFilter = ref(null)
 
@@ -436,6 +447,25 @@ async function handleFetchResults() {
     ElMessage.error(e?.response?.data?.detail || '获取结果失败')
   } finally {
     fetchingResults.value = false
+  }
+}
+
+async function handleResumeScoring() {
+  if (!targetDate.value) return
+  if (!(taskStats.value.scoring > 0)) {
+    ElMessage.warning('当前没有 AI 打分中的任务')
+    return
+  }
+  continuingScoring.value = true
+  try {
+    const res = await resumeVideoTaskScoring(targetDate.value)
+    ElMessage.success(res.message || 'AI 打分继续任务已加入队列')
+    await loadTasks()
+    await loadStats()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '继续 AI 打分失败')
+  } finally {
+    continuingScoring.value = false
   }
 }
 
@@ -824,6 +854,17 @@ onMounted(() => {
 
 .vt-btn-success:hover:not(:disabled) {
   box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
+  transform: translateY(-1px);
+}
+
+.vt-btn-warning {
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+}
+
+.vt-btn-warning:hover:not(:disabled) {
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.35);
   transform: translateY(-1px);
 }
 
