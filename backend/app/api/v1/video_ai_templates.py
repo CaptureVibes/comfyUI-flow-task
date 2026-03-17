@@ -217,6 +217,18 @@ async def list_templates(
             if tpl_id in last_published_map:
                 last_published_map[tpl_id] = last_pub
 
+    tags_map: dict[uuid.UUID, list[TagRead]] = {r.id: [] for r in rows}
+    if tpl_ids:
+        tag_stmt = (
+            select(VideoSourceTag.video_ai_template_id, Tag)
+            .join(Tag, Tag.id == VideoSourceTag.tag_id)
+            .where(VideoSourceTag.video_ai_template_id.in_(tpl_ids))
+            .order_by(Tag.name.asc())
+        )
+        for tpl_id, tag in (await session.execute(tag_stmt)).all():
+            if tpl_id in tags_map:
+                tags_map[tpl_id].append(TagRead.model_validate(tag))
+
     items_read = []
     for r in rows:
         vs = None
@@ -239,6 +251,7 @@ async def list_templates(
             is_used=r.is_used,
             repeatable=r.repeatable,
             tiktok_blogger_id=r.tiktok_blogger_id,
+            tags=tags_map.get(r.id, []),
             generated_video_count=generated_count_map.get(r.id, 0),
             last_published_at=last_published_map.get(r.id),
             created_at=r.created_at,
@@ -752,4 +765,3 @@ async def upload_shot_image(
     svc = UpstreamImageUploadService()
     result = await svc.upload_image(content, content_type, file.filename)
     return {"url": result.url}
-
