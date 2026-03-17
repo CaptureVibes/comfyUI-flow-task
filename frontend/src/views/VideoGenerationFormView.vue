@@ -46,7 +46,7 @@
           />
         </div>
 
-        <div class="vgf-blogger-scroll" @scroll.passive="handleBloggerScroll">
+        <div ref="bloggerScrollRef" class="vgf-blogger-scroll" @scroll.passive="handleBloggerScroll">
           <!-- Bound bloggers -->
           <div v-if="boundBloggers.length > 0" class="vgf-blogger-group">
             <div class="vgf-group-label">★ 已绑定博主</div>
@@ -325,7 +325,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccount, fetchAccountBloggers } from '../api/accounts'
@@ -347,6 +347,7 @@ const boundBloggers = ref([])
 const searchedBloggers = ref([])
 const bloggerSearchLoading = ref(false)
 const bloggerSearchQuery = ref('')
+const bloggerScrollRef = ref(null)
 const pagedBloggers = ref([])
 const pagedBloggersLoading = ref(false)
 const pagedBloggersLoaded = ref(false)
@@ -468,6 +469,20 @@ async function loadPagedBloggers({ reset = false } = {}) {
     console.error('加载博主分页列表失败:', err)
   } finally {
     pagedBloggersLoading.value = false
+    await ensurePagedBloggersScrollable()
+  }
+}
+
+async function ensurePagedBloggersScrollable() {
+  if (bloggerSearchQuery.value.trim()) return
+  if (!pagedBloggersLoaded.value) return
+  if (bloggerTotal.value > 0 && pagedBloggers.value.length >= bloggerTotal.value) return
+  await nextTick()
+  const el = bloggerScrollRef.value
+  if (!el) return
+  const hasOverflow = el.scrollHeight > el.clientHeight + 8
+  if (!hasOverflow) {
+    await loadPagedBloggers()
   }
 }
 
