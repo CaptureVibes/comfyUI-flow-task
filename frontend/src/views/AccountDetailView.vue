@@ -536,11 +536,26 @@
             :key="ch.channel_id || ch.platform"
             class="metrics-channel"
           >
+            <!-- 渠道头 -->
             <div class="metrics-ch-header">
               <span class="metrics-ch-platform">{{ ch.platform }}</span>
               <span v-if="ch.channel_name" class="metrics-ch-name">{{ ch.channel_name }}</span>
               <span class="metrics-ch-status" :class="`metrics-ch-status-${ch.status}`">{{ ch.status === 'completed' ? '成功' : ch.status === 'failed' ? '失败' : ch.status }}</span>
               <a v-if="ch.platform_video_url" :href="ch.platform_video_url" target="_blank" class="metrics-ch-link">查看视频 ↗</a>
+            </div>
+
+            <!-- video_info 卡片 -->
+            <div v-if="ch.video_info" class="metrics-video-info">
+              <img v-if="ch.video_info.thumbnail_url" :src="ch.video_info.thumbnail_url" class="metrics-thumb" />
+              <div class="metrics-video-meta">
+                <div class="metrics-video-title">{{ ch.video_info.title }}</div>
+                <div class="metrics-video-desc" v-if="ch.video_info.description">{{ ch.video_info.description }}</div>
+                <div class="metrics-video-tags">
+                  <span v-if="ch.video_info.duration != null" class="metrics-video-tag">时长 {{ ch.video_info.duration }}s</span>
+                  <span v-if="ch.video_info.privacy_status" class="metrics-video-tag">{{ ch.video_info.privacy_status }}</span>
+                  <span v-if="ch.video_info.published_at" class="metrics-video-tag">{{ fmtDate(ch.video_info.published_at) }} 发布</span>
+                </div>
+              </div>
             </div>
 
             <!-- TikTok stats -->
@@ -555,21 +570,29 @@
             <!-- YouTube stats -->
             <div v-else-if="ch.stats && ch.platform === 'youtube'" class="metrics-stats-grid">
               <div class="metrics-stat"><span class="metrics-stat-label">播放量</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.views) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">互动播放</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.engaged_views) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">点赞</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.likes) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">踩</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.dislikes) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">评论</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.comments) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">分享</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.shares) }}</span></div>
-              <div class="metrics-stat"><span class="metrics-stat-label">互动播放</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.engaged_views) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">观看时长(分钟)</span><span class="metrics-stat-value">{{ ch.stats.estimated_minutes_watched != null ? ch.stats.estimated_minutes_watched.toFixed(1) : '-' }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">平均观看时长</span><span class="metrics-stat-value">{{ ch.stats.average_view_duration != null ? ch.stats.average_view_duration.toFixed(1) + 's' : '-' }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">平均观看比例</span><span class="metrics-stat-value">{{ ch.stats.average_view_percentage != null ? ch.stats.average_view_percentage.toFixed(1) + '%' : '-' }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">新增订阅</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.subscribers_gained) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">取消订阅</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.subscribers_lost) }}</span></div>
             </div>
 
             <!-- Instagram stats -->
             <div v-else-if="ch.stats && ch.platform === 'instagram'" class="metrics-stats-grid">
               <div class="metrics-stat"><span class="metrics-stat-label">播放量</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.view_count) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">触达</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.reach_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">曝光</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.impressions_count) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">点赞</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.like_count) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">评论</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.comment_count) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">分享</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.share_count) }}</span></div>
               <div class="metrics-stat"><span class="metrics-stat-label">收藏</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.save_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">总互动</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.total_interactions) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">平均观看(ms)</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.avg_watch_time) }}</span></div>
             </div>
 
             <div v-else class="metrics-no-stats">暂无数据（stats 尚未采集）</div>
@@ -713,6 +736,11 @@ function fmtNum(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
   return String(n)
+}
+
+function fmtDate(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
@@ -2180,5 +2208,73 @@ onUnmounted(() => {
   color: #94a3b8;
   text-align: center;
   padding: 12px 0;
+}
+
+/* video_info 卡片 */
+.metrics-video-info {
+  display: flex;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  align-items: flex-start;
+}
+
+.metrics-thumb {
+  width: 96px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: #f1f5f9;
+}
+
+.metrics-video-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metrics-video-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.metrics-video-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
+.metrics-video-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.metrics-video-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  background: #f1f5f9;
+  color: #64748b;
+  border-radius: 4px;
 }
 </style>
