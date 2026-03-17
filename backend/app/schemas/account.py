@@ -83,6 +83,20 @@ class SelectPhotoCandidateBody(BaseModel):
     candidate_id: str
 
 
+AIResumeStage = Literal["current", "video_analyzing", "name_generating", "photo_generating", "avatar_generating"]
+
+
+class ResumeAIGenerationBody(BaseModel):
+    from_stage: AIResumeStage = "current"
+
+
+class BulkResumeAIAccountsResponse(BaseModel):
+    status: str
+    resumed_count: int = 0
+    skipped_count: int = 0
+    from_stage: AIResumeStage = "current"
+
+
 class BulkGenerateAIAccountsResponse(BaseModel):
     status: str
     created_count: int = 0

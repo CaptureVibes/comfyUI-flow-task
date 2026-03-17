@@ -44,6 +44,14 @@ _RUNNING_STATUSES = {
     "avatar_generating",
 }
 
+_RESUMABLE_STAGES = {
+    "current",
+    "video_analyzing",
+    "name_generating",
+    "photo_generating",
+    "avatar_generating",
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -1045,7 +1053,91 @@ async def enqueue_ai_account_generation(account_id: str, tag_ids: list[str]) -> 
     logger.info("[%s] AI account generation enqueued, tag_ids=%s", account_id, tag_ids)
 
 
-async def resume_ai_account_generation(account_id: str) -> str:
+async def _clear_account_generated_assets(
+    account_id: str,
+    *,
+    clear_photo: bool = False,
+    clear_avatar: bool = False,
+) -> None:
+    from app.models.account import Account
+
+    try:
+        uuid_val = UUID(account_id)
+    except ValueError:
+        return
+
+    async with SessionLocal() as session:
+        acc = await session.get(Account, uuid_val)
+        if not acc:
+            return
+        if clear_photo:
+            acc.photo_url = None
+        if clear_avatar:
+            acc.avatar_url = None
+        await session.commit()
+
+
+def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str) -> tuple[dict[str, Any], dict[str, bool]]:
+    state = _ensure_state_shape(state, state.get("account_id", ""))
+    clear_flags = {"photo": False, "avatar": False}
+
+    if from_stage == "current":
+        return state, clear_flags
+
+    if from_stage not in _RESUMABLE_STAGES:
+        raise ValueError(f"不支持的恢复阶段: {from_stage}")
+
+    if from_stage == "video_analyzing":
+        state["analysis_video_ids"] = []
+        state["analysis_items"] = []
+        state["video_descriptions"] = []
+        state["combined_description"] = ""
+        state["generated_name"] = ""
+        state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
+        state["photo_candidates"] = []
+        state["selected_photo_candidate_id"] = None
+        state["generated_photo_url"] = ""
+        state["generated_avatar_url"] = ""
+        state["completed_stages"] = []
+        clear_flags["photo"] = True
+        clear_flags["avatar"] = True
+    elif from_stage == "name_generating":
+        state["generated_name"] = ""
+        state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
+        state["photo_candidates"] = []
+        state["selected_photo_candidate_id"] = None
+        state["generated_photo_url"] = ""
+        state["generated_avatar_url"] = ""
+        state["completed_stages"] = [stage for stage in state.get("completed_stages", []) if stage == "video_analyzing"]
+        clear_flags["photo"] = True
+        clear_flags["avatar"] = True
+    elif from_stage == "photo_generating":
+        state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
+        state["photo_candidates"] = []
+        state["selected_photo_candidate_id"] = None
+        state["generated_photo_url"] = ""
+        state["generated_avatar_url"] = ""
+        state["completed_stages"] = [
+            stage for stage in state.get("completed_stages", [])
+            if stage in {"video_analyzing", "name_generating"}
+        ]
+        clear_flags["photo"] = True
+        clear_flags["avatar"] = True
+    elif from_stage == "avatar_generating":
+        state["generated_avatar_url"] = ""
+        state["completed_stages"] = [
+            stage for stage in state.get("completed_stages", [])
+            if stage in {"video_analyzing", "name_generating", "photo_generating"}
+        ]
+        clear_flags["avatar"] = True
+
+    state["status"] = from_stage
+    state["error_message"] = ""
+    state["updated_at"] = _utcnow_iso()
+    return state, clear_flags
+
+
+async def resume_ai_account_generation(account_id: str, from_stage: str = "current") -> str:
     state = await _restore_state_from_db(account_id)
     if state is None:
         state = _new_state(account_id, "pending")
@@ -1056,21 +1148,31 @@ async def resume_ai_account_generation(account_id: str) -> str:
         await _save_state(account_id)
         return "already_running"
 
-    if state.get("status") == "awaiting_photo_selection":
+    if from_stage == "current" and state.get("status") == "awaiting_photo_selection":
         await _save_state(account_id)
         return "awaiting_photo_selection"
 
+    state, clear_flags = _prepare_state_for_resume_from_stage(state, from_stage)
     state["status"] = "pending"
-    state["error_message"] = ""
-    state["updated_at"] = _utcnow_iso()
     ai_account_states[account_id] = state
     _mark_dirty(account_id)
 
     _ensure_persist_worker()
     await _persist_states([account_id])
     dirty_ai_account_ids.discard(account_id)
+    if clear_flags["photo"] or clear_flags["avatar"]:
+        await _clear_account_generated_assets(
+            account_id,
+            clear_photo=clear_flags["photo"],
+            clear_avatar=clear_flags["avatar"],
+        )
     await ai_account_queue.put(account_id)
-    logger.info("[%s] AI account generation resumed, completed_stages=%s", account_id, state.get("completed_stages", []))
+    logger.info(
+        "[%s] AI account generation resumed from_stage=%s, completed_stages=%s",
+        account_id,
+        from_stage,
+        state.get("completed_stages", []),
+    )
     return "resuming"
 
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
@@ -20,7 +20,8 @@ from app.models.tiktok_blogger import TiktokBlogger
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
     BoundBloggerRead, BoundTagRead, ScheduledPublishConfig,
-    AIGenerateBody, AIGenerateStatusResponse, BindTagBody, BulkGenerateAIAccountsResponse, SelectPhotoCandidateBody,
+    AIGenerateBody, AIGenerateStatusResponse, BindTagBody, BulkGenerateAIAccountsResponse,
+    BulkResumeAIAccountsResponse, ResumeAIGenerationBody, SelectPhotoCandidateBody,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -336,13 +337,17 @@ async def get_ai_generation_status(
 @router.post("/{account_id}/ai-generate/resume", status_code=202)
 async def resume_ai_generation(
     account_id: uuid.UUID,
+    body: ResumeAIGenerationBody | None = None,
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """断点续跑：从上次失败/暂停的阶段继续。"""
     from app.services.ai_account_service import resume_ai_account_generation
     await get_account_or_404(session, account_id, owner_id)
-    status_value = await resume_ai_account_generation(str(account_id))
+    status_value = await resume_ai_account_generation(
+        str(account_id),
+        from_stage=(body.from_stage if body else "current"),
+    )
     return {"status": status_value}
 
 
@@ -380,6 +385,57 @@ async def select_ai_generation_photo(
 
 class BulkRestartAIBody(BaseModel):
     account_ids: list[str]
+
+
+@router.post("/bulk-resume-ai-generation", response_model=BulkResumeAIAccountsResponse, status_code=202)
+async def bulk_resume_ai_generation(
+    body: ResumeAIGenerationBody,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> BulkResumeAIAccountsResponse:
+    from app.services.ai_account_service import resume_ai_account_generation
+
+    owner_id = current_user.user_id
+    stmt = select(Account.id).where(Account.owner_id == owner_id)
+    if body.from_stage == "current":
+        stmt = (
+            stmt
+            .where(Account.ai_generation_status != "completed")
+            .where(Account.ai_generation_status != "awaiting_photo_selection")
+        )
+    else:
+        stmt = stmt.where(
+            or_(
+                Account.ai_generation_status != "idle",
+                Account.ai_generation_state.is_not(None),
+                Account.photo_url.is_not(None),
+                Account.avatar_url.is_not(None),
+            )
+        )
+    stmt = stmt.order_by(Account.created_at.desc())
+    account_ids = [str(aid) for aid in (await session.execute(stmt)).scalars().all()]
+    if not account_ids:
+        return BulkResumeAIAccountsResponse(status="no_accounts", from_stage=body.from_stage)
+
+    resumed_count = 0
+    skipped_count = 0
+    for aid_str in account_ids:
+        try:
+            result = await resume_ai_account_generation(aid_str, from_stage=body.from_stage)
+            if result in {"resuming", "already_running"}:
+                resumed_count += 1
+            else:
+                skipped_count += 1
+        except Exception as exc:
+            skipped_count += 1
+            logger.error("Failed to bulk resume account %s from stage %s: %s", aid_str, body.from_stage, exc)
+
+    return BulkResumeAIAccountsResponse(
+        status="resumed",
+        resumed_count=resumed_count,
+        skipped_count=skipped_count,
+        from_stage=body.from_stage,
+    )
 
 
 @router.post("/bulk-generate-ai-bloggers", response_model=BulkGenerateAIAccountsResponse, status_code=202)

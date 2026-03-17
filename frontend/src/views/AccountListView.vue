@@ -21,7 +21,7 @@
         </el-button>
         <el-button
           class="al-restart-btn"
-          @click="handleBulkContinueAIGeneration"
+          @click="openBulkContinueDialog"
           :loading="bulkRestarting"
           :disabled="items.length === 0"
         >
@@ -125,6 +125,50 @@
       <template #footer>
         <el-button @click="showAISettingsDialog = false">取消</el-button>
         <el-button type="primary" :loading="aiSettingsSaving" @click="saveAISettings">保存配置</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showBulkContinueDialog"
+      title="一键继续 AI 生成"
+      width="520px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="al-bulk-resume-body">
+        <div class="al-bulk-resume-hint">
+          选择从哪个阶段开始继续。该操作会对当前账号下所有未完成、且不处于“待选照片”的 AI 博主统一生效。
+        </div>
+        <el-form-item label="继续阶段">
+          <el-select v-model="bulkResumeStage" style="width: 100%">
+            <el-option label="按当前数据库阶段断点续跑" value="current" />
+            <el-option label="从视频理解开始" value="video_analyzing" />
+            <el-option label="从名称生成开始" value="name_generating" />
+            <el-option label="从照片生成开始" value="photo_generating" />
+            <el-option label="从头像生成开始" value="avatar_generating" />
+          </el-select>
+        </el-form-item>
+        <div class="al-bulk-resume-desc">
+          <template v-if="bulkResumeStage === 'photo_generating'">
+            会清空已有照片候选、已选照片和头像，并重新生成照片与头像。
+          </template>
+          <template v-else-if="bulkResumeStage === 'avatar_generating'">
+            会保留当前照片结果，只重新生成头像。
+          </template>
+          <template v-else-if="bulkResumeStage === 'name_generating'">
+            会保留视频理解结果，重新生成名称、照片和头像。
+          </template>
+          <template v-else-if="bulkResumeStage === 'video_analyzing'">
+            会从视频理解开始重跑整个 AI 博主流程。
+          </template>
+          <template v-else>
+            会按照数据库里当前记录的阶段断点续跑。
+          </template>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showBulkContinueDialog = false">取消</el-button>
+        <el-button type="primary" :loading="bulkRestarting" @click="handleBulkContinueAIGeneration">确认继续</el-button>
       </template>
     </el-dialog>
 
@@ -294,7 +338,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, fetchAccounts, deleteAccount, resumeAIAccountGeneration } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
@@ -307,6 +351,8 @@ const loading = ref(false)
 const deleting = ref(null)
 const bulkGenerating = ref(false)
 const bulkRestarting = ref(false)
+const showBulkContinueDialog = ref(false)
+const bulkResumeStage = ref('current')
 const items = ref([])
 const previewVisible = ref(false)
 const previewImage = ref({ url: '', title: '' })
@@ -475,40 +521,30 @@ function doJump() {
   if (!isNaN(p)) goPage(p)
 }
 
+function openBulkContinueDialog() {
+  if (bulkRestarting.value) return
+  showBulkContinueDialog.value = true
+}
+
 async function handleBulkContinueAIGeneration() {
   if (bulkRestarting.value) return
 
-  const waitingSelectionAccounts = items.value.filter(i => i.ai_generation_status === 'awaiting_photo_selection')
-  const completedAccounts = items.value.filter(i => i.ai_generation_status === 'completed')
-  const actionableAccounts = items.value.filter(i => !['completed', 'awaiting_photo_selection'].includes(i.ai_generation_status))
-  if (actionableAccounts.length === 0) {
-    if (waitingSelectionAccounts.length > 0) {
-      ElMessage.info(`有 ${waitingSelectionAccounts.length} 个账号正在等待人工选照片`)
-    } else if (completedAccounts.length > 0) {
-      ElMessage.info('没有需要继续的 AI 生成任务')
-    } else {
-      ElMessage.info('没有需要继续的 AI 生成任务')
-    }
-    return
-  }
-
-  try {
-    await ElMessageBox.confirm(
-      `确定继续 ${actionableAccounts.length} 个任务？本次会按数据库中的当前阶段断点续跑。${waitingSelectionAccounts.length ? `另有 ${waitingSelectionAccounts.length} 个账号等待人工选照片，本次将跳过。` : ''}`,
-      '确认继续',
-      { confirmButtonText: '确认继续', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-
   bulkRestarting.value = true
   try {
-    await Promise.all(actionableAccounts.map(i => resumeAIAccountGeneration(i.id)))
-    ElMessage.success(`已继续 ${actionableAccounts.length} 个任务`)
+    const result = await bulkResumeAIAccountGeneration(bulkResumeStage.value)
+    if (result.status === 'no_accounts') {
+      ElMessage.info(
+        bulkResumeStage.value === 'current'
+          ? '没有可继续的 AI 博主任务'
+          : '没有找到可从该阶段重跑的 AI 博主'
+      )
+      return
+    }
+    ElMessage.success(`已继续 ${result.resumed_count || 0} 个任务，跳过 ${result.skipped_count || 0} 个`)
+    showBulkContinueDialog.value = false
     await loadData()
   } catch (err) {
-    ElMessage.error('一键继续失败')
+    ElMessage.error(err?.response?.data?.detail || '一键继续失败')
   } finally {
     bulkRestarting.value = false
   }
@@ -587,6 +623,32 @@ onMounted(loadData)
   color: #0f172a;
   letter-spacing: -0.03em;
   margin: 0;
+}
+
+.al-bulk-resume-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.al-bulk-resume-hint {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.al-bulk-resume-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  padding: 12px 14px;
 }
 
 .al-add-btn {
