@@ -2,6 +2,8 @@ import uuid
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
+from app.schemas.video_ai_template import TagRead
+from app.schemas.video_ai_template import VideoSourceSummary
 
 
 class VideoTaskCreate(BaseModel):
@@ -52,6 +54,8 @@ class VideoTaskDetailRead(VideoTaskRead):
     sub_tasks: list[VideoSubTaskRead] = []
     account_name: str | None = None
     template_title: str | None = None
+    tags: list[TagRead] = []
+    original_video: VideoSourceSummary | None = None
 
 
 class VideoTaskListItem(VideoTaskDetailRead):

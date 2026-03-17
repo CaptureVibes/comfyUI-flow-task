@@ -5,10 +5,15 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, status, BackgroundTasks
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
+from app.models.video_ai_template import VideoAITemplate
+from app.models.tag import Tag, VideoSourceTag
+from app.models.video_source import VideoSource
+from app.schemas.video_ai_template import VideoSourceSummary
 from app.schemas.video_task import (
     VideoSubTaskRead,
     VideoSubTaskStatusUpdate,
@@ -22,6 +27,29 @@ from app.schemas.video_task import (
 from app.services.video_task_service import VideoTaskService
 
 router = APIRouter(prefix="/video-tasks", tags=["video-tasks"])
+
+
+async def _load_template_tags_map(
+    session: AsyncSession,
+    template_ids: list[uuid.UUID | None],
+) -> dict[uuid.UUID, list]:
+    from app.schemas.video_ai_template import TagRead
+
+    valid_ids = [tpl_id for tpl_id in template_ids if tpl_id is not None]
+    tags_map: dict[uuid.UUID, list[TagRead]] = {tpl_id: [] for tpl_id in valid_ids}
+    if not valid_ids:
+        return tags_map
+
+    stmt = (
+        select(VideoSourceTag.video_ai_template_id, Tag)
+        .join(Tag, Tag.id == VideoSourceTag.tag_id)
+        .where(VideoSourceTag.video_ai_template_id.in_(valid_ids))
+        .order_by(Tag.name.asc())
+    )
+    for tpl_id, tag in (await session.execute(stmt)).all():
+        if tpl_id in tags_map:
+            tags_map[tpl_id].append(TagRead.model_validate(tag))
+    return tags_map
 
 
 def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID:
@@ -68,6 +96,7 @@ async def list_video_tasks(
         target_date, owner_id, account_id, status, tiktok_blogger_id,
         page=page, page_size=page_size,
     )
+    tags_map = await _load_template_tags_map(session, [item["task"].template_id for item in enriched])
     items = []
     for item in enriched:
         task = item["task"]
@@ -75,6 +104,7 @@ async def list_video_tasks(
         data.account_name = item["account_name"]
         data.template_title = item["template_title"]
         data.sub_tasks_done = item["sub_tasks_done"]
+        data.tags = tags_map.get(task.template_id, []) if task.template_id else []
         items.append(data)
     return VideoTaskListPage(items=items, total=total, page=page, page_size=page_size)
 
@@ -117,6 +147,14 @@ async def get_video_task(
     data = VideoTaskDetailRead.model_validate(item["task"])
     data.account_name = item["account_name"]
     data.template_title = item["template_title"]
+    if data.template_id:
+        tags_map = await _load_template_tags_map(session, [data.template_id])
+        data.tags = tags_map.get(data.template_id, [])
+        tpl = await session.get(VideoAITemplate, data.template_id)
+        if tpl and tpl.video_source_id:
+            vs = await session.get(VideoSource, tpl.video_source_id)
+            if vs:
+                data.original_video = VideoSourceSummary.model_validate(vs)
     return data
 
 

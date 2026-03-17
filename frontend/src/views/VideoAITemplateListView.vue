@@ -170,6 +170,17 @@
         <div class="vt-content">
           <div class="vt-title">{{ item.title }}</div>
           <div v-if="item.description" class="vt-desc">{{ item.description }}</div>
+          <div v-if="item.tags && item.tags.length > 0" class="vt-tags">
+            <span
+              v-for="tag in item.tags"
+              :key="tag.id"
+              class="vt-tag-chip"
+              :style="tag.color ? { '--vt-tag-color': tag.color } : {}"
+            >
+              <span class="vt-tag-dot"></span>
+              {{ tag.name }}
+            </span>
+          </div>
 
           <!-- Error message -->
           <div v-if="item.process_error" class="vt-error">
@@ -1417,6 +1428,36 @@ onActivated(() => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.5;
+}
+
+.vt-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.vt-tag-chip {
+  --vt-tag-color: #6366f1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vt-tag-color) 12%, white);
+  border: 1px solid color-mix(in srgb, var(--vt-tag-color) 22%, white);
+  color: color-mix(in srgb, var(--vt-tag-color) 78%, #111827);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.vt-tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vt-tag-color);
+  flex: 0 0 auto;
 }
 
 .vt-error {

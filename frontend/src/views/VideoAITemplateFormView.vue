@@ -116,6 +116,21 @@
                   <span class="vtfd-info-label">平台</span>
                   <span class="vtfd-info-val">{{ platformLabel(selectedVideoSource.platform) }}</span>
                 </div>
+                <div class="vtfd-info-row">
+                  <span class="vtfd-info-label">绑定标签</span>
+                  <div v-if="templateTags.length" class="vtfd-tag-list">
+                    <span
+                      v-for="tag in templateTags"
+                      :key="tag.id"
+                      class="vtfd-tag-chip"
+                      :style="tag.color ? { '--vtfd-tag-color': tag.color } : {}"
+                    >
+                      <span class="vtfd-tag-dot"></span>
+                      {{ tag.name }}
+                    </span>
+                  </div>
+                  <span v-else class="vtfd-info-val">未绑定标签</span>
+                </div>
                 <div v-if="selectedVideoSource.video_desc" class="vtfd-info-row">
                   <span class="vtfd-info-label">原描述</span>
                   <span class="vtfd-info-val vtfd-desc">{{ selectedVideoSource.video_desc }}</span>
@@ -399,6 +414,7 @@ const showVideoSelector = ref(false)
 const tempVideoId = ref(null)
 const fileInputRef = ref(null)
 const uploadingCount = ref(0)
+const templateTags = ref([])
 
 // Template state
 const templateStatus = ref(null) // pending, understanding, imagegen, splitting, face_removing, success, fail, paused
@@ -666,6 +682,7 @@ async function loadData() {
       extracted_shots: data.extracted_shots,
       extra: data.extra || null,
     })
+    templateTags.value = data.tags || []
     templateStatus.value = data.process_status
     errorMessage.value = data.process_error || ''
 
@@ -811,6 +828,35 @@ onUnmounted(() => {
   justify-content: center;
   margin-bottom: 16px;
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.vtfd-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vtfd-tag-chip {
+  --vtfd-tag-color: #6366f1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vtfd-tag-color) 12%, white);
+  border: 1px solid color-mix(in srgb, var(--vtfd-tag-color) 22%, white);
+  color: color-mix(in srgb, var(--vtfd-tag-color) 78%, #111827);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.vtfd-tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vtfd-tag-color);
+  flex: 0 0 auto;
 }
 
 /* Top layout */

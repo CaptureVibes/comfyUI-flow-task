@@ -23,6 +23,17 @@
         <span class="vtd-status-badge" :class="`vtd-status-${task.status}`">
           {{ STATUS_LABELS[task.status] || task.status }}
         </span>
+        <div v-if="task.tags?.length" class="vtd-tags">
+          <span
+            v-for="tag in task.tags"
+            :key="tag.id"
+            class="vtd-tag-chip"
+            :style="tag.color ? { '--vtd-tag-color': tag.color } : {}"
+          >
+            <span class="vtd-tag-dot"></span>
+            {{ tag.name }}
+          </span>
+        </div>
       </div>
     </div>
 
@@ -101,6 +112,48 @@
           <button v-if="!promptExpanded" class="vtd-prompt-expand" @click="promptExpanded = true">
             展开全部
           </button>
+        </div>
+      </div>
+
+      <div v-if="task.original_video" class="vtd-original-card">
+        <div class="vtd-original-header">
+          <span class="vtd-section-label" style="margin-bottom:0;">关联原视频</span>
+          <button
+            v-if="task.original_video.id"
+            class="vtd-original-link"
+            @click="router.push(`/dashboard/video-library/${task.original_video.id}`)"
+          >
+            查看视频详情
+          </button>
+        </div>
+        <div class="vtd-original-grid">
+          <div class="vtd-original-player">
+            <video
+              v-if="task.original_video.local_video_url || task.original_video.video_url"
+              :src="task.original_video.local_video_url || task.original_video.video_url"
+              controls
+              class="vtd-original-video"
+              preload="metadata"
+            />
+            <div v-else class="vtd-original-placeholder">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
+              <span>暂无原视频地址</span>
+            </div>
+          </div>
+          <div class="vtd-original-meta">
+            <div class="vtd-original-title">{{ task.original_video.video_title || '无标题原视频' }}</div>
+            <div class="vtd-original-info">@{{ task.original_video.blogger_name || '未知博主' }}</div>
+            <div v-if="task.original_video.platform" class="vtd-original-info">{{ task.original_video.platform }}</div>
+            <a
+              v-if="task.original_video.source_url"
+              class="vtd-original-source"
+              :href="task.original_video.source_url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              打开原始链接
+            </a>
+          </div>
         </div>
       </div>
 
@@ -478,6 +531,36 @@ onUnmounted(() => {
 
 .vtd-info-item { font-size: 14px; color: #475569; display: flex; align-items: center; }
 
+.vtd-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vtd-tag-chip {
+  --vtd-tag-color: #6366f1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vtd-tag-color) 12%, white);
+  border: 1px solid color-mix(in srgb, var(--vtd-tag-color) 22%, white);
+  color: color-mix(in srgb, var(--vtd-tag-color) 78%, #111827);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.vtd-tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vtd-tag-color);
+  flex: 0 0 auto;
+}
+
 .vtd-template { color: #6366f1; font-weight: 500; }
 .vtd-template-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .vtd-template-link:hover { color: #4f46e5; }
@@ -494,6 +577,92 @@ onUnmounted(() => {
   grid-template-columns: 220px 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.vtd-original-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.vtd-original-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.vtd-original-link {
+  border: none;
+  background: transparent;
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vtd-original-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.vtd-original-player {
+  width: 100%;
+}
+
+.vtd-original-video,
+.vtd-original-placeholder {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  background: #0f172a;
+  object-fit: cover;
+}
+
+.vtd-original-placeholder {
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.vtd-original-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vtd-original-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.5;
+}
+
+.vtd-original-info {
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.vtd-original-source {
+  width: fit-content;
+  color: #4f46e5;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.vtd-original-source:hover {
+  text-decoration: underline;
 }
 
 /* Timeline card */
@@ -712,6 +881,7 @@ onUnmounted(() => {
 @media (max-width: 900px) {
   .vtd-subtasks { grid-template-columns: 1fr; }
   .vtd-top-row { grid-template-columns: 1fr; }
+  .vtd-original-grid { grid-template-columns: 1fr; }
 }
 
 .vtd-sub-card {
