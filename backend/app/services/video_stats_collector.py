@@ -114,25 +114,29 @@ async def _collect_one(
 
 
 async def _parse_and_save_stats(vs_id: str, source_url: str) -> None:
-    from app.services.video_source_service import _parse_yt_dlp_info
+    if "tiktok.com" in source_url or "vm.tiktok.com" in source_url:
+        from app.services import tiktok_api_client
+        parsed = await tiktok_api_client.fetch_video_info(source_url)
+    else:
+        from app.services.video_source_service import _parse_yt_dlp_info
 
-    def _run() -> dict:
-        try:
-            import yt_dlp  # type: ignore
-        except ImportError:
-            raise RuntimeError("yt-dlp is not installed")
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "format": "best",
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(source_url, download=False)
-        return info or {}
+        def _run() -> dict:
+            try:
+                import yt_dlp  # type: ignore
+            except ImportError:
+                raise RuntimeError("yt-dlp is not installed")
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "format": "best",
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(source_url, download=False)
+            return info or {}
 
-    info = await asyncio.to_thread(_run)
-    parsed = _parse_yt_dlp_info(info)
+        info = await asyncio.to_thread(_run)
+        parsed = _parse_yt_dlp_info(info)
 
     async with SessionLocal() as session:
         # Save historical snapshot

@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     open_api_client_secret: str = ""
     open_api_callback_url: str | None = None  # 回调地址，由外部注入
 
+    # TikTok 第三方 API 配置
+    tikwm_api_key: str = ""       # tikwm.com API key（可选，不传也可访问）
+    rapidapi_key: str = ""        # RapidAPI key，用于 tiktok-api23 fallback
+
     @property
     def max_image_size_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024

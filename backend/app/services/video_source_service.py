@@ -130,13 +130,39 @@ async def check_duplicate_url(
     return await session.scalar(stmt)
 
 
+def _is_tiktok_url(url: str) -> bool:
+    """Return True if the URL is a TikTok URL."""
+    return "tiktok.com" in url or "vm.tiktok.com" in url
+
+
 async def parse_video_url(
     url: str,
     session: AsyncSession | None = None,
     owner_id: UUID | None = None,
 ) -> VideoSourceParseResult:
-    """Use yt-dlp (in a thread) to parse a video URL. Returns parsed info without saving.
+    """Parse a video URL. TikTok URLs use tikwm/RapidAPI; others use yt-dlp.
     If session is provided, also checks for duplicates and sets existing_id."""
+    if _is_tiktok_url(url):
+        from app.services import tiktok_api_client
+        try:
+            parsed = await tiktok_api_client.fetch_video_info(url)
+        except Exception as exc:
+            logger.warning("tiktok_api_client failed for %s: %s", url, exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"无法解析视频链接: {exc}",
+            ) from exc
+
+        clean_url = _clean_url(url)
+        logger.info("Parsed TikTok URL via API client: input=%s, clean_url=%s", url, clean_url)
+
+        if session is not None:
+            existing = await check_duplicate_url(session, clean_url, owner_id)
+            if existing:
+                return VideoSourceParseResult(source_url=clean_url, existing_id=existing.id)
+
+        return VideoSourceParseResult(source_url=clean_url, **parsed)
+
     def _run() -> dict:
         try:
             import yt_dlp  # type: ignore
@@ -438,8 +464,22 @@ async def _upload_video_file(file_path: str, filename: str) -> str:
     raise RuntimeError(f"Upload failed after 3 attempts: {last_exc}") from last_exc
 
 
-async def _download_video_yt_dlp(source_url: str, out_path: str) -> str:
-    """Download video to out_path using yt-dlp. Returns the actual output file path. Retries up to 3 times."""
+async def _download_video(source_url: str, out_path: str) -> str:
+    """Download video to out_path. TikTok uses tikwm/RapidAPI direct link; others use yt-dlp.
+    Returns the actual output file path. Retries up to 3 times."""
+    if _is_tiktok_url(source_url):
+        from app.services import tiktok_api_client
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                return await tiktok_api_client.download_video(source_url, out_path)
+            except Exception as exc:
+                last_exc = exc
+                logger.warning("tiktok download failed (attempt %d/3): %s", attempt, exc)
+                if attempt < 3:
+                    await asyncio.sleep(attempt)
+        raise RuntimeError(f"TikTok download failed after 3 attempts: {last_exc}") from last_exc
+
     def _run() -> str:
         try:
             import yt_dlp  # type: ignore
@@ -457,16 +497,16 @@ async def _download_video_yt_dlp(source_url: str, out_path: str) -> str:
             # yt-dlp may append extension; get actual filename
             return ydl.prepare_filename(info)
 
-    last_exc: Exception | None = None
+    last_exc_ytdlp: Exception | None = None
     for attempt in range(1, 4):
         try:
             return await asyncio.to_thread(_run)
         except Exception as exc:
-            last_exc = exc
-            logger.warning("_download_video_yt_dlp failed (attempt %d/3): %s", attempt, exc)
+            last_exc_ytdlp = exc
+            logger.warning("_download_video yt-dlp failed (attempt %d/3): %s", attempt, exc)
             if attempt < 3:
                 await asyncio.sleep(attempt)
-    raise RuntimeError(f"Download failed after 3 attempts: {last_exc}") from last_exc
+    raise RuntimeError(f"Download failed after 3 attempts: {last_exc_ytdlp}") from last_exc_ytdlp
 
 
 async def _do_download_and_upload(vs_id: UUID) -> None:
@@ -483,8 +523,7 @@ async def _do_download_and_upload(vs_id: UUID) -> None:
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 out_template = os.path.join(tmpdir, "video")
-                actual_path = await _download_video_yt_dlp(vs.source_url, out_template)
-                # yt-dlp might produce e.g. /tmp/xxx/video.mp4 or /tmp/xxx/video
+                actual_path = await _download_video(vs.source_url, out_template)
                 if not os.path.exists(actual_path):
                     alt = out_template + ".mp4"
                     actual_path = alt if os.path.exists(alt) else actual_path

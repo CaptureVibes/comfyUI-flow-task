@@ -298,7 +298,39 @@ async def create_blogger_from_url(
     session: AsyncSession,
     owner_id: UUID | None,
 ) -> TiktokBlogger:
-    """Parse a creator profile URL (or any video URL from that creator) via yt-dlp and upsert the blogger."""
+    """Parse a creator profile URL via tikwm/RapidAPI (TikTok) or yt-dlp (others) and upsert the blogger."""
+    if "tiktok.com" in profile_url or "vm.tiktok.com" in profile_url:
+        from app.services import tiktok_api_client
+        try:
+            info = await tiktok_api_client.fetch_blogger_info(profile_url)
+        except Exception as exc:
+            logger.warning("tiktok_api_client.fetch_blogger_info failed for %s: %s", profile_url, exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"无法解析博主主页链接: {exc}",
+            ) from exc
+
+        raw_avatar_url = info.pop("_avatar_url", None)
+        blogger = await upsert_blogger_from_info(session, info, owner_id)
+
+        if blogger is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="无法从该链接提取博主信息（缺少 uploader_id）",
+            )
+
+        await session.flush()
+
+        if not blogger.avatar_url and raw_avatar_url:
+            cdn_url = await _download_and_upload_avatar(raw_avatar_url)
+            if cdn_url:
+                blogger.avatar_url = cdn_url
+                logger.info("Avatar uploaded for blogger %s: %s", blogger.blogger_id, cdn_url)
+
+        await session.commit()
+        await session.refresh(blogger)
+        return blogger
+
     def _run() -> tuple[dict | None, str | None]:
         try:
             import yt_dlp  # type: ignore
@@ -311,15 +343,6 @@ async def create_blogger_from_url(
             "extract_flat": True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # For TikTok profile URLs: extract blogger info + avatar in ONE webpage request
-            if "tiktok.com/@" in profile_url:
-                info_dict, raw_avatar = _extract_tiktok_user_info_from_webpage(ydl, profile_url)
-                logger.info("TikTok user page extraction: blogger=%s avatar=%s",
-                            info_dict.get("uploader") if info_dict else None,
-                            raw_avatar[:60] if raw_avatar else None)
-                return info_dict or {}, raw_avatar
-
-            # Non-TikTok or video URL: use full yt-dlp extraction
             info = ydl.extract_info(profile_url, download=False) or {}
             return info, None
 
@@ -332,7 +355,6 @@ async def create_blogger_from_url(
             detail=f"无法解析博主主页链接: {exc}",
         ) from exc
 
-    # Try to upsert blogger from extracted info
     blogger = await upsert_blogger_from_info(session, info, owner_id)
 
     if blogger is None and info.get("entries"):
@@ -347,14 +369,11 @@ async def create_blogger_from_url(
 
     await session.flush()
 
-    # Upload avatar if we don't have one yet
-    if not blogger.avatar_url:
-        if raw_avatar_url:
-            # Use the avatar URL extracted directly by yt-dlp (most reliable for TikTok)
-            cdn_url = await _download_and_upload_avatar(raw_avatar_url)
-            if cdn_url:
-                blogger.avatar_url = cdn_url
-                logger.info("Avatar uploaded for blogger %s: %s", blogger.blogger_id, cdn_url)
+    if not blogger.avatar_url and raw_avatar_url:
+        cdn_url = await _download_and_upload_avatar(raw_avatar_url)
+        if cdn_url:
+            blogger.avatar_url = cdn_url
+            logger.info("Avatar uploaded for blogger %s: %s", blogger.blogger_id, cdn_url)
 
     await session.commit()
     await session.refresh(blogger)
