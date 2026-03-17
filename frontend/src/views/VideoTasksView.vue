@@ -18,7 +18,7 @@
           placeholder="选择日期"
           format="YYYY-MM-DD"
           value-format="YYYY-MM-DD"
-          @change="loadTasks"
+          @change="onDateChange"
           style="width: 180px;"
           :clearable="false"
         />
@@ -288,6 +288,39 @@
       </div>
     </div>
 
+    <!-- Footer pagination -->
+    <div v-if="total > 0" class="vt-footer">
+      <div class="vt-pagination-left">
+        <span class="vt-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+        <select v-model="pageSize" @change="handleSizeChange(pageSize)" class="vt-simple-select">
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+          <option :value="100">100</option>
+        </select>
+      </div>
+      <div class="vt-pg">
+        <button class="pg-btn" :disabled="currentPage <= 1" @click="onPageChange(currentPage - 1)">← 上一页</button>
+        <template v-for="p in visiblePages" :key="p">
+          <span v-if="p === '...'" class="pg-ellipsis">…</span>
+          <button v-else class="pg-btn pg-num" :class="{ active: p === currentPage }" @click="onPageChange(p)">{{ p }}</button>
+        </template>
+        <button class="pg-btn" :disabled="endIdx >= total" @click="onPageChange(currentPage + 1)">下一页 →</button>
+        <span class="pg-jump-wrap">
+          跳至
+          <input
+            v-model.number="jumpPage"
+            class="pg-jump-input"
+            type="number"
+            :min="1"
+            :max="totalPages"
+            @keyup.enter="doJump"
+          />
+          页
+          <button class="pg-btn pg-jump-go" @click="doJump">GO</button>
+        </span>
+      </div>
+    </div>
+
     <ConfirmDeleteDialog
       v-model="deleteDialogVisible"
       :title="`删除任务「${deleteTarget?.account_name || '未知账号'} · ${deleteTarget?.template_title || '未知模板'}」`"
@@ -334,6 +367,9 @@ const router = useRouter()
 const today = new Date().toISOString().slice(0, 10)
 const targetDate = ref(today)
 const tasks = ref([])
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
@@ -357,17 +393,34 @@ const filteredBloggerOptions = computed(() => {
   )
 })
 
-const filteredTasks = computed(() => {
-  if (!activeFilter.value) return tasks.value
-  return tasks.value.filter(t => t.status === activeFilter.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const startIdx = computed(() => total.value === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1)
+const endIdx = computed(() => Math.min(currentPage.value * pageSize.value, total.value))
+const jumpPage = ref(1)
+
+const visiblePages = computed(() => {
+  const n = totalPages.value
+  const cur = currentPage.value
+  if (n <= 7) return Array.from({ length: n }, (_, i) => i + 1)
+  const pages = []
+  pages.push(1)
+  if (cur > 3) pages.push('...')
+  for (let p = Math.max(2, cur - 1); p <= Math.min(n - 1, cur + 1); p++) pages.push(p)
+  if (cur < n - 2) pages.push('...')
+  pages.push(n)
+  return pages
 })
+
+const filteredTasks = computed(() => tasks.value)
 
 function toggleFilter(status) {
   if (activeFilter.value === status) {
-    activeFilter.value = null  // 取消筛选
+    activeFilter.value = null
   } else {
     activeFilter.value = status
   }
+  currentPage.value = 1
+  loadTasks()
 }
 
 function firstShotUrl(shots) {
@@ -388,7 +441,14 @@ async function loadTasks() {
   if (!targetDate.value) return
   loading.value = true
   try {
-    tasks.value = await fetchVideoTasks(targetDate.value, { tiktokBloggerId: selectedBloggerId.value })
+    const res = await fetchVideoTasks(targetDate.value, {
+      tiktokBloggerId: selectedBloggerId.value,
+      status: activeFilter.value || undefined,
+      page: currentPage.value,
+      pageSize: pageSize.value,
+    })
+    tasks.value = res.items
+    total.value = res.total
     loadStats()
   } catch (e) {
     if (!isDuplicateRequestError(e)) {
@@ -397,6 +457,31 @@ async function loadTasks() {
   } finally {
     loading.value = false
   }
+}
+
+function onDateChange() {
+  currentPage.value = 1
+  loadTasks()
+}
+
+function onPageChange(page) {
+  const target = Math.max(1, Math.min(page, totalPages.value))
+  if (target === currentPage.value) return
+  currentPage.value = target
+  jumpPage.value = target
+  loadTasks()
+}
+
+function handleSizeChange(val) {
+  pageSize.value = val
+  currentPage.value = 1
+  jumpPage.value = 1
+  loadTasks()
+}
+
+function doJump() {
+  const p = parseInt(jumpPage.value)
+  if (!isNaN(p)) onPageChange(p)
 }
 
 async function loadStats() {
@@ -528,6 +613,7 @@ function selectBlogger(opt) {
   selectedBloggerId.value = opt.value
   bloggerSearchInput.value = ''
   bloggerDropdownOpen.value = false
+  currentPage.value = 1
   loadTasks()
 }
 
@@ -536,6 +622,7 @@ function clearBloggerFilter() {
   selectedBloggerId.value = null
   bloggerSearchInput.value = ''
   bloggerDropdownOpen.value = false
+  currentPage.value = 1
   loadTasks()
 }
 
@@ -1145,5 +1232,121 @@ onMounted(() => {
   font-size: 13px;
   color: #94a3b8;
   text-align: center;
+}
+
+.vt-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0 8px;
+  border-top: 1px solid #f1f5f9;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.vt-pagination-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vt-count-text {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.vt-simple-select {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding: 0 4px;
+}
+
+.vt-simple-select:hover {
+  color: #64748b;
+}
+
+.vt-pg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pg-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pg-btn:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.pg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pg-num {
+  min-width: 36px;
+  padding: 7px 10px;
+  text-align: center;
+}
+
+.pg-num.active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.pg-ellipsis {
+  font-size: 13px;
+  color: #94a3b8;
+  padding: 0 4px;
+  user-select: none;
+}
+
+.pg-jump-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
+.pg-jump-input {
+  width: 52px;
+  height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 13px;
+  color: #334155;
+  outline: none;
+  padding: 0 6px;
+}
+
+.pg-jump-input:focus {
+  border-color: #6366f1;
+}
+
+.pg-jump-go {
+  padding: 7px 12px;
 }
 </style>

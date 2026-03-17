@@ -15,6 +15,7 @@ from app.schemas.video_task import (
     VideoTaskCreate,
     VideoTaskDetailRead,
     VideoTaskListItem,
+    VideoTaskListPage,
     VideoTaskRead,
     VideoTaskStateRead,
 )
@@ -51,26 +52,31 @@ async def create_video_task(
     return task
 
 
-@router.get("", response_model=list[VideoTaskListItem])
+@router.get("", response_model=VideoTaskListPage)
 async def list_video_tasks(
     target_date: date | None = Query(default=None),
     account_id: uuid.UUID | None = Query(default=None),
     status: str | None = Query(default=None),
     tiktok_blogger_id: uuid.UUID | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     svc = VideoTaskService(db=session)
-    enriched = await svc.get_tasks_with_names(target_date, owner_id, account_id, status, tiktok_blogger_id)
-    result = []
+    enriched, total = await svc.get_tasks_with_names(
+        target_date, owner_id, account_id, status, tiktok_blogger_id,
+        page=page, page_size=page_size,
+    )
+    items = []
     for item in enriched:
         task = item["task"]
         data = VideoTaskListItem.model_validate(task)
         data.account_name = item["account_name"]
         data.template_title = item["template_title"]
         data.sub_tasks_done = item["sub_tasks_done"]
-        result.append(data)
-    return result
+        items.append(data)
+    return VideoTaskListPage(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/stats", response_model=dict[str, int])

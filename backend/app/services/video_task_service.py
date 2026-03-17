@@ -275,25 +275,34 @@ class VideoTaskService:
         account_id: uuid.UUID | None = None,
         status_filter: str | None = None,
         tiktok_blogger_id: uuid.UUID | None = None,
-    ) -> list[VideoTask]:
-        q = (
-            select(VideoTask)
-            .options(selectinload(VideoTask.sub_tasks))
-            .order_by(VideoTask.created_at.desc())
-        )
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> tuple[list[VideoTask], int]:
+        from sqlalchemy import func
+
+        base_q = select(VideoTask).order_by(VideoTask.created_at.desc())
         if target_date is not None:
-            q = q.where(VideoTask.target_date == target_date)
+            base_q = base_q.where(VideoTask.target_date == target_date)
         if owner_id is not None:
-            q = q.where(VideoTask.owner_id == owner_id)
+            base_q = base_q.where(VideoTask.owner_id == owner_id)
         if account_id is not None:
-            q = q.where(VideoTask.account_id == account_id)
+            base_q = base_q.where(VideoTask.account_id == account_id)
         if status_filter:
-            q = q.where(VideoTask.status == status_filter)
+            base_q = base_q.where(VideoTask.status == status_filter)
         if tiktok_blogger_id is not None:
-            q = q.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)
-            q = q.where(VideoAITemplate.tiktok_blogger_id == tiktok_blogger_id)
+            base_q = base_q.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)
+            base_q = base_q.where(VideoAITemplate.tiktok_blogger_id == tiktok_blogger_id)
+
+        # Count total
+        count_q = select(func.count()).select_from(base_q.subquery())
+        total: int = (await self.db.execute(count_q)).scalar_one()
+
+        # Paginate
+        q = base_q.options(selectinload(VideoTask.sub_tasks))
+        if page is not None and page_size is not None:
+            q = q.offset((page - 1) * page_size).limit(page_size)
         result = await self.db.execute(q)
-        return list(result.scalars().all())
+        return list(result.scalars().all()), total
 
     async def get_task_detail(self, task_id: uuid.UUID, owner_id: uuid.UUID | None) -> dict:
         q = (
@@ -379,7 +388,7 @@ class VideoTaskService:
         Each sub-task gets one entry in the payload using its UUID as video_id.
         Returns (gcs_url, task_count, subtask_count).
         """
-        tasks = await self.get_tasks(target_date, owner_id, status_filter="pending")
+        tasks, _ = await self.get_tasks(target_date, owner_id, status_filter="pending")
         if not tasks:
             raise ValueError(f"No pending tasks found for {target_date}")
 
@@ -446,7 +455,7 @@ class VideoTaskService:
         into the background AI scoring queue.
         """
         # Fetch all tasks for the date (regardless of parent status) and filter by sub-task status
-        tasks = await self.get_tasks(target_date, owner_id)
+        tasks, _ = await self.get_tasks(target_date, owner_id)
         valid_tasks = [t for t in tasks if any(s.status == "generating" for s in t.sub_tasks)]
         if not valid_tasks:
             return {"updated": 0, "skipped": 0, "errors": [], "message": f"当天没有 generating 状态的子任务"}
@@ -674,9 +683,14 @@ class VideoTaskService:
         account_id: uuid.UUID | None = None,
         status_filter: str | None = None,
         tiktok_blogger_id: uuid.UUID | None = None,
-    ) -> list[dict]:
-        """Returns tasks enriched with account_name, template_title, sub_tasks_done."""
-        tasks = await self.get_tasks(target_date, owner_id, account_id, status_filter, tiktok_blogger_id)
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[dict], int]:
+        """Returns (enriched task list, total count). Supports pagination."""
+        tasks, total = await self.get_tasks(
+            target_date, owner_id, account_id, status_filter, tiktok_blogger_id,
+            page=page, page_size=page_size,
+        )
 
         # Batch-fetch account and template names
         account_ids = {t.account_id for t in tasks if t.account_id}
@@ -706,10 +720,10 @@ class VideoTaskService:
                 "sub_tasks_done": sum(1 for st in task.sub_tasks if st.result_video_url),
             }
             result.append(item)
-        return result
+        return result, total
 
     async def resume_scoring_tasks(self, target_date: date, owner_id: uuid.UUID | None) -> dict[str, int]:
-        tasks = await self.get_tasks(target_date, owner_id)
+        tasks, _ = await self.get_tasks(target_date, owner_id)
         queued = 0
         skipped = 0
         for task in tasks:

@@ -59,6 +59,13 @@ class VideoTaskListItem(VideoTaskDetailRead):
     sub_tasks_done: int = 0  # number of sub-tasks with result_video_url set
 
 
+class VideoTaskListPage(BaseModel):
+    items: list[VideoTaskListItem]
+    total: int
+    page: int
+    page_size: int
+
+
 class VideoSubTaskStatusUpdate(BaseModel):
     status: str
     result_video_url: str | None = None
