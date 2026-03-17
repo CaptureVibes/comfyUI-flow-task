@@ -306,6 +306,7 @@ const STATUS_LABELS = {
   pending: '待处理',
   generating: '生成中',
   scoring: 'AI审核中',
+  reviewing: '待决策',
   pending_publish: '待发布',
   publishing: '发布中',
   publish_failed: '发布失败',
@@ -379,7 +380,7 @@ function hasReviewingScores() {
   if (!task.value?.sub_tasks) return false
   return task.value.sub_tasks.some(
     sub => (
-      ['pending_publish', 'published', 'abandoned'].includes(sub.status) &&
+      ['reviewing', 'pending_publish', 'published', 'abandoned'].includes(sub.status) &&
       (
         sub.ai_score !== null && sub.ai_score !== undefined ||
         sub.round1_score !== null && sub.round1_score !== undefined ||
@@ -392,7 +393,7 @@ function hasReviewingScores() {
 function reviewingSubTasks() {
   if (!task.value?.sub_tasks) return []
   return task.value.sub_tasks.filter(
-    sub => ['pending_publish', 'published', 'abandoned'].includes(sub.status)
+    sub => ['reviewing', 'pending_publish', 'published', 'abandoned'].includes(sub.status)
   ).filter(sub =>
     sub.ai_score !== null && sub.ai_score !== undefined ||
     sub.round1_score !== null && sub.round1_score !== undefined ||
@@ -1058,6 +1059,7 @@ onUnmounted(() => {
 .vtd-status-pending         { background: #f1f5f9; color: #64748b; }
 .vtd-status-generating      { background: #eff6ff; color: #3b82f6; }
 .vtd-status-scoring         { background: #f0fdf4; color: #059669; }
+.vtd-status-reviewing       { background: #fef9c3; color: #854d0e; }
 .vtd-status-pending_publish { background: #fef3c7; color: #d97706; }
 .vtd-status-publishing      { background: #ede9fe; color: #7c3aed; }
 .vtd-status-publish_failed  { background: #fee2e2; color: #b91c1c; }

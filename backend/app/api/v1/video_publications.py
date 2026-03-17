@@ -244,6 +244,26 @@ async def fetch_channels(
         raise HTTPException(status_code=500, detail=f"获取渠道列表失败: {str(e)}")
 
 
+@router.get("/open-api/upload/metrics")
+async def get_upload_metrics(
+    task_id: str | None = Query(None, description="Open API 任务 ID"),
+    external_id: str | None = Query(None, description="外部系统 ID"),
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询上传任务各渠道视频指标（代理到 Open API）"""
+    if not task_id and not external_id:
+        raise HTTPException(status_code=400, detail="task_id 和 external_id 至少提供一个")
+
+    service = VideoPublicationService(db)
+    try:
+        return await service.open_api.fetch_upload_metrics(task_id=task_id, external_id=external_id)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Open API 返回错误: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询指标失败: {str(e)}")
+
+
 @router.post("/open-api/health-check")
 async def open_api_health_check(
     db: AsyncSession = Depends(get_db),

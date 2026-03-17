@@ -8,8 +8,8 @@ from pathlib import Path
 from google.cloud import storage
 
 # ── 手动修改这两个变量 ─────────────────────────────────────────
-DATE = "2026-03-11"
-VIDEO_ID = "2664d044-ca5e-4165-b120-8b7812de0163"
+DATE = "2026-03-18"
+VIDEO_ID = "84a6738e-2400-4b07-9722-29962330325b"
 PROD_BUCKET =  "decom-objects"
 TEST_BUCKET =  "audio_test_112"
 # ─────────────────────────────────────────────────────────────

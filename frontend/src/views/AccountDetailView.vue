@@ -253,6 +253,14 @@
                 <a v-if="ch.platform_video_url" :href="ch.platform_video_url" target="_blank" class="ad-ch-link" @click.stop>查看</a>
                 <span v-if="ch.error_message && ch.status === 'failed'" class="ad-ch-error" :title="ch.error_message">{{ ch.error_message }}</span>
               </div>
+              <button
+                v-if="publicationsMap[item.sub.id]?.open_api_task_id"
+                class="ad-metrics-btn"
+                @click.stop="openMetrics(item.sub, item.task.title)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                查看数据
+              </button>
             </div>
 
             <!-- Action buttons -->
@@ -508,6 +516,68 @@
         <div class="ad-preview-title">{{ previewImage.title }}</div>
       </template>
     </el-dialog>
+
+    <!-- 数据指标弹窗 -->
+    <el-dialog
+      v-model="metricsVisible"
+      :title="metricsTitle"
+      width="640px"
+      align-center
+      destroy-on-close
+    >
+      <div v-loading="metricsLoading" class="metrics-body">
+        <template v-if="metricsData">
+          <div class="metrics-summary">
+            <span class="metrics-tag" :class="`metrics-tag-${metricsData.status}`">{{ metricsData.status }}</span>
+            <span class="metrics-total">共 {{ metricsData.total_channels }} 个渠道，{{ metricsData.completed_channels }} 个已完成</span>
+          </div>
+          <div
+            v-for="ch in metricsData.channels"
+            :key="ch.channel_id || ch.platform"
+            class="metrics-channel"
+          >
+            <div class="metrics-ch-header">
+              <span class="metrics-ch-platform">{{ ch.platform }}</span>
+              <span v-if="ch.channel_name" class="metrics-ch-name">{{ ch.channel_name }}</span>
+              <span class="metrics-ch-status" :class="`metrics-ch-status-${ch.status}`">{{ ch.status === 'completed' ? '成功' : ch.status === 'failed' ? '失败' : ch.status }}</span>
+              <a v-if="ch.platform_video_url" :href="ch.platform_video_url" target="_blank" class="metrics-ch-link">查看视频 ↗</a>
+            </div>
+
+            <!-- TikTok stats -->
+            <div v-if="ch.stats && ch.platform === 'tiktok'" class="metrics-stats-grid">
+              <div class="metrics-stat"><span class="metrics-stat-label">播放量</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.view_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">点赞</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.like_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">评论</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.comment_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">分享</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.share_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">下载</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.download_count) }}</span></div>
+            </div>
+
+            <!-- YouTube stats -->
+            <div v-else-if="ch.stats && ch.platform === 'youtube'" class="metrics-stats-grid">
+              <div class="metrics-stat"><span class="metrics-stat-label">播放量</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.views) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">点赞</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.likes) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">评论</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.comments) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">分享</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.shares) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">互动播放</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.engaged_views) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">平均观看时长</span><span class="metrics-stat-value">{{ ch.stats.average_view_duration != null ? ch.stats.average_view_duration.toFixed(1) + 's' : '-' }}</span></div>
+            </div>
+
+            <!-- Instagram stats -->
+            <div v-else-if="ch.stats && ch.platform === 'instagram'" class="metrics-stats-grid">
+              <div class="metrics-stat"><span class="metrics-stat-label">播放量</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.view_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">触达</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.reach_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">点赞</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.like_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">评论</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.comment_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">分享</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.share_count) }}</span></div>
+              <div class="metrics-stat"><span class="metrics-stat-label">收藏</span><span class="metrics-stat-value">{{ fmtNum(ch.stats.save_count) }}</span></div>
+            </div>
+
+            <div v-else class="metrics-no-stats">暂无数据（stats 尚未采集）</div>
+          </div>
+        </template>
+        <el-empty v-else-if="!metricsLoading" description="暂无数据" :image-size="60" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -517,7 +587,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish } from '../api/accounts'
 import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask } from '../api/video_tasks'
-import { fetchSubTaskPublications } from '../api/video_publications'
+import { fetchSubTaskPublications, fetchUploadMetrics } from '../api/video_publications'
 import http from '../api/http'
 
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
@@ -531,6 +601,7 @@ const STATUS_LABELS = {
   pending: '待处理',
   generating: '生成中',
   scoring: 'AI打分',
+  reviewing: '待决策',
   pending_publish: '待发布',
   queued: '队列中',
   publishing: '发布中',
@@ -586,6 +657,12 @@ const publishSubTask = ref(null)
 // 已发布 tab 的渠道状态缓存（以 sub_id 为键）
 const publicationsMap = ref({})
 
+// 数据指标弹窗
+const metricsVisible = ref(false)
+const metricsLoading = ref(false)
+const metricsData = ref(null)
+const metricsTitle = ref('')
+
 // Flatten all sub-tasks with parent task reference
 const allSubTasks = computed(() => {
   const result = []
@@ -630,6 +707,13 @@ const tabCounts = computed(() => {
 })
 
 const emptyText = computed(() => EMPTY_TEXTS[activeTab.value] || '暂无内容')
+
+function fmtNum(n) {
+  if (n == null) return '-'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 function bindingDisplayLabel(binding) {
@@ -851,6 +935,27 @@ async function loadPublishedPublications() {
         // ignore
       }
     }
+  }
+}
+
+async function openMetrics(sub, taskTitle) {
+  const pub = publicationsMap.value[sub.id]
+  if (!pub?.open_api_task_id) {
+    ElMessage.warning('该视频暂无发布任务 ID，无法查询数据')
+    return
+  }
+  metricsTitle.value = taskTitle || sub.title || '视频数据指标'
+  metricsData.value = null
+  metricsVisible.value = true
+  metricsLoading.value = true
+  try {
+    const res = await fetchUploadMetrics({ task_id: pub.open_api_task_id })
+    metricsData.value = res?.data || null
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '查询数据指标失败')
+    metricsVisible.value = false
+  } finally {
+    metricsLoading.value = false
   }
 }
 
@@ -1929,5 +2034,151 @@ onUnmounted(() => {
   .ad-ai-photo-group-right,
   .ad-ai-photo-grid { grid-template-columns: 1fr; }
   .ad-page { padding: 16px; }
+}
+
+/* 查看数据按钮 */
+.ad-metrics-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6366f1;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 5px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 6px;
+}
+.ad-metrics-btn:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+/* 数据指标弹窗 */
+.metrics-body {
+  min-height: 120px;
+}
+
+.metrics-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.metrics-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+}
+.metrics-tag-completed { background: #dcfce7; color: #15803d; }
+.metrics-tag-partial   { background: #fef3c7; color: #b45309; }
+.metrics-tag-failed    { background: #fee2e2; color: #b91c1c; }
+.metrics-tag-processing,
+.metrics-tag-uploading { background: #dbeafe; color: #1d4ed8; }
+
+.metrics-total {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.metrics-channel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.metrics-channel:last-child { margin-bottom: 0; }
+
+.metrics-ch-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.metrics-ch-platform {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #e2e8f0;
+  color: #334155;
+  text-transform: capitalize;
+}
+
+.metrics-ch-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metrics-ch-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.metrics-ch-status-completed { background: #dcfce7; color: #15803d; }
+.metrics-ch-status-failed    { background: #fee2e2; color: #b91c1c; }
+
+.metrics-ch-link {
+  font-size: 11px;
+  color: #6366f1;
+  text-decoration: none;
+  padding: 2px 8px;
+  background: #eef2ff;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.metrics-ch-link:hover { background: #e0e7ff; }
+
+.metrics-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.metrics-stat {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metrics-stat-label {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.metrics-stat-value {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.metrics-no-stats {
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+  padding: 12px 0;
 }
 </style>

@@ -81,6 +81,15 @@ export async function syncPublicationStatus(publicationId) {
 }
 
 /**
+ * 查询上传任务各渠道视频指标
+ * @param {Object} params - { task_id?, external_id? }
+ */
+export async function fetchUploadMetrics(params = {}) {
+  const { data } = await http.get('/open-api/upload/metrics', { params })
+  return data
+}
+
+/**
  * 检查 Open API 服务健康状态
  */
 export async function healthCheck() {

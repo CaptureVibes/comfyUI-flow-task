@@ -232,6 +232,24 @@ class OpenAPIClient:
             response.raise_for_status()
             return response.json()
 
+    async def fetch_upload_metrics(self, task_id: str | None = None, external_id: str | None = None) -> dict:
+        """查询上传任务各渠道视频指标"""
+        params = {}
+        if task_id:
+            params["task_id"] = task_id
+        if external_id:
+            params["external_id"] = external_id
+
+        signed_params = self._sign_params(params)
+
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            response = await client.get(
+                f"{self.base_url}/open-api/v1/upload/metrics",
+                params=signed_params,
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def health_check(self) -> dict:
         """健康检查"""
         # trust_env=False 禁用系统代理
