@@ -46,72 +46,106 @@
           />
         </div>
 
-        <!-- Bound bloggers -->
-        <div v-if="boundBloggers.length > 0" class="vgf-blogger-group">
-          <div class="vgf-group-label">★ 已绑定博主</div>
-          <div
-            v-for="b in boundBloggers"
-            :key="b.id"
-            class="vgf-blogger-item"
-            :class="{ 'is-checked': checkedBloggerIds.includes(b.id) }"
-            @click="toggleBlogger(b)"
-          >
-            <label class="vg-checkbox-wrapper" @click.stop>
-              <input
-                type="checkbox"
-                class="vg-checkbox-input"
-                :checked="checkedBloggerIds.includes(b.id)"
-                @change="toggleBlogger(b)"
-              />
-              <span class="vg-checkbox-box"></span>
-            </label>
-            <img v-if="b.avatar_url" :src="b.avatar_url" class="vgf-blogger-avatar" />
-            <div v-else class="vgf-blogger-avatar vgf-blogger-avatar-empty">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            </div>
-            <div class="vgf-blogger-info">
-              <div class="vgf-blogger-name">{{ b.blogger_name }}</div>
-              <div v-if="b.blogger_handle" class="vgf-blogger-handle">@{{ b.blogger_handle }}</div>
-            </div>
-            <div v-if="bloggerTemplateCount[b.id] !== undefined" class="vgf-blogger-count">
-              {{ bloggerTemplateCount[b.id] }}
-            </div>
-          </div>
-        </div>
-
-        <!-- Search results -->
-        <div v-if="searchedBloggers.length > 0" class="vgf-blogger-group">
-          <div class="vgf-group-label">搜索结果</div>
-          <div
-            v-for="b in searchedBloggers"
-            :key="b.id"
-            class="vgf-blogger-item"
-            :class="{ 'is-checked': checkedBloggerIds.includes(b.id) }"
-            @click="toggleBlogger(b)"
-          >
-            <label class="vg-checkbox-wrapper" @click.stop>
-              <input
-                type="checkbox"
-                class="vg-checkbox-input"
-                :checked="checkedBloggerIds.includes(b.id)"
-                @change="toggleBlogger(b)"
-              />
-              <span class="vg-checkbox-box"></span>
-            </label>
-            <img v-if="b.avatar_url" :src="b.avatar_url" class="vgf-blogger-avatar" />
-            <div v-else class="vgf-blogger-avatar vgf-blogger-avatar-empty">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            </div>
-            <div class="vgf-blogger-info">
-              <div class="vgf-blogger-name">{{ b.blogger_name }}</div>
-              <div v-if="b.blogger_handle" class="vgf-blogger-handle">@{{ b.blogger_handle }}</div>
+        <div class="vgf-blogger-scroll" @scroll.passive="handleBloggerScroll">
+          <!-- Bound bloggers -->
+          <div v-if="boundBloggers.length > 0" class="vgf-blogger-group">
+            <div class="vgf-group-label">★ 已绑定博主</div>
+            <div
+              v-for="b in boundBloggers"
+              :key="b.id"
+              class="vgf-blogger-item"
+              :class="{ 'is-checked': checkedBloggerIds.includes(b.id) }"
+              @click="toggleBlogger(b)"
+            >
+              <label class="vg-checkbox-wrapper" @click.stop>
+                <input
+                  type="checkbox"
+                  class="vg-checkbox-input"
+                  :checked="checkedBloggerIds.includes(b.id)"
+                  @change="toggleBlogger(b)"
+                />
+                <span class="vg-checkbox-box"></span>
+              </label>
+              <img v-if="b.avatar_url" :src="b.avatar_url" class="vgf-blogger-avatar" />
+              <div v-else class="vgf-blogger-avatar vgf-blogger-avatar-empty">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
+              <div class="vgf-blogger-info">
+                <div class="vgf-blogger-name">{{ b.blogger_name }}</div>
+                <div v-if="b.blogger_handle" class="vgf-blogger-handle">@{{ b.blogger_handle }}</div>
+              </div>
+              <div v-if="bloggerTemplateCount[b.id] !== undefined" class="vgf-blogger-count">
+                {{ bloggerTemplateCount[b.id] }}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div v-if="bloggerSearchLoading" class="vgf-blogger-empty">搜索中...</div>
-        <div v-else-if="!loading && boundBloggers.length === 0 && !bloggerSearchQuery" class="vgf-blogger-empty">
-          暂无绑定博主，请先绑定
+          <!-- Search results -->
+          <div v-if="bloggerSearchQuery.trim()" class="vgf-blogger-group">
+            <div class="vgf-group-label">搜索结果</div>
+            <div
+              v-for="b in searchedBloggers"
+              :key="b.id"
+              class="vgf-blogger-item"
+              :class="{ 'is-checked': checkedBloggerIds.includes(b.id) }"
+              @click="toggleBlogger(b)"
+            >
+              <label class="vg-checkbox-wrapper" @click.stop>
+                <input
+                  type="checkbox"
+                  class="vg-checkbox-input"
+                  :checked="checkedBloggerIds.includes(b.id)"
+                  @change="toggleBlogger(b)"
+                />
+                <span class="vg-checkbox-box"></span>
+              </label>
+              <img v-if="b.avatar_url" :src="b.avatar_url" class="vgf-blogger-avatar" />
+              <div v-else class="vgf-blogger-avatar vgf-blogger-avatar-empty">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
+              <div class="vgf-blogger-info">
+                <div class="vgf-blogger-name">{{ b.blogger_name }}</div>
+                <div v-if="b.blogger_handle" class="vgf-blogger-handle">@{{ b.blogger_handle }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Paged list -->
+          <div v-else class="vgf-blogger-group">
+            <div class="vgf-group-label">全部博主</div>
+            <div
+              v-for="b in pagedBloggers"
+              :key="b.id"
+              class="vgf-blogger-item"
+              :class="{ 'is-checked': checkedBloggerIds.includes(b.id) }"
+              @click="toggleBlogger(b)"
+            >
+              <label class="vg-checkbox-wrapper" @click.stop>
+                <input
+                  type="checkbox"
+                  class="vg-checkbox-input"
+                  :checked="checkedBloggerIds.includes(b.id)"
+                  @change="toggleBlogger(b)"
+                />
+                <span class="vg-checkbox-box"></span>
+              </label>
+              <img v-if="b.avatar_url" :src="b.avatar_url" class="vgf-blogger-avatar" />
+              <div v-else class="vgf-blogger-avatar vgf-blogger-avatar-empty">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
+              <div class="vgf-blogger-info">
+                <div class="vgf-blogger-name">{{ b.blogger_name }}</div>
+                <div v-if="b.blogger_handle" class="vgf-blogger-handle">@{{ b.blogger_handle }}</div>
+              </div>
+            </div>
+            <div v-if="pagedBloggersLoading" class="vgf-blogger-empty">加载中...</div>
+            <div v-else-if="pagedBloggersLoaded && pagedBloggers.length === 0" class="vgf-blogger-empty">暂无可选博主</div>
+          </div>
+
+          <div v-if="bloggerSearchLoading" class="vgf-blogger-empty">搜索中...</div>
+          <div v-else-if="bloggerSearchQuery.trim() && searchedBloggers.length === 0" class="vgf-blogger-empty">
+            无匹配博主
+          </div>
         </div>
       </div>
 
@@ -283,7 +317,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccount, fetchAccountBloggers } from '../api/accounts'
-import { searchBloggers } from '../api/tiktok_bloggers'
+import { fetchBloggers, searchBloggers } from '../api/tiktok_bloggers'
 import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
 import { fetchTags } from '../api/tags'
 import { createVideoTask } from '../api/video_tasks'
@@ -301,6 +335,12 @@ const boundBloggers = ref([])
 const searchedBloggers = ref([])
 const bloggerSearchLoading = ref(false)
 const bloggerSearchQuery = ref('')
+const pagedBloggers = ref([])
+const pagedBloggersLoading = ref(false)
+const pagedBloggersLoaded = ref(false)
+const bloggerPage = ref(0)
+const bloggerTotal = ref(0)
+const BLOGGER_PAGE_SIZE = 20
 
 // checkedBloggerIds: multi-select
 const checkedBloggerIds = ref([])
@@ -336,6 +376,8 @@ const bloggerTemplateCount = computed(() => {
   return map
 })
 
+const boundBloggerIds = computed(() => new Set(boundBloggers.value.map(b => b.id)))
+
 function selectRepeatables() {
   batchSelected.value = allTemplates.value
     .filter(item => item.tpl.repeatable)
@@ -364,10 +406,49 @@ async function loadData() {
     for (const b of bloggers) {
       bloggerMap.value[b.id] = b
     }
+    await loadPagedBloggers({ reset: true })
+    selectedTagIds.value = (acct.bound_tags || []).map(tag => tag.id)
+    if (selectedTagIds.value.length > 0) {
+      await reloadAllTemplates()
+    }
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载初始数据失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadPagedBloggers({ reset = false } = {}) {
+  if (pagedBloggersLoading.value) return
+  if (reset) {
+    pagedBloggers.value = []
+    bloggerPage.value = 0
+    bloggerTotal.value = 0
+    pagedBloggersLoaded.value = false
+  }
+  if (pagedBloggersLoaded.value && bloggerTotal.value > 0 && pagedBloggers.value.length >= bloggerTotal.value) {
+    return
+  }
+
+  pagedBloggersLoading.value = true
+  try {
+    const nextPage = bloggerPage.value + 1
+    const res = await fetchBloggers({ page: nextPage, page_size: BLOGGER_PAGE_SIZE })
+    const items = res.data?.items || []
+    const filteredItems = items.filter(b => !boundBloggerIds.value.has(b.id))
+    const existingIds = new Set(pagedBloggers.value.map(b => b.id))
+    const merged = reset ? filteredItems : [
+      ...pagedBloggers.value,
+      ...filteredItems.filter(b => !existingIds.has(b.id)),
+    ]
+    pagedBloggers.value = merged
+    bloggerPage.value = Number(res.data?.page || nextPage)
+    bloggerTotal.value = Number(res.data?.total || 0)
+    pagedBloggersLoaded.value = true
+  } catch (err) {
+    console.error('加载博主分页列表失败:', err)
+  } finally {
+    pagedBloggersLoading.value = false
   }
 }
 
@@ -449,14 +530,23 @@ function handleBloggerSearch() {
   _searchTimer = setTimeout(async () => {
     try {
       const results = await searchBloggers(q, 20)
-      const boundIds = new Set(boundBloggers.value.map(b => b.id))
-      searchedBloggers.value = results.filter(b => !boundIds.has(b.id))
+      searchedBloggers.value = results.filter(b => !boundBloggerIds.value.has(b.id))
     } catch {
       searchedBloggers.value = []
     } finally {
       bloggerSearchLoading.value = false
     }
   }, 300)
+}
+
+function handleBloggerScroll(event) {
+  if (bloggerSearchQuery.value.trim()) return
+  const el = event.target
+  if (!el) return
+  const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24
+  if (nearBottom) {
+    loadPagedBloggers()
+  }
 }
 
 function formatDuration(seconds) {
@@ -658,6 +748,13 @@ onMounted(loadData)
   flex-shrink: 0;
 }
 
+.vgf-blogger-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
 .vgf-search-input {
   width: 100%;
   box-sizing: border-box;
@@ -682,7 +779,6 @@ onMounted(loadData)
 /* Blogger list */
 .vgf-blogger-group {
   padding: 0 8px 8px;
-  overflow-y: auto;
 }
 
 .vgf-group-label {

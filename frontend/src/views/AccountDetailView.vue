@@ -64,6 +64,18 @@
             </span>
             <span v-if="!account.social_bindings?.length" class="ad-no-platform">未绑定平台</span>
           </div>
+          <div class="ad-hero-tags">
+            <span
+              v-for="tag in (account.bound_tags || [])"
+              :key="tag.id"
+              class="ad-tag-badge"
+              :style="tag.color ? { '--ad-tag-color': tag.color } : {}"
+            >
+              <span class="ad-tag-dot"></span>
+              {{ tag.name }}
+            </span>
+            <span v-if="!account.bound_tags?.length" class="ad-no-platform">未绑定标签</span>
+          </div>
 
           <!-- Bound TikTok bloggers -->
           <div v-if="account.tiktok_bloggers?.length" class="ad-hero-bloggers">
@@ -1155,6 +1167,7 @@ onUnmounted(() => {
 .ad-hero-stat-link strong { color: #6366f1; }
 
 .ad-hero-platforms { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.ad-hero-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 
 .ad-hero-bloggers {
   display: flex;
@@ -1211,6 +1224,25 @@ onUnmounted(() => {
 .ad-platform-youtube  { background: #fef2f2; color: #dc2626; }
 .ad-platform-tiktok   { background: #f1f5f9; color: #0f172a; }
 .ad-platform-instagram { background: #fef3c7; color: #92400e; }
+.ad-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  background: color-mix(in srgb, var(--ad-tag-color, #6366f1) 10%, white);
+  border: 1px solid color-mix(in srgb, var(--ad-tag-color, #6366f1) 28%, white);
+}
+.ad-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ad-tag-color, #6366f1);
+  flex-shrink: 0;
+}
 .ad-no-platform { font-size: 13px; color: #94a3b8; }
 
 .ad-hero-actions {
@@ -1889,6 +1921,7 @@ onUnmounted(() => {
   .ad-hero { flex-direction: column; text-align: center; }
   .ad-hero-media { width: 100%; justify-content: center; }
   .ad-hero-platforms { justify-content: center; }
+  .ad-hero-tags { justify-content: center; }
   .ad-hero-meta { justify-content: center; }
   .ad-video-grid { grid-template-columns: repeat(2, 1fr); }
   .ad-ai-summary,
