@@ -173,14 +173,26 @@
 
         <!-- Tag filter -->
         <div v-if="allTags.length > 0" class="vgf-tag-filter">
-          <span class="vgf-tag-filter-label">按标签筛选：</span>
-          <span
-            v-for="tag in allTags"
-            :key="tag.id"
-            class="vgf-tag-chip"
-            :class="{ 'is-active': selectedTagIds.includes(tag.id) }"
-            @click="toggleTagFilter(tag.id)"
-          >{{ tag.name }}</span>
+          <div class="vgf-tag-filter-head">
+            <span class="vgf-tag-filter-label">按标签筛选：</span>
+            <button
+              v-if="allTags.length > COLLAPSED_TAG_COUNT"
+              type="button"
+              class="vgf-tag-toggle"
+              @click="tagsExpanded = !tagsExpanded"
+            >
+              {{ tagsExpanded ? '收起' : `展开全部 (${allTags.length})` }}
+            </button>
+          </div>
+          <div class="vgf-tag-filter-body" :class="{ 'is-collapsed': !tagsExpanded && allTags.length > COLLAPSED_TAG_COUNT }">
+            <span
+              v-for="tag in visibleTags"
+              :key="tag.id"
+              class="vgf-tag-chip"
+              :class="{ 'is-active': selectedTagIds.includes(tag.id) }"
+              @click="toggleTagFilter(tag.id)"
+            >{{ tag.name }}</span>
+          </div>
         </div>
 
         <div v-if="checkedBloggerIds.length === 0 && selectedTagIds.length === 0" class="vgf-tpl-empty">
@@ -358,6 +370,8 @@ const batchSelected = ref([])
 // tag filter
 const allTags = ref([])
 const selectedTagIds = ref([])
+const tagsExpanded = ref(false)
+const COLLAPSED_TAG_COUNT = 12
 
 // allTemplates: flat list across all checked bloggers, repeatable first
 const allTemplates = computed(() => {
@@ -365,6 +379,11 @@ const allTemplates = computed(() => {
     ? checkedBloggerIds.value.flatMap(id => templatesByBlogger.value[id] || [])
     : tagOnlyTemplates.value
   return [...items].sort((a, b) => (b.tpl.repeatable ? 1 : 0) - (a.tpl.repeatable ? 1 : 0))
+})
+
+const visibleTags = computed(() => {
+  if (tagsExpanded.value) return allTags.value
+  return allTags.value.slice(0, COLLAPSED_TAG_COUNT)
 })
 
 // template count badge per blogger
@@ -1021,12 +1040,30 @@ onMounted(loadData)
 /* Tag filter bar */
 .vgf-tag-filter {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid #f1f5f9;
   flex-shrink: 0;
+}
+
+.vgf-tag-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vgf-tag-filter-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vgf-tag-filter-body.is-collapsed {
+  max-height: 60px;
+  overflow: hidden;
 }
 
 .vgf-tag-filter-label {
@@ -1034,6 +1071,21 @@ onMounted(loadData)
   color: #94a3b8;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.vgf-tag-toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6366f1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.vgf-tag-toggle:hover {
+  color: #4f46e5;
 }
 
 .vgf-tag-chip {
