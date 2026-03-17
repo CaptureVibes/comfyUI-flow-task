@@ -294,7 +294,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, fetchAccounts, deleteAccount, restartAIAccountGeneration, resumeAIAccountGeneration } from '../api/accounts'
+import { bulkGenerateAIAccounts, fetchAccounts, deleteAccount, resumeAIAccountGeneration } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
@@ -478,27 +478,23 @@ function doJump() {
 async function handleBulkContinueAIGeneration() {
   if (bulkRestarting.value) return
 
-  const runningStatuses = ['pending', 'video_analyzing', 'name_generating', 'photo_generating', 'avatar_generating']
   const waitingSelectionAccounts = items.value.filter(i => i.ai_generation_status === 'awaiting_photo_selection')
-  const runningAccounts = items.value.filter(i => runningStatuses.includes(i.ai_generation_status))
-  const actionableAccounts = items.value.filter(i => ['failed', 'idle'].includes(i.ai_generation_status))
+  const completedAccounts = items.value.filter(i => i.ai_generation_status === 'completed')
+  const actionableAccounts = items.value.filter(i => !['completed', 'awaiting_photo_selection'].includes(i.ai_generation_status))
   if (actionableAccounts.length === 0) {
     if (waitingSelectionAccounts.length > 0) {
       ElMessage.info(`有 ${waitingSelectionAccounts.length} 个账号正在等待人工选照片`)
-    } else if (runningAccounts.length > 0) {
-      ElMessage.info(`有 ${runningAccounts.length} 个账号正在运行或排队中，无需重复继续`)
+    } else if (completedAccounts.length > 0) {
+      ElMessage.info('没有需要继续的 AI 生成任务')
     } else {
       ElMessage.info('没有需要继续的 AI 生成任务')
     }
     return
   }
 
-  const failedAccounts = actionableAccounts.filter(i => i.ai_generation_status === 'failed')
-  const resumableAccounts = actionableAccounts.filter(i => i.ai_generation_status !== 'failed')
-
   try {
     await ElMessageBox.confirm(
-      `确定继续 ${actionableAccounts.length} 个任务？失败任务将从头重跑，其余可继续任务将断点续跑。${runningAccounts.length ? `另有 ${runningAccounts.length} 个账号正在运行或排队中，本次将跳过。` : ''}${waitingSelectionAccounts.length ? `另有 ${waitingSelectionAccounts.length} 个账号等待人工选照片，本次将跳过。` : ''}`,
+      `确定继续 ${actionableAccounts.length} 个任务？本次会按数据库中的当前阶段断点续跑。${waitingSelectionAccounts.length ? `另有 ${waitingSelectionAccounts.length} 个账号等待人工选照片，本次将跳过。` : ''}`,
       '确认继续',
       { confirmButtonText: '确认继续', cancelButtonText: '取消', type: 'warning' }
     )
@@ -508,10 +504,7 @@ async function handleBulkContinueAIGeneration() {
 
   bulkRestarting.value = true
   try {
-    await Promise.all([
-      ...failedAccounts.map(i => restartAIAccountGeneration(i.id)),
-      ...resumableAccounts.map(i => resumeAIAccountGeneration(i.id)),
-    ])
+    await Promise.all(actionableAccounts.map(i => resumeAIAccountGeneration(i.id)))
     ElMessage.success(`已继续 ${actionableAccounts.length} 个任务`)
     await loadData()
   } catch (err) {

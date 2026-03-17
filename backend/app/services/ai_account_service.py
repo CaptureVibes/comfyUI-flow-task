@@ -1051,7 +1051,8 @@ async def resume_ai_account_generation(account_id: str) -> str:
         state = _new_state(account_id, "pending")
         ai_account_states[account_id] = state
 
-    if state.get("status") in _RUNNING_STATUSES:
+    existing_task = ai_account_worker_tasks.get(account_id)
+    if existing_task is not None and not existing_task.done():
         await _save_state(account_id)
         return "already_running"
 
