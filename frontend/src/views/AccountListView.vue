@@ -182,6 +182,9 @@
       >
         <!-- Media area -->
         <div class="ac-media-wrap">
+          <span v-if="item.pending_publish_count" class="ac-pending-badge" :title="`待发布视频 ${item.pending_publish_count} 条`">
+            {{ item.pending_publish_count }}
+          </span>
           <img
             v-if="item.photo_url"
             :src="item.photo_url"
@@ -715,6 +718,27 @@ onMounted(loadData)
   color: #94a3b8;
   font-size: 12px;
   background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
+}
+
+.ac-pending-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(234, 88, 12, 0.96);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 6px 18px rgba(194, 65, 12, 0.28);
+  backdrop-filter: blur(8px);
 }
 
 .ac-avatar-float {

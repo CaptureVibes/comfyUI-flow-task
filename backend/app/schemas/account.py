@@ -170,6 +170,7 @@ class AccountRead(BaseModel):
     publish_count: int = 1
     ai_generation_status: str = "idle"
     ai_generation_error: str | None = None
+    pending_publish_count: int = 0
     created_at: datetime
     updated_at: datetime
 

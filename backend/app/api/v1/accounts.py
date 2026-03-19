@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
@@ -17,6 +17,7 @@ from app.models.account_tag import AccountTag
 from app.models.tag import Tag
 from app.models.tag import VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
+from app.models.video_task import VideoSubTask, VideoTask
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
     BoundBloggerRead, BoundTagRead, ScheduledPublishConfig,
@@ -62,10 +63,16 @@ async def _load_bound_tags(session: AsyncSession, account_id: uuid.UUID) -> list
     return [BoundTagRead.model_validate(t) for t in rows]
 
 
-def _account_read(account, bloggers: list[BoundBloggerRead], tags: list[BoundTagRead] | None = None) -> AccountRead:
+def _account_read(
+    account,
+    bloggers: list[BoundBloggerRead],
+    tags: list[BoundTagRead] | None = None,
+    pending_publish_count: int = 0,
+) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
     data.bound_tags = tags or []
+    data.pending_publish_count = pending_publish_count
     return data
 
 
@@ -120,6 +127,7 @@ async def list_accounts_endpoint(
     account_ids = [a.id for a in items]
     blogger_map: dict[uuid.UUID, list[BoundBloggerRead]] = {aid: [] for aid in account_ids}
     tag_map: dict[uuid.UUID, list[BoundTagRead]] = {aid: [] for aid in account_ids}
+    pending_publish_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
     if account_ids:
         blogger_stmt = (
             select(AccountBloggerBinding.account_id, TiktokBlogger)
@@ -139,7 +147,28 @@ async def list_accounts_endpoint(
         for aid, tag in (await session.execute(tag_stmt)).all():
             tag_map[aid].append(BoundTagRead.model_validate(tag))
 
-    rich_items = [_account_read(a, blogger_map[a.id], tag_map[a.id]) for a in items]
+        pending_publish_stmt = (
+            select(VideoTask.account_id, func.count(VideoSubTask.id))
+            .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .where(
+                VideoTask.account_id.in_(account_ids),
+                VideoSubTask.status == "pending_publish",
+            )
+            .group_by(VideoTask.account_id)
+        )
+        for aid, count in (await session.execute(pending_publish_stmt)).all():
+            if aid is not None:
+                pending_publish_map[aid] = int(count or 0)
+
+    rich_items = [
+        _account_read(
+            a,
+            blogger_map[a.id],
+            tag_map[a.id],
+            pending_publish_map[a.id],
+        )
+        for a in items
+    ]
     return AccountListResponse(
         items=rich_items,  # type: ignore[arg-type]
         total=total,
