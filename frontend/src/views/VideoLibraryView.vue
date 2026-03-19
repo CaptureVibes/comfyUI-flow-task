@@ -116,6 +116,38 @@
           <div class="vl-blogger-no-result">无匹配博主</div>
         </div>
       </div>
+
+      <div class="vl-blogger-search-wrap" v-click-outside="closeTagDropdown">
+        <div class="vl-search-wrap" style="position:relative">
+          <svg class="vl-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            v-model="tagSearchInput"
+            class="vl-search-input"
+            :placeholder="selectedTagFilterSummary || '搜索标签...'"
+            :class="{ 'has-selection': selectedTagFilterIds.length > 0 }"
+            @input="onTagSearchInput"
+            @focus="tagDropdownOpen = true"
+          />
+          <button v-if="selectedTagFilterIds.length || tagSearchInput" class="vl-search-clear" @click="clearTagFilter">✕</button>
+        </div>
+        <div v-if="tagDropdownOpen && filteredTagOptions.length" class="vl-blogger-dropdown">
+          <div
+            v-for="tag in filteredTagOptions"
+            :key="tag.id"
+            class="vl-blogger-option"
+            :class="{ active: selectedTagFilterIds.includes(tag.id) }"
+            @mousedown.prevent="toggleTagFilter(tag)"
+          >
+            <span class="vl-tag-opt-dot" :style="{ background: tag.color || '#94a3b8' }"></span>
+            <div class="vl-blogger-opt-info">
+              <span class="vl-blogger-opt-name">{{ tag.name }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="tagDropdownOpen && tagSearchInput && !filteredTagOptions.length" class="vl-blogger-dropdown">
+          <div class="vl-blogger-no-result">无匹配标签</div>
+        </div>
+      </div>
     </div>
 
     <!-- ── Card grid ── -->
@@ -479,6 +511,12 @@ const pageSize = ref(Number(route.query.page_size) || 20)
 const platform = ref(route.query.platform || '')
 const bloggerSearch = ref('')  // kept for URL compat but unused
 const selectedBloggerId = ref(route.query.tiktok_blogger_id || null)
+const selectedTagFilterIds = ref(
+  String(route.query.tag_ids || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean)
+)
 const bloggerOptions = ref([])
 // Blogger searchable dropdown state
 const bloggerSearchInput = ref('')
@@ -490,6 +528,23 @@ const filteredBloggerOptions = computed(() => {
   return bloggerOptions.value.filter(o =>
     o.label.toLowerCase().includes(q) || (o.handle || '').toLowerCase().includes(q)
   )
+})
+const tagSearchInput = ref('')
+const tagDropdownOpen = ref(false)
+const selectedTagFilterSummary = computed(() => {
+  if (!selectedTagFilterIds.value.length) return ''
+  const names = tags.value
+    .filter(t => selectedTagFilterIds.value.includes(t.id))
+    .map(t => t.name)
+    .filter(Boolean)
+  if (!names.length) return `${selectedTagFilterIds.value.length} 个标签`
+  if (names.length <= 2) return names.join('、')
+  return `${names[0]}、${names[1]} 等 ${names.length} 个标签`
+})
+const filteredTagOptions = computed(() => {
+  const q = tagSearchInput.value.trim().toLowerCase()
+  if (!q) return tags.value
+  return tags.value.filter(t => (t.name || '').toLowerCase().includes(q))
 })
 const jumpPage = ref(page.value)
 
@@ -542,12 +597,17 @@ function syncUrl() {
   if (pageSize.value !== 20) query.page_size = String(pageSize.value)
   if (platform.value) query.platform = platform.value
   if (selectedBloggerId.value) query.tiktok_blogger_id = selectedBloggerId.value
+  if (selectedTagFilterIds.value.length) query.tag_ids = selectedTagFilterIds.value.join(',')
   router.replace({ query })
 }
 
 async function loadStats() {
   try {
-    stats.value = await fetchVideoSourceStats()
+    const params = {}
+    if (platform.value) params.platform = platform.value
+    if (selectedBloggerId.value) params.tiktok_blogger_id = selectedBloggerId.value
+    if (selectedTagFilterIds.value.length) params.tag_ids = selectedTagFilterIds.value.join(',')
+    stats.value = await fetchVideoSourceStats(params)
   } catch { /* ignore */ }
 }
 
@@ -561,6 +621,9 @@ async function loadData(silent = false) {
     if (platform.value) params.platform = platform.value
     if (selectedBloggerId.value) {
       params.tiktok_blogger_id = selectedBloggerId.value
+    }
+    if (selectedTagFilterIds.value.length) {
+      params.tag_ids = selectedTagFilterIds.value.join(',')
     }
 
     const data = await fetchVideoSources(params)
@@ -585,6 +648,7 @@ function switchPlatform(val) {
   jumpPage.value = 1
   syncUrl()
   loadData()
+  loadStats()
 }
 
 function onSearchInput() {
@@ -601,6 +665,15 @@ function closeBloggerDropdown() {
   if (!selectedBlogger.value) bloggerSearchInput.value = ''
 }
 
+function onTagSearchInput() {
+  tagDropdownOpen.value = true
+}
+
+function closeTagDropdown() {
+  tagDropdownOpen.value = false
+  if (!selectedTagFilterIds.value.length) tagSearchInput.value = ''
+}
+
 function selectBlogger(opt) {
   selectedBlogger.value = opt
   selectedBloggerId.value = opt.value
@@ -610,6 +683,23 @@ function selectBlogger(opt) {
   jumpPage.value = 1
   syncUrl()
   loadData()
+  loadStats()
+}
+
+function toggleTagFilter(tag) {
+  const exists = selectedTagFilterIds.value.includes(tag.id)
+  if (exists) {
+    selectedTagFilterIds.value = selectedTagFilterIds.value.filter(id => id !== tag.id)
+  } else {
+    selectedTagFilterIds.value = [...selectedTagFilterIds.value, tag.id]
+  }
+  tagSearchInput.value = ''
+  tagDropdownOpen.value = true
+  page.value = 1
+  jumpPage.value = 1
+  syncUrl()
+  loadData()
+  loadStats()
 }
 
 function clearSearch() {
@@ -618,6 +708,7 @@ function clearSearch() {
   jumpPage.value = 1
   syncUrl()
   loadData()
+  loadStats()
 }
 
 async function handleCreateTemplate(item) {
@@ -661,6 +752,7 @@ function handleSizeChange(val) {
   jumpPage.value = 1
   syncUrl()
   loadData()
+  loadStats()
 }
 
 function doJump() {
@@ -755,6 +847,12 @@ async function handleDownloadAll() {
 async function loadTags() {
   try {
     tags.value = await fetchTags()
+    if (selectedTagFilterIds.value.length) {
+      selectedTagFilterIds.value = selectedTagFilterIds.value.filter(id => tags.value.some(t => t.id === id))
+    }
+    if (!selectedTagFilterIds.value.length) {
+      tagSearchInput.value = ''
+    }
   } catch { /* ignore */ }
 }
 
@@ -875,6 +973,18 @@ function clearBloggerFilter() {
   jumpPage.value = 1
   syncUrl()
   loadData()
+  loadStats()
+}
+
+function clearTagFilter() {
+  selectedTagFilterIds.value = []
+  tagSearchInput.value = ''
+  tagDropdownOpen.value = false
+  page.value = 1
+  jumpPage.value = 1
+  syncUrl()
+  loadData()
+  loadStats()
 }
 
 onMounted(() => {
@@ -892,6 +1002,10 @@ onActivated(() => {
   pageSize.value = Number(q.page_size) || 20
   platform.value = q.platform || ''
   selectedBloggerId.value = q.tiktok_blogger_id || null
+  selectedTagFilterIds.value = String(q.tag_ids || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean)
   if (!selectedBloggerId.value) selectedBlogger.value = null
   jumpPage.value = page.value
   loadStats()
@@ -2035,6 +2149,13 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+.vl-tag-opt-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 .vl-blogger-opt-info {
   display: flex;

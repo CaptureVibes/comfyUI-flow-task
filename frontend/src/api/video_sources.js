@@ -5,8 +5,8 @@ export async function parseVideoUrl(source_url) {
   return data
 }
 
-export async function fetchVideoSourceStats() {
-  const { data } = await http.get('/video-sources/stats')
+export async function fetchVideoSourceStats(params = {}) {
+  const { data } = await http.get('/video-sources/stats', { params })
   return data
 }
 

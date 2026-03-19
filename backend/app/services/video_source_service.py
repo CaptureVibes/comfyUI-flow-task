@@ -318,45 +318,124 @@ async def list_video_sources(
     platform: str | None = None,
     blogger_name: str | None = None,
     tiktok_blogger_id: UUID | None = None,
+    tag_ids: list[UUID] | None = None,
 ) -> tuple[list[VideoSource], int]:
-    stmt = select(VideoSource).order_by(VideoSource.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    base_ids_stmt = select(VideoSource.id)
     total_stmt = select(func.count(VideoSource.id))
+
     if owner_id is not None:
-        stmt = stmt.where(VideoSource.owner_id == owner_id)
+        base_ids_stmt = base_ids_stmt.where(VideoSource.owner_id == owner_id)
         total_stmt = total_stmt.where(VideoSource.owner_id == owner_id)
     if platform:
-        stmt = stmt.where(VideoSource.platform == platform)
+        base_ids_stmt = base_ids_stmt.where(VideoSource.platform == platform)
         total_stmt = total_stmt.where(VideoSource.platform == platform)
     if tiktok_blogger_id is not None:
-        stmt = stmt.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
+        base_ids_stmt = base_ids_stmt.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
         total_stmt = total_stmt.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
     elif blogger_name:
-        stmt = stmt.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
+        base_ids_stmt = base_ids_stmt.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
         total_stmt = total_stmt.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
-    rows = (await session.execute(stmt)).scalars().all()
-    total = int(await session.scalar(total_stmt) or 0)
+    if tag_ids:
+        base_ids_stmt = (
+            base_ids_stmt
+            .join(VideoSourceTag, VideoSourceTag.video_source_id == VideoSource.id)
+            .where(VideoSourceTag.tag_id.in_(tag_ids))
+            .group_by(VideoSource.id)
+            .having(func.count(func.distinct(VideoSourceTag.tag_id)) == len(tag_ids))
+        )
+        total_stmt = (
+            select(func.count(func.distinct(VideoSource.id)))
+            .select_from(VideoSource)
+            .join(VideoSourceTag, VideoSourceTag.video_source_id == VideoSource.id)
+            .where(VideoSourceTag.tag_id.in_(tag_ids))
+            .group_by(VideoSource.id)
+            .having(func.count(func.distinct(VideoSourceTag.tag_id)) == len(tag_ids))
+        )
+        if owner_id is not None:
+            total_stmt = total_stmt.where(VideoSource.owner_id == owner_id)
+        if platform:
+            total_stmt = total_stmt.where(VideoSource.platform == platform)
+        if tiktok_blogger_id is not None:
+            total_stmt = total_stmt.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
+        elif blogger_name:
+            total_stmt = total_stmt.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
+
+    page_ids_stmt = (
+        base_ids_stmt
+        .order_by(VideoSource.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    page_ids = list((await session.execute(page_ids_stmt)).scalars().all())
+    if not page_ids:
+        total_rows = (await session.execute(total_stmt)).all() if tag_ids else []
+        total = len(total_rows) if tag_ids else int(await session.scalar(total_stmt) or 0)
+        return [], total
+
+    rows_stmt = (
+        select(VideoSource)
+        .where(VideoSource.id.in_(page_ids))
+        .order_by(VideoSource.created_at.desc())
+    )
+    rows = (await session.execute(rows_stmt)).scalars().all()
+    if tag_ids:
+        total = len((await session.execute(total_stmt)).all())
+    else:
+        total = int(await session.scalar(total_stmt) or 0)
     return list(rows), total
 
 
 async def get_video_source_stats(
     session: AsyncSession,
     owner_id: UUID | None = None,
+    platform: str | None = None,
+    blogger_name: str | None = None,
+    tiktok_blogger_id: UUID | None = None,
+    tag_ids: list[UUID] | None = None,
 ) -> dict:
-    base = select(func.count(VideoSource.id))
-    yt_stmt = select(func.count(VideoSource.id)).where(VideoSource.platform == "youtube")
-    tk_stmt = select(func.count(VideoSource.id)).where(VideoSource.platform == "tiktok")
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    recent_stmt = select(func.count(VideoSource.id)).where(VideoSource.created_at >= week_ago)
-
+    matched_ids = select(VideoSource.id)
     if owner_id is not None:
-        base = base.where(VideoSource.owner_id == owner_id)
-        yt_stmt = yt_stmt.where(VideoSource.owner_id == owner_id)
-        tk_stmt = tk_stmt.where(VideoSource.owner_id == owner_id)
-        recent_stmt = recent_stmt.where(VideoSource.owner_id == owner_id)
+        matched_ids = matched_ids.where(VideoSource.owner_id == owner_id)
+    if platform:
+        matched_ids = matched_ids.where(VideoSource.platform == platform)
+    if tiktok_blogger_id is not None:
+        matched_ids = matched_ids.where(VideoSource.tiktok_blogger_id == tiktok_blogger_id)
+    elif blogger_name:
+        matched_ids = matched_ids.where(VideoSource.blogger_name.ilike(f"%{blogger_name}%"))
+    if tag_ids:
+        matched_ids = (
+            matched_ids
+            .join(VideoSourceTag, VideoSourceTag.video_source_id == VideoSource.id)
+            .where(VideoSourceTag.tag_id.in_(tag_ids))
+            .group_by(VideoSource.id)
+            .having(func.count(func.distinct(VideoSourceTag.tag_id)) == len(tag_ids))
+        )
 
-    total = int(await session.scalar(base) or 0)
-    youtube_count = int(await session.scalar(yt_stmt) or 0)
-    tiktok_count = int(await session.scalar(tk_stmt) or 0)
+    matched_subq = matched_ids.subquery()
+    total_stmt = select(func.count()).select_from(matched_subq)
+    youtube_stmt = (
+        select(func.count())
+        .select_from(matched_subq)
+        .join(VideoSource, VideoSource.id == matched_subq.c.id)
+        .where(VideoSource.platform == "youtube")
+    )
+    tiktok_stmt = (
+        select(func.count())
+        .select_from(matched_subq)
+        .join(VideoSource, VideoSource.id == matched_subq.c.id)
+        .where(VideoSource.platform == "tiktok")
+    )
+    recent_stmt = (
+        select(func.count())
+        .select_from(matched_subq)
+        .join(VideoSource, VideoSource.id == matched_subq.c.id)
+        .where(VideoSource.created_at >= week_ago)
+    )
+
+    total = int(await session.scalar(total_stmt) or 0)
+    youtube_count = int(await session.scalar(youtube_stmt) or 0)
+    tiktok_count = int(await session.scalar(tiktok_stmt) or 0)
     recent_count = int(await session.scalar(recent_stmt) or 0)
 
     return {

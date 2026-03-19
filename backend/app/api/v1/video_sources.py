@@ -56,10 +56,24 @@ def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid
 # /stats and /parse MUST be before /{vs_id} to avoid UUID matching them
 @router.get("/stats", response_model=VideoSourceStatsResponse)
 async def get_stats_endpoint(
+    platform: str | None = Query(None),
+    blogger_name: str | None = Query(None),
+    tiktok_blogger_id: uuid.UUID | None = Query(None),
+    tag_ids: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceStatsResponse:
-    stats = await get_video_source_stats(session, owner_id)
+    parsed_tag_ids: list[uuid.UUID] = []
+    if tag_ids:
+        parsed_tag_ids = [uuid.UUID(part.strip()) for part in tag_ids.split(",") if part.strip()]
+    stats = await get_video_source_stats(
+        session,
+        owner_id,
+        platform=platform,
+        blogger_name=blogger_name,
+        tiktok_blogger_id=tiktok_blogger_id,
+        tag_ids=parsed_tag_ids,
+    )
     return VideoSourceStatsResponse(**stats)
 
 
@@ -114,12 +128,16 @@ async def list_video_sources_endpoint(
     platform: str | None = Query(None),
     blogger_name: str | None = Query(None),
     tiktok_blogger_id: uuid.UUID | None = Query(None),
+    tag_ids: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoSourceListResponse:
+    parsed_tag_ids: list[uuid.UUID] = []
+    if tag_ids:
+        parsed_tag_ids = [uuid.UUID(part.strip()) for part in tag_ids.split(",") if part.strip()]
     rows, total = await list_video_sources(
         session, page=page, page_size=page_size, owner_id=owner_id,
-        platform=platform, blogger_name=blogger_name, tiktok_blogger_id=tiktok_blogger_id,
+        platform=platform, blogger_name=blogger_name, tiktok_blogger_id=tiktok_blogger_id, tag_ids=parsed_tag_ids,
     )
 
     # 批量查询创建者用户名
