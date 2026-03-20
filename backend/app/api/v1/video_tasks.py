@@ -311,7 +311,7 @@ async def update_sub_task_note(
 ) -> Any:
     """保存用户手动填写的备注，不影响子任务状态"""
     svc = VideoTaskService(db=session)
-    return await svc.update_sub_task_note(sub_task_id, owner_id, payload.manual_note)
+    return await svc.update_sub_task_note(sub_task_id, owner_id, payload.manual_note, payload.manual_score)
 
 
 @router.delete("/subtasks/{sub_task_id}", status_code=status.HTTP_200_OK)

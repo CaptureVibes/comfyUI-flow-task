@@ -585,6 +585,7 @@ class VideoTaskService:
         sub_task_id: uuid.UUID,
         owner_id: uuid.UUID | None,
         manual_note: str | None,
+        manual_score: int | None = None,
     ) -> VideoSubTask:
         q = select(VideoSubTask).where(VideoSubTask.id == sub_task_id).options(
             selectinload(VideoSubTask.task)
@@ -594,6 +595,7 @@ class VideoTaskService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
         if owner_id is not None and sub.task.owner_id != owner_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+        sub.manual_score = manual_score
         sub.manual_note = manual_note
         await self.db.commit()
         await self.db.refresh(sub)

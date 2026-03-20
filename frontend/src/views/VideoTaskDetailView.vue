@@ -251,12 +251,33 @@
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="margin-right:5px;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               我的备注
             </div>
-            <textarea
-              v-model="manualNotes[sub.id]"
-              class="vtd-note-textarea"
-              placeholder="输入评分或备注..."
-              rows="3"
-            />
+            <div class="vtd-note-row">
+              <!-- 左：我的打分 -->
+              <div class="vtd-note-score-col">
+                <div class="vtd-note-col-label">我的打分</div>
+                <div class="vtd-note-score-wrap">
+                  <input
+                    v-model.number="manualScores[sub.id]"
+                    class="vtd-note-score-input"
+                    type="number"
+                    min="0"
+                    max="100"
+                    placeholder="0-100"
+                  />
+                  <span class="vtd-note-score-unit">分</span>
+                </div>
+              </div>
+              <!-- 右：评分理由 -->
+              <div class="vtd-note-reason-col">
+                <div class="vtd-note-col-label">评分理由</div>
+                <textarea
+                  v-model="manualNotes[sub.id]"
+                  class="vtd-note-textarea"
+                  placeholder="输入评分理由或备注..."
+                  rows="3"
+                />
+              </div>
+            </div>
             <button
               class="vtd-note-save-btn"
               :class="{ loading: savingNote[sub.id] }"
@@ -425,6 +446,8 @@ const selecting = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
+// 手动打分：{ [subId]: number | '' }
+const manualScores = ref({})
 // 手动备注：{ [subId]: draftText }
 const manualNotes = ref({})
 // 保存中状态：{ [subId]: boolean }
@@ -563,9 +586,12 @@ async function loadTask(polling = false) {
       }
     } else {
       task.value = await fetchVideoTask(route.params.id)
-      // 初始化 manualNotes draft（首次加载时同步数据库已有值）
+      // 初始化 manualScores / manualNotes draft（首次加载时同步数据库已有值）
       if (task.value?.sub_tasks) {
         task.value.sub_tasks.forEach(sub => {
+          if (manualScores.value[sub.id] === undefined) {
+            manualScores.value[sub.id] = sub.manual_score ?? ''
+          }
           if (manualNotes.value[sub.id] === undefined) {
             manualNotes.value[sub.id] = sub.manual_note ?? ''
           }
@@ -614,8 +640,9 @@ async function handleSaveNote(sub) {
   if (savingNote.value[sub.id]) return
   savingNote.value[sub.id] = true
   try {
-    const updated = await saveSubTaskNote(sub.id, manualNotes.value[sub.id] || null)
+    const updated = await saveSubTaskNote(sub.id, manualNotes.value[sub.id] || null, manualScores.value[sub.id])
     // 同步回数据
+    sub.manual_score = updated.manual_score
     sub.manual_note = updated.manual_note
     ElMessage.success('备注已保存')
   } catch (e) {
@@ -781,6 +808,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     stopAutoRefresh()
     task.value = null
     account.value = null
+    manualScores.value = {}
     manualNotes.value = {}
     await loadTask()
     await loadAccount()
@@ -1365,6 +1393,68 @@ onUnmounted(() => {
 .vtd-status-abandoned       { background: #fee2e2; color: #b91c1c; }
 
 /* 手动备注区域 */
+.vtd-note-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.vtd-note-score-col {
+  flex: 0 0 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vtd-note-reason-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vtd-note-col-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6366f1;
+  letter-spacing: 0.02em;
+}
+
+.vtd-note-score-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vtd-note-score-input {
+  width: 64px;
+  padding: 6px 8px;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+  -moz-appearance: textfield;
+  transition: border-color 0.15s;
+}
+
+.vtd-note-score-input::-webkit-outer-spin-button,
+.vtd-note-score-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.vtd-note-score-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+}
+
+.vtd-note-score-unit {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
 .vtd-manual-note {
   margin: 14px 0 0;
   padding: 14px;

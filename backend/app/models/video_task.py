@@ -73,7 +73,8 @@ class VideoSubTask(Base):
     # Error message when AI scoring fails
     scoring_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Manual note written by the user (free-form text, independent of AI scoring)
+    # Manual score and note written by the user, independent of AI scoring
+    manual_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     manual_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # True when this sub-task's video was chosen by the user for publishing
