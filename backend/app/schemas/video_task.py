@@ -27,6 +27,7 @@ class VideoSubTaskRead(BaseModel):
     round1_reason: str | None = None
     round2_reason: str | None = None
     scoring_error: str | None = None  # Error message when AI scoring fails
+    manual_note: str | None = None  # User-written note, independent of AI scoring
     queue_order: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -76,6 +77,10 @@ class VideoSubTaskStatusUpdate(BaseModel):
     # When selecting a video for publishing: set selected=True to trigger
     # pending_publish transition and abandon the other two sub-tasks
     selected: bool | None = None
+
+
+class VideoSubTaskNoteUpdate(BaseModel):
+    manual_note: str | None = None
 
 
 class VideoSubTaskStateRead(BaseModel):

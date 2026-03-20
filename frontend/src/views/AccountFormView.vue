@@ -195,8 +195,8 @@
         </div>
       </div>
 
-      <!-- 绑定标签卡片（仅编辑模式显示） -->
-      <div v-if="isEdit" class="vtfd-card vtfd-fw-card">
+      <!-- 绑定标签卡片 -->
+      <div class="vtfd-card vtfd-fw-card">
         <div class="vtfd-section">
           <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
             <span class="vtfd-section-tag">绑定标签</span>
@@ -221,8 +221,8 @@
         </div>
       </div>
 
-      <!-- TikTok 博主绑定卡片（仅编辑模式显示） -->
-      <div v-if="isEdit" class="vtfd-card vtfd-fw-card">
+      <!-- TikTok 博主绑定卡片 -->
+      <div class="vtfd-card vtfd-fw-card">
         <div class="vtfd-section">
           <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
             <span class="vtfd-section-tag">绑定 TikTok 博主</span>
@@ -686,8 +686,13 @@ async function handleSave() {
         router.push(`/dashboard/accounts/${route.params.id}`)
       } else {
         const created = await createAccount(payload)
-        ElMessage.success('已创建')
-        router.push(`/dashboard/accounts/${created.id}`)
+        // 批量提交新建时选择的标签和博主绑定
+        await Promise.allSettled([
+          ...boundTags.value.map(tag => bindTagToAccount(created.id, tag.id)),
+          ...boundBloggers.value.map(blogger => bindBlogger(created.id, blogger.id)),
+        ])
+        ElMessage.success('账号已创建')
+        router.push(`/dashboard/accounts/${created.id}/edit`)
       }
     } catch (err) {
       if (isDuplicateRequestError(err)) return
@@ -733,6 +738,14 @@ async function openTagBindDialog() {
 
 async function handleBindTag(tag) {
   if (tagBindingId.value) return
+  // 新建模式：仅本地添加，保存时统一提交
+  if (!isEdit.value) {
+    if (!boundTags.value.some(t => t.id === tag.id)) {
+      boundTags.value.push(tag)
+    }
+    ElMessage.success(`已选择标签：${tag.name}`)
+    return
+  }
   tagBindingId.value = tag.id
   try {
     await bindTagToAccount(route.params.id, tag.id)
@@ -749,6 +762,11 @@ async function handleBindTag(tag) {
 
 async function handleUnbindTag(tag) {
   if (tagUnbindingId.value) return
+  // 新建模式：仅本地移除
+  if (!isEdit.value) {
+    boundTags.value = boundTags.value.filter(t => t.id !== tag.id)
+    return
+  }
   tagUnbindingId.value = tag.id
   try {
     await unbindTagFromAccount(route.params.id, tag.id)
@@ -1007,6 +1025,14 @@ async function loadBoundBloggers() {
 
 async function handleBindBlogger(blogger) {
   if (bindingId.value) return
+  // 新建模式：仅本地添加，保存时统一提交
+  if (!isEdit.value) {
+    if (!boundBloggers.value.some(b => b.id === blogger.id)) {
+      boundBloggers.value.push(blogger)
+    }
+    ElMessage.success(`已选择博主：${blogger.blogger_name}`)
+    return
+  }
   bindingId.value = blogger.id
   try {
     await bindBlogger(route.params.id, blogger.id)
@@ -1023,6 +1049,11 @@ async function handleBindBlogger(blogger) {
 
 async function handleUnbindBlogger(blogger) {
   if (unbindingId.value) return
+  // 新建模式：仅本地移除
+  if (!isEdit.value) {
+    boundBloggers.value = boundBloggers.value.filter(b => b.id !== blogger.id)
+    return
+  }
   unbindingId.value = blogger.id
   try {
     await unbindBlogger(route.params.id, blogger.id)

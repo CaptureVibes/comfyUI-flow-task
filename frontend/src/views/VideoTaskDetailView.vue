@@ -245,6 +245,28 @@
             <span class="vtd-error-text">{{ sub.scoring_error }}</span>
           </div>
 
+          <!-- Manual Note -->
+          <div class="vtd-manual-note">
+            <div class="vtd-manual-note-label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="margin-right:5px;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              我的备注
+            </div>
+            <textarea
+              v-model="manualNotes[sub.id]"
+              class="vtd-note-textarea"
+              placeholder="输入评分或备注..."
+              rows="3"
+            />
+            <button
+              class="vtd-note-save-btn"
+              :class="{ loading: savingNote[sub.id] }"
+              :disabled="savingNote[sub.id]"
+              @click="handleSaveNote(sub)"
+            >
+              {{ savingNote[sub.id] ? '保存中...' : '保存备注' }}
+            </button>
+          </div>
+
           <!-- Actions -->
           <div class="vtd-sub-actions">
             <el-button
@@ -260,12 +282,14 @@
 
             <el-button
               v-if="sub.status === 'pending_publish' && sub.selected"
-              type="primary"
+              type="success"
               size="small"
-              @click="router.push(`/dashboard/accounts/${task.account_id}`)"
+              :loading="enqueueing === sub.id"
+              :disabled="!sub.result_video_url"
+              @click="handleEnqueue(sub)"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              前往发布
+              <svg v-if="enqueueing !== sub.id" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              加入队列
             </el-button>
 
             <el-button
@@ -288,19 +312,85 @@
       <p>任务不存在或无权访问</p>
       <el-button @click="router.back()">返回</el-button>
     </div>
+
+    <!-- 发布对话框 -->
+    <PublishVideoDialog
+      v-model="publishDialogVisible"
+      :video-url="publishingSubTask?.result_video_url"
+      :account="account"
+      :sub-task="publishingSubTask"
+      @success="onPublishSuccess"
+    />
+
+    <!-- Sticky Bottom Nav Bar -->
+    <div class="vtd-nav-bar">
+      <!-- 左侧占位，保持中间按钮真正居中 -->
+      <div class="vtd-nav-spacer"></div>
+
+      <button
+        class="vtd-nav-btn"
+        :disabled="!hasPrevBlogger || navLoading"
+        @click="goToPrevBlogger"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/><polyline points="8 18 2 12 8 6"/></svg>
+        上一个博主
+      </button>
+      <button
+        class="vtd-nav-btn"
+        :disabled="!hasPrevVideo || navLoading"
+        @click="goToPrevVideo"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        上一个视频
+      </button>
+      <div class="vtd-nav-pos" v-if="accountTaskList.length > 0">
+        {{ currentTaskIdx >= 0 ? currentTaskIdx + 1 : '?' }} / {{ accountTaskList.length }}
+      </div>
+      <button
+        class="vtd-nav-btn vtd-nav-btn-right"
+        :disabled="!hasNextVideo || navLoading"
+        @click="goToNextVideo"
+      >
+        下一个视频
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button
+        class="vtd-nav-btn vtd-nav-btn-right"
+        :disabled="!hasNextBlogger || navLoading"
+        @click="goToNextBlogger"
+      >
+        下一个博主
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/><polyline points="16 18 22 12 16 6"/></svg>
+      </button>
+
+      <!-- 选择进度统计，靠右 -->
+      <div v-if="selectionStats" class="vtd-nav-stats">
+        <span class="vtd-nav-stats-done">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+          已选 {{ selectionStats.selected }}
+        </span>
+        <span class="vtd-nav-stats-sep">/</span>
+        <span class="vtd-nav-stats-pending">未选 {{ selectionStats.unselected }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchVideoTask,
   fetchVideoTaskState,
+  fetchVideoTasks,
   patchSubTaskStatus,
   rollbackSubTaskStatus,
+  saveSubTaskNote,
+  enqueueSubTask,
 } from '../api/video_tasks.js'
+import { fetchAccount, fetchAccounts } from '../api/accounts.js'
+import PublishVideoDialog from '../components/PublishVideoDialog.vue'
 
 const STATUS_LABELS = {
   pending: '待处理',
@@ -329,15 +419,62 @@ const STATUS_ORDER = ['pending', 'generating', 'scoring', 'pending_publish', 'pu
 const route = useRoute()
 const router = useRouter()
 const task = ref(null)
+const account = ref(null)
 const loading = ref(false)
 const selecting = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
+// 手动备注：{ [subId]: draftText }
+const manualNotes = ref({})
+// 保存中状态：{ [subId]: boolean }
+const savingNote = ref({})
+
+// 加入队列
+const enqueueing = ref(null)
+
+// 发布对话框（保留，备用）
+const publishDialogVisible = ref(false)
+const publishingSubTask = ref(null)
+
+// 导航数据
+const accountTaskList = ref([])   // 当前账号的所有任务列表（用于上/下一个视频）
+const allAccounts = ref([])       // 所有账号列表（用于上/下一个博主）
+const navLoading = ref(false)
+let _navTaskListPrefilled = false  // 博主跳转已预填充任务列表，watch 里跳过重复请求
+
 let refreshInterval = null
 
 const accountName = computed(() => task.value?.account_name || '未知账号')
 const templateTitle = computed(() => task.value?.template_title || '未知模板')
+
+// 当前任务在账号任务列表中的位置
+const currentTaskIdx = computed(() => {
+  if (!task.value || !accountTaskList.value.length) return -1
+  return accountTaskList.value.findIndex(t => t.id === task.value.id)
+})
+
+// 当前账号在所有账号列表中的位置
+const currentAccountIdx = computed(() => {
+  if (!task.value || !allAccounts.value.length) return -1
+  return allAccounts.value.findIndex(a => a.id === task.value.account_id)
+})
+
+const hasPrevVideo = computed(() => currentTaskIdx.value > 0)
+const hasNextVideo = computed(() => currentTaskIdx.value >= 0 && currentTaskIdx.value < accountTaskList.value.length - 1)
+const hasPrevBlogger = computed(() => currentAccountIdx.value > 0)
+const hasNextBlogger = computed(() => currentAccountIdx.value >= 0 && currentAccountIdx.value < allAccounts.value.length - 1)
+
+// 当前账号任务选择进度统计
+// 父任务状态为 pending_publish / queued / publishing / published 表示已选定
+const SELECTED_STATUSES = new Set(['pending_publish', 'queued', 'publishing', 'published'])
+const selectionStats = computed(() => {
+  const list = accountTaskList.value
+  if (!list.length) return null
+  const selected = list.filter(t => SELECTED_STATUSES.has(t.status)).length
+  const total = list.length
+  return { selected, unselected: total - selected, total }
+})
 
 const timeline = computed(() => {
   if (!task.value) return []
@@ -426,6 +563,14 @@ async function loadTask(polling = false) {
       }
     } else {
       task.value = await fetchVideoTask(route.params.id)
+      // 初始化 manualNotes draft（首次加载时同步数据库已有值）
+      if (task.value?.sub_tasks) {
+        task.value.sub_tasks.forEach(sub => {
+          if (manualNotes.value[sub.id] === undefined) {
+            manualNotes.value[sub.id] = sub.manual_note ?? ''
+          }
+        })
+      }
     }
   } catch (e) {
     if (!polling) {
@@ -435,6 +580,15 @@ async function loadTask(polling = false) {
     if (!polling) {
       loading.value = false
     }
+  }
+}
+
+async function loadAccount() {
+  if (!task.value?.account_id) return
+  try {
+    account.value = await fetchAccount(task.value.account_id)
+  } catch {
+    // 加载失败不阻断页面，发布对话框会显示无平台可选
   }
 }
 
@@ -454,6 +608,45 @@ function stopAutoRefresh() {
     clearInterval(refreshInterval)
     refreshInterval = null
   }
+}
+
+async function handleSaveNote(sub) {
+  if (savingNote.value[sub.id]) return
+  savingNote.value[sub.id] = true
+  try {
+    const updated = await saveSubTaskNote(sub.id, manualNotes.value[sub.id] || null)
+    // 同步回数据
+    sub.manual_note = updated.manual_note
+    ElMessage.success('备注已保存')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '保存备注失败')
+  } finally {
+    savingNote.value[sub.id] = false
+  }
+}
+
+async function handleEnqueue(sub) {
+  if (enqueueing.value) return
+  enqueueing.value = sub.id
+  try {
+    await enqueueSubTask(sub.id)
+    ElMessage.success('已加入发布队列，系统将自动发布')
+    await loadTask()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '加入队列失败')
+  } finally {
+    enqueueing.value = null
+  }
+}
+
+function openPublishDialog(sub) {
+  publishingSubTask.value = sub
+  publishDialogVisible.value = true
+}
+
+function onPublishSuccess() {
+  publishDialogVisible.value = false
+  loadTask()
 }
 
 async function handleSelect(sub) {
@@ -493,8 +686,113 @@ async function handleRollback(sub) {
   }
 }
 
+async function loadNavigationData() {
+  if (!task.value) return
+  // 若博主跳转函数已预填充 accountTaskList，直接跳过任务列表请求（避免 800ms 去重拦截）
+  const skipTaskFetch = _navTaskListPrefilled
+  _navTaskListPrefilled = false
+
+  const [taskRes, accRes] = await Promise.allSettled([
+    skipTaskFetch
+      ? Promise.resolve(null)
+      : fetchVideoTasks(null, { accountId: task.value.account_id, page: 1, pageSize: 100 }),
+    fetchAccounts({ page: 1, page_size: 999 }),
+  ])
+  if (!skipTaskFetch) {
+    if (taskRes.status === 'fulfilled' && taskRes.value) {
+      const res = taskRes.value
+      accountTaskList.value = res.items ?? (Array.isArray(res) ? res : [])
+    } else if (taskRes.status === 'rejected' && !taskRes.reason?.isDuplicateRequest) {
+      console.error('[Nav] 加载账号任务列表失败', taskRes.reason)
+    }
+    // isDuplicateRequest 时静默忽略：数据已由博主跳转函数预填充，accountTaskList 有效
+  }
+  if (accRes.status === 'fulfilled') {
+    const res = accRes.value
+    allAccounts.value = res.items ?? (Array.isArray(res) ? res : [])
+  } else if (!accRes.reason?.isDuplicateRequest) {
+    console.error('[Nav] 加载账号列表失败', accRes.reason)
+  }
+}
+
+function goToPrevVideo() {
+  const idx = currentTaskIdx.value
+  if (idx <= 0) return
+  const t = accountTaskList.value[idx - 1]
+  router.push(`/dashboard/video-tasks/${t.id}`)
+}
+
+function goToNextVideo() {
+  const idx = currentTaskIdx.value
+  if (idx < 0 || idx >= accountTaskList.value.length - 1) return
+  const t = accountTaskList.value[idx + 1]
+  router.push(`/dashboard/video-tasks/${t.id}`)
+}
+
+async function goToPrevBlogger() {
+  const idx = currentAccountIdx.value
+  if (idx <= 0) return
+  navLoading.value = true
+  try {
+    for (let i = idx - 1; i >= 0; i--) {
+      const acc = allAccounts.value[i]
+      const res = await fetchVideoTasks(null, { accountId: acc.id, page: 1, pageSize: 100 })
+      const tasks = res.items ?? (Array.isArray(res) ? res : [])
+      if (tasks.length > 0) {
+        // 预填充任务列表，标记跳过 loadNavigationData 的重复请求
+        accountTaskList.value = tasks
+        _navTaskListPrefilled = true
+        router.push(`/dashboard/video-tasks/${tasks[tasks.length - 1].id}`)
+        return
+      }
+    }
+    ElMessage.info('没有更多博主了')
+  } finally {
+    navLoading.value = false
+  }
+}
+
+async function goToNextBlogger() {
+  const idx = currentAccountIdx.value
+  if (idx < 0 || idx >= allAccounts.value.length - 1) return
+  navLoading.value = true
+  try {
+    for (let i = idx + 1; i < allAccounts.value.length; i++) {
+      const acc = allAccounts.value[i]
+      const res = await fetchVideoTasks(null, { accountId: acc.id, page: 1, pageSize: 100 })
+      const tasks = res.items ?? (Array.isArray(res) ? res : [])
+      if (tasks.length > 0) {
+        // 预填充任务列表，标记跳过 loadNavigationData 的重复请求
+        accountTaskList.value = tasks
+        _navTaskListPrefilled = true
+        router.push(`/dashboard/video-tasks/${tasks[0].id}`)
+        return
+      }
+    }
+    ElMessage.info('没有更多博主了')
+  } finally {
+    navLoading.value = false
+  }
+}
+
+// 路由参数变化时重新加载（同一组件切换任务）
+watch(() => route.params.id, async (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    stopAutoRefresh()
+    task.value = null
+    account.value = null
+    manualNotes.value = {}
+    await loadTask()
+    await loadAccount()
+    await loadNavigationData()
+    if (shouldAutoRefresh()) startAutoRefresh()
+  }
+})
+
 onMounted(async () => {
   await loadTask()
+  await loadAccount()
+  await loadNavigationData()
   if (shouldAutoRefresh()) {
     startAutoRefresh()
   }
@@ -507,7 +805,7 @@ onUnmounted(() => {
 
 <style scoped>
 .vtd-page {
-  padding: 28px 32px;
+  padding: 28px 32px 80px;
   min-height: 100%;
   background: #f8fafc;
 }
@@ -1065,4 +1363,166 @@ onUnmounted(() => {
 .vtd-status-publish_failed  { background: #fee2e2; color: #b91c1c; }
 .vtd-status-published       { background: #dcfce7; color: #15803d; }
 .vtd-status-abandoned       { background: #fee2e2; color: #b91c1c; }
+
+/* 手动备注区域 */
+.vtd-manual-note {
+  margin: 14px 0 0;
+  padding: 14px;
+  background: #f8faff;
+  border: 1px solid #e0e7ff;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vtd-manual-note-label {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4f46e5;
+  letter-spacing: 0.02em;
+}
+
+.vtd-note-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #c7d2fe;
+  border-radius: 9px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1e293b;
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.vtd-note-textarea:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+}
+
+.vtd-note-textarea::placeholder {
+  color: #a5b4fc;
+}
+
+.vtd-note-save-btn {
+  align-self: flex-end;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+  cursor: pointer;
+  transition: all 0.15s;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.vtd-note-save-btn:hover:not(:disabled) {
+  background: #6366f1;
+  color: #fff;
+  border-color: #6366f1;
+}
+
+.vtd-note-save-btn:disabled,
+.vtd-note-save-btn.loading {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Sticky bottom nav bar */
+.vtd-nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* 占位元素，和右侧统计等宽，让中间按钮真正居中 */
+.vtd-nav-spacer {
+  flex: 1;
+}
+
+.vtd-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.vtd-nav-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4f46e5;
+}
+
+.vtd-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.vtd-nav-btn-right {
+  flex-direction: row-reverse;
+}
+
+.vtd-nav-pos {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  padding: 0 12px;
+  min-width: 60px;
+  text-align: center;
+}
+
+.vtd-nav-stats {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vtd-nav-stats-done {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #10b981;
+}
+
+.vtd-nav-stats-sep {
+  color: #cbd5e1;
+}
+
+.vtd-nav-stats-pending {
+  color: #f59e0b;
+}
 </style>

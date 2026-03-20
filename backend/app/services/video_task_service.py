@@ -580,6 +580,25 @@ class VideoTaskService:
         await self.db.refresh(sub)
         return sub
 
+    async def update_sub_task_note(
+        self,
+        sub_task_id: uuid.UUID,
+        owner_id: uuid.UUID | None,
+        manual_note: str | None,
+    ) -> VideoSubTask:
+        q = select(VideoSubTask).where(VideoSubTask.id == sub_task_id).options(
+            selectinload(VideoSubTask.task)
+        )
+        sub = (await self.db.execute(q)).scalar_one_or_none()
+        if not sub:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+        if owner_id is not None and sub.task.owner_id != owner_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
+        sub.manual_note = manual_note
+        await self.db.commit()
+        await self.db.refresh(sub)
+        return sub
+
     async def rollback_sub_task_status(
         self,
         sub_task_id: uuid.UUID,
@@ -602,9 +621,17 @@ class VideoTaskService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"状态 {sub.status} 无法回退",
             )
+
+        was_pending_publish = sub.status == "pending_publish"
         sub.status = prev
-        if prev != "pending_publish":
-            sub.selected = False
+        sub.selected = False
+
+        # 从 pending_publish 撤回时，将所有被废弃的兄弟子任务一并恢复到 reviewing
+        if was_pending_publish:
+            for sibling in sub.task.sub_tasks:
+                if sibling.id != sub.id and sibling.status == "abandoned":
+                    sibling.status = "reviewing"
+                    sibling.selected = False
 
         sub.task.status = _compute_parent_status(sub.task.sub_tasks)
         await self.db.commit()
@@ -847,37 +874,9 @@ class VideoTaskService:
         if in_progress:
             return False
 
-        scored_subs = [st for st in task.sub_tasks if st.ai_score is not None]
-        if not scored_subs:
-            task.status = _compute_parent_status(task.sub_tasks)
-            return True
-
-        scored_subs.sort(key=lambda item: item.ai_score or -1, reverse=True)
-        best_sub = scored_subs[0]
-        best_score = float(best_sub.ai_score or 0)
-        threshold = float(config.final_threshold) if config else 65.0
-
-        if best_score >= threshold:
-            best_sub.status = "pending_publish"
-            best_sub.selected = True
-            if task.template_id:
-                tpl = await self.db.get(VideoAITemplate, task.template_id)
-                if tpl and not tpl.is_used:
-                    tpl.is_used = True
-            logger.info("Sub-task %s auto-selected after scoring queue: %.1f >= %.1f", best_sub.id, best_score, threshold)
-        else:
-            best_sub.status = "abandoned"
-            best_sub.selected = False
-            logger.info("Task %s best score %.1f below threshold %.1f, no pending_publish selected", task.id, best_score, threshold)
-
-        for other_sub in task.sub_tasks:
-            if other_sub.id == best_sub.id:
-                continue
-            if other_sub.status != "published":
-                other_sub.status = "abandoned"
-            other_sub.selected = False
-
+        # 打分完成后所有子任务停留在 reviewing 状态，由用户手动选择发布版本
         task.status = _compute_parent_status(task.sub_tasks)
+        logger.info("Task %s all sub-tasks scored, waiting for manual selection", task.id)
         return True
 
     async def _score_video(
@@ -925,4 +924,64 @@ class VideoTaskService:
             system_settings=sys_cfg,
         )
         logger.info("_score_video: score_video_with_ai returned %s", result)
+
+    # ── Download videos ────────────────────────────────────────────────────────
+
+    async def download_videos(
+        self,
+        target_date: date,
+        owner_id: uuid.UUID | None,
+    ) -> tuple["io.BytesIO", str] | tuple[None, None]:
+        """
+        下载指定日期所有已选定视频，按账号分文件夹打包成 ZIP 返回。
+        文件夹名：account_name
+        文件名：account_name_YYYYMMDD_HHMMSS.mp4（任务创建时间）
+        """
+        import io
+        import re
+        import zipfile
+
+        stmt = (
+            select(VideoTask, VideoSubTask, Account)
+            .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .join(Account, Account.id == VideoTask.account_id)
+            .where(VideoTask.target_date == target_date)
+            .where(VideoSubTask.selected.is_(True))
+            .where(VideoSubTask.result_video_url.isnot(None))
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+
+        rows = (await self.db.execute(stmt)).all()
+        if not rows:
+            return None, None
+
+        def sanitize(name: str) -> str:
+            return re.sub(r'[\\/:*?"<>|]', '_', name).strip()
+
+        date_str = target_date.strftime("%Y%m%d")
+        root = f"videos_{date_str}"
+        zip_filename = f"videos_{date_str}.zip"
+
+        buf = io.BytesIO()
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for task, sub_task, account in rows:
+                    folder = sanitize(account.account_name)
+                    created_str = task.created_at.strftime("%Y%m%d_%H%M%S")
+                    filename = f"{account.id}_{sanitize(account.account_name)}_{created_str}.mp4"
+                    arc_path = f"{root}/{folder}/{filename}"
+                    try:
+                        resp = await client.get(sub_task.result_video_url)
+                        resp.raise_for_status()
+                        zf.writestr(arc_path, resp.content)
+                        logger.info("Packed video %s → %s", sub_task.result_video_url, arc_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "Skip video for task %s (account %s): %s",
+                            task.id, account.account_name, exc,
+                        )
+
+        buf.seek(0)
+        return buf, zip_filename
         return result

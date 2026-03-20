@@ -7,6 +7,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           查看每日任务
         </el-button>
+        <el-button class="al-tasks-btn" @click="openDownloadDialog">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          下载视频
+        </el-button>
         <el-button class="al-config-btn" @click="openAISettings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           AI博主配置
@@ -28,12 +32,61 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
           一键继续 AI 生成
         </el-button>
+        <el-button
+          class="al-gen-btn"
+          :loading="bulkVideoGenerating"
+          :disabled="total === 0"
+          @click="handleBulkVideoGenerate"
+        >
+          <svg v-if="!bulkVideoGenerating" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          {{ bulkVideoGenerating ? `${bulkVideoGenProgress.current}/${bulkVideoGenProgress.total} 账号` : '一键生成' }}
+        </el-button>
+        <el-button
+          class="al-schedule-btn"
+          :disabled="total === 0"
+          @click="openBulkScheduleDialog"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          一键定时
+        </el-button>
         <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新建账号
         </el-button>
       </div>
     </div>
+
+    <!-- 下载视频弹窗 -->
+    <el-dialog
+      v-model="showDownloadDialog"
+      title="下载视频"
+      width="400px"
+      :close-on-click-modal="!downloading"
+    >
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div style="font-size:14px; color:#606266;">请选择要下载的日期，系统将下载该日期所有已选定视频并打包成 ZIP。</div>
+        <el-date-picker
+          v-model="downloadDate"
+          type="date"
+          placeholder="选择日期"
+          format="YYYY-MM-DD"
+          value-format="YYYY-MM-DD"
+          style="width:100%"
+          :disabled="downloading"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="showDownloadDialog = false" :disabled="downloading">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="downloading"
+          :disabled="!downloadDate"
+          @click="handleDownload"
+        >
+          {{ downloading ? '打包下载中...' : '确认下载' }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- AI博主配置弹窗 -->
     <el-dialog
@@ -169,6 +222,52 @@
       <template #footer>
         <el-button @click="showBulkContinueDialog = false">取消</el-button>
         <el-button type="primary" :loading="bulkRestarting" @click="handleBulkContinueAIGeneration">确认继续</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量定时发布配置 dialog -->
+    <el-dialog
+      v-model="showBulkScheduleDialog"
+      title="批量定时发布配置"
+      width="520px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="al-bulk-resume-hint" style="margin-bottom:16px">
+        以下设置将强制启用并覆盖全部 <strong>{{ total }}</strong> 个账号的定时发布配置。
+      </div>
+      <el-form :model="bulkScheduleForm" label-width="120px" label-position="left">
+        <el-form-item label="快捷规则">
+          <div class="al-schedule-presets">
+            <button
+              v-for="p in CRON_PRESETS"
+              :key="p.cron"
+              type="button"
+              class="al-preset-btn"
+              :class="{ active: bulkScheduleForm.publish_cron === p.cron }"
+              @click="bulkScheduleForm.publish_cron = p.cron"
+            >{{ p.label }}</button>
+          </div>
+        </el-form-item>
+        <el-form-item label="Cron 表达式">
+          <el-input v-model="bulkScheduleForm.publish_cron" placeholder="0 10 * * *" style="font-family:monospace" />
+          <div class="al-schedule-hint">格式：分 时 日 月 周（北京时间）。例：每天10点 = 0 10 * * *</div>
+        </el-form-item>
+        <el-form-item label="随机延迟">
+          <el-input-number v-model="bulkScheduleForm.publish_window_minutes" :min="0" :max="720" :step="15" style="width:130px" />
+          <span class="al-schedule-unit">分钟（0 = 精确时间）</span>
+        </el-form-item>
+        <el-form-item label="每次发布数量">
+          <el-input-number v-model="bulkScheduleForm.publish_count" :min="1" :max="20" style="width:100px" />
+          <span class="al-schedule-unit">个视频</span>
+        </el-form-item>
+        <el-form-item label="规则预览">
+          <div class="al-schedule-preview">{{ bulkSchedulePreview }}</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBulkScheduleDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingBulkSchedule" @click="handleBulkSchedule">应用到全部账号</el-button>
       </template>
     </el-dialog>
 
@@ -341,9 +440,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
+import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
+import { createVideoTask, downloadVideos } from '../api/video_tasks'
 
 const router = useRouter()
 
@@ -352,6 +453,41 @@ const PLATFORM_ICONS = { youtube: '▶', tiktok: '♪', instagram: '◈' }
 
 const loading = ref(false)
 const deleting = ref(null)
+
+// 下载视频
+const showDownloadDialog = ref(false)
+const downloadDate = ref('')
+const downloading = ref(false)
+
+function openDownloadDialog() {
+  downloadDate.value = ''
+  showDownloadDialog.value = true
+}
+
+async function handleDownload() {
+  if (!downloadDate.value || downloading.value) return
+  downloading.value = true
+  try {
+    const blob = await downloadVideos(downloadDate.value)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `videos_${downloadDate.value}.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    showDownloadDialog.value = false
+    ElMessage.success('下载成功')
+  } catch (e) {
+    const msg = e?.response?.data
+      ? (typeof e.response.data === 'string' ? e.response.data : await e.response.data.text?.() || '下载失败')
+      : (e?.message || '下载失败')
+    ElMessage.error(msg.includes('没有已选定') ? '该日期没有已选定的视频' : '下载失败，请稍后重试')
+  } finally {
+    downloading.value = false
+  }
+}
 const bulkGenerating = ref(false)
 const bulkRestarting = ref(false)
 const showBulkContinueDialog = ref(false)
@@ -601,6 +737,185 @@ async function handleDelete(item) {
   } finally {
     deleting.value = null
   }
+}
+
+// ── 一键生成 ────────────────────────────────────────────────────────────────
+
+const bulkVideoGenerating = ref(false)
+const bulkVideoGenProgress = ref({ current: 0, total: 0 })
+
+function formatDuration(seconds) {
+  if (!seconds) return '0s'
+  let s = Math.floor(seconds)
+  if (s > 15) s = 15
+  return `${s}s`
+}
+
+async function handleBulkVideoGenerate() {
+  if (bulkVideoGenerating.value) return
+
+  try {
+    await ElMessageBox.confirm(
+      `将为全部 ${total.value} 个账号自动选择未用模板并创建生成任务，确定继续？`,
+      '一键生成',
+      { confirmButtonText: '开始生成', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+
+  bulkVideoGenerating.value = true
+
+  // 拉取全部账号
+  let allAccounts = []
+  try {
+    const data = await fetchAccounts({ page: 1, page_size: 9999 })
+    allAccounts = data.items || []
+  } catch (err) {
+    ElMessage.error('加载账号列表失败')
+    bulkVideoGenerating.value = false
+    return
+  }
+
+  bulkVideoGenProgress.value = { current: 0, total: allAccounts.length }
+
+  let totalSuccess = 0
+  let totalFail = 0
+  let accountsSkipped = 0
+
+  for (const account of allAccounts) {
+    try {
+      const unusedItems = []
+
+      // 路径1：通过绑定博主获取模板
+      const bloggers = await fetchAccountBloggers(account.id)
+      for (const blogger of bloggers) {
+        try {
+          const templates = await fetchTemplatesByBlogger(blogger.id, [])
+          for (const tpl of templates) {
+            if (!tpl.is_used) unusedItems.push({ tpl, accountId: account.id })
+          }
+        } catch { /* 单个博主失败不影响整体 */ }
+      }
+
+      // 路径2：未绑定博主时，通过账号绑定的标签获取模板
+      if (bloggers.length === 0) {
+        const tagIds = (account.bound_tags || []).map(t => t.id)
+        if (tagIds.length > 0) {
+          try {
+            const templates = await fetchTemplatesByTags(tagIds)
+            for (const tpl of templates) {
+              if (!tpl.is_used) unusedItems.push({ tpl, accountId: account.id })
+            }
+          } catch { /* 标签路径失败不影响整体 */ }
+        }
+      }
+
+      if (unusedItems.length === 0) {
+        accountsSkipped++
+      }
+
+      for (const { tpl, accountId } of unusedItems) {
+        try {
+          const duration = formatDuration(tpl.video_source?.duration)
+          const shots = (tpl.extracted_shots || []).map(({ image_base64, ...rest }) => rest)
+          await createVideoTask({
+            account_id: accountId,
+            template_id: tpl.id,
+            final_prompt: tpl.prompt_description || '',
+            duration,
+            shots,
+          })
+          totalSuccess++
+        } catch {
+          totalFail++
+        }
+      }
+    } catch { /* 单个账号异常跳过 */ }
+
+    bulkVideoGenProgress.value.current++
+  }
+
+  bulkVideoGenerating.value = false
+
+  const skipMsg = accountsSkipped > 0 ? `，${accountsSkipped} 个账号无未用模板已跳过` : ''
+  const failMsg = totalFail > 0 ? `，${totalFail} 个任务失败` : ''
+  ElMessage.success(`已为全部账号创建 ${totalSuccess} 个生成任务${failMsg}${skipMsg}`)
+}
+
+// ── 一键定时 ────────────────────────────────────────────────────────────────
+
+const CRON_PRESETS = [
+  { label: '每天8点',    cron: '0 8 * * *' },
+  { label: '每天10点',   cron: '0 10 * * *' },
+  { label: '每天12点',   cron: '0 12 * * *' },
+  { label: '每天20点',   cron: '0 20 * * *' },
+  { label: '隔天10点',   cron: '0 10 */2 * *' },
+  { label: '每周一10点', cron: '0 10 * * 1' },
+]
+
+const showBulkScheduleDialog = ref(false)
+const savingBulkSchedule = ref(false)
+const bulkScheduleForm = ref({
+  publish_cron: '',
+  publish_window_minutes: 0,
+  publish_count: 1,
+})
+
+const bulkSchedulePreview = computed(() => {
+  const cron = bulkScheduleForm.value.publish_cron?.trim()
+  if (!cron) return '请先选择快捷规则或输入 Cron 表达式'
+  const preset = CRON_PRESETS.find(p => p.cron === cron)
+  const label = preset ? preset.label : `Cron: ${cron}`
+  const win = bulkScheduleForm.value.publish_window_minutes
+  const count = bulkScheduleForm.value.publish_count
+  const winStr = win > 0 ? `，到点后随机延迟最多 ${win} 分钟` : ''
+  return `${label}${winStr}，每次发布 ${count} 个视频（按队列顺序）`
+})
+
+function openBulkScheduleDialog() {
+  bulkScheduleForm.value = { publish_cron: '', publish_window_minutes: 0, publish_count: 1 }
+  showBulkScheduleDialog.value = true
+}
+
+async function handleBulkSchedule() {
+  if (savingBulkSchedule.value) return
+  if (!bulkScheduleForm.value.publish_cron?.trim()) {
+    ElMessage.warning('请先设置 Cron 表达式')
+    return
+  }
+
+  savingBulkSchedule.value = true
+
+  // 拉取全部账号
+  let allAccounts = []
+  try {
+    const data = await fetchAccounts({ page: 1, page_size: 9999 })
+    allAccounts = data.items || []
+  } catch {
+    ElMessage.error('加载账号列表失败')
+    savingBulkSchedule.value = false
+    return
+  }
+
+  const results = await Promise.allSettled(
+    allAccounts.map(account =>
+      updateScheduledPublish(account.id, {
+        publish_enabled: true,
+        publish_cron: bulkScheduleForm.value.publish_cron,
+        publish_window_minutes: bulkScheduleForm.value.publish_window_minutes,
+        publish_count: bulkScheduleForm.value.publish_count,
+      })
+    )
+  )
+
+  const successCount = results.filter(r => r.status === 'fulfilled').length
+  const failCount = results.filter(r => r.status === 'rejected').length
+
+  savingBulkSchedule.value = false
+  showBulkScheduleDialog.value = false
+
+  const failMsg = failCount > 0 ? `，${failCount} 个失败` : ''
+  ElMessage.success(`已为 ${successCount} 个账号启用定时发布${failMsg}`)
+  await loadData()
 }
 
 onMounted(loadData)
@@ -1174,6 +1489,91 @@ onMounted(loadData)
 @media (max-width: 640px) {
   .al-page { padding: 16px; }
   .al-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+}
+
+/* 一键生成按钮 */
+.al-gen-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(16,185,129,0.25) !important;
+  background: rgba(16,185,129,0.07) !important;
+  color: #059669 !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.al-gen-btn:hover:not(:disabled) {
+  background: rgba(16,185,129,0.14) !important;
+  border-color: rgba(16,185,129,0.45) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16,185,129,0.18);
+}
+.al-gen-btn:active { transform: translateY(1px); }
+.al-gen-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+/* 一键定时按钮 */
+.al-schedule-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(59,130,246,0.25) !important;
+  background: rgba(59,130,246,0.07) !important;
+  color: #2563eb !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.al-schedule-btn:hover:not(:disabled) {
+  background: rgba(59,130,246,0.14) !important;
+  border-color: rgba(59,130,246,0.45) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59,130,246,0.18);
+}
+.al-schedule-btn:active { transform: translateY(1px); }
+.al-schedule-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+/* 批量定时发布弹窗内元素 */
+.al-schedule-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.al-preset-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.al-preset-btn:hover { border-color: #6366f1; color: #6366f1; background: #eef2ff; }
+.al-preset-btn.active { border-color: #6366f1; background: #6366f1; color: #fff; font-weight: 600; }
+.al-schedule-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 6px;
+}
+.al-schedule-unit {
+  font-size: 13px;
+  color: #64748b;
+  margin-left: 10px;
+}
+.al-schedule-preview {
+  font-size: 13px;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 10px 14px;
+  line-height: 1.6;
 }
 
 .al-tasks-btn {

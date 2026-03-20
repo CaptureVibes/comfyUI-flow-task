@@ -9,7 +9,8 @@ export async function createVideoTask(payload) {
 }
 
 export async function fetchVideoTasks(dateStr, { accountId, status, tiktokBloggerId, page = 1, pageSize = 20 } = {}) {
-  const params = { target_date: dateStr, page, page_size: pageSize }
+  const params = { page, page_size: pageSize }
+  if (dateStr) params.target_date = dateStr
   if (accountId) params.account_id = accountId
   if (status) params.status = status
   if (tiktokBloggerId) params.tiktok_blogger_id = tiktokBloggerId
@@ -51,6 +52,14 @@ export async function fetchVideoTaskResults(dateStr) {
   return data
 }
 
+export async function downloadVideos(dateStr) {
+  const response = await http.get(`/video-tasks/daily/${dateStr}/download-videos`, {
+    responseType: 'blob',
+    timeout: 300000,
+  })
+  return response.data  // Blob
+}
+
 export async function resumeVideoTaskScoring(dateStr) {
   const { data } = await http.post(`/video-tasks/daily/${dateStr}/resume-scoring`, undefined, { timeout: 60000 })
   return data
@@ -89,5 +98,10 @@ export async function dequeueSubTask(subTaskId) {
 
 export async function deleteSubTask(subTaskId) {
   const { data } = await http.delete(`/video-tasks/subtasks/${subTaskId}`)
+  return data
+}
+
+export async function saveSubTaskNote(subTaskId, manualNote) {
+  const { data } = await http.patch(`/video-tasks/subtasks/${subTaskId}/note`, { manual_note: manualNote ?? null })
   return data
 }

@@ -15,6 +15,7 @@ from app.models.tag import Tag, VideoSourceTag
 from app.models.video_source import VideoSource
 from app.schemas.video_ai_template import VideoSourceSummary
 from app.schemas.video_task import (
+    VideoSubTaskNoteUpdate,
     VideoSubTaskRead,
     VideoSubTaskStatusUpdate,
     VideoTaskCreate,
@@ -220,6 +221,27 @@ async def _bg_fetch_results(target_date: date, owner_id: uuid.UUID | None):
         except Exception as e:
             logger.error(f"Background fetch results failed for {target_date}: {e}")
 
+@router.get("/daily/{target_date}/download-videos")
+async def download_videos(
+    target_date: date,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+):
+    """下载指定日期所有已选定视频，按账号分文件夹打包成 ZIP 返回。"""
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+
+    svc = VideoTaskService(db=session)
+    buf, filename = await svc.download_videos(target_date, owner_id)
+    if buf is None:
+        raise HTTPException(status_code=404, detail="该日期没有已选定的视频")
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/daily/{target_date}/upload", status_code=status.HTTP_200_OK)
 async def upload_video_tasks(
     target_date: date,
@@ -278,6 +300,18 @@ async def patch_sub_task_status(
         result_video_url=payload.result_video_url,
         selected=payload.selected,
     )
+
+
+@router.patch("/subtasks/{sub_task_id}/note", response_model=VideoSubTaskRead)
+async def update_sub_task_note(
+    sub_task_id: uuid.UUID,
+    payload: VideoSubTaskNoteUpdate,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """保存用户手动填写的备注，不影响子任务状态"""
+    svc = VideoTaskService(db=session)
+    return await svc.update_sub_task_note(sub_task_id, owner_id, payload.manual_note)
 
 
 @router.delete("/subtasks/{sub_task_id}", status_code=status.HTTP_200_OK)
