@@ -30,6 +30,11 @@ export async function fetchVideoTaskState(taskId) {
   return data
 }
 
+export async function fetchTaskNavigation(taskId) {
+  const { data } = await http.get(`/video-tasks/${taskId}/navigation`)
+  return data
+}
+
 export async function fetchVideoTask(taskId) {
   const { data } = await http.get(`/video-tasks/${taskId}`)
   return data

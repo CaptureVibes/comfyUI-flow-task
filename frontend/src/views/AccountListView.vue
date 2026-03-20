@@ -483,7 +483,7 @@ async function handleDownload() {
     const msg = e?.response?.data
       ? (typeof e.response.data === 'string' ? e.response.data : await e.response.data.text?.() || '下载失败')
       : (e?.message || '下载失败')
-    ElMessage.error(msg.includes('没有已选定') ? '该日期没有已选定的视频' : '下载失败，请稍后重试')
+    ElMessage.error(msg.includes('没有已发布') ? '该日期没有已发布的视频' : '下载失败，请稍后重试')
   } finally {
     downloading.value = false
   }

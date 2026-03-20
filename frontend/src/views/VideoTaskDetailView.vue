@@ -364,8 +364,8 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         上一个视频
       </button>
-      <div class="vtd-nav-pos" v-if="accountTaskList.length > 0">
-        {{ currentTaskIdx >= 0 ? currentTaskIdx + 1 : '?' }} / {{ accountTaskList.length }}
+      <div class="vtd-nav-pos" v-if="navInfo && navInfo.total > 0">
+        {{ navInfo.position + 1 }} / {{ navInfo.total }}
       </div>
       <button
         class="vtd-nav-btn vtd-nav-btn-right"
@@ -404,13 +404,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchVideoTask,
   fetchVideoTaskState,
-  fetchVideoTasks,
+  fetchTaskNavigation,
   patchSubTaskStatus,
   rollbackSubTaskStatus,
   saveSubTaskNote,
   enqueueSubTask,
 } from '../api/video_tasks.js'
-import { fetchAccount, fetchAccounts } from '../api/accounts.js'
+import { fetchAccount } from '../api/accounts.js'
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
 
 const STATUS_LABELS = {
@@ -461,42 +461,26 @@ const publishDialogVisible = ref(false)
 const publishingSubTask = ref(null)
 
 // 导航数据
-const accountTaskList = ref([])   // 当前账号的所有任务列表（用于上/下一个视频）
-const allAccounts = ref([])       // 所有账号列表（用于上/下一个博主）
+const navInfo = ref(null)   // VideoTaskNavRead from /navigation endpoint
 const navLoading = ref(false)
-let _navTaskListPrefilled = false  // 博主跳转已预填充任务列表，watch 里跳过重复请求
 
 let refreshInterval = null
 
 const accountName = computed(() => task.value?.account_name || '未知账号')
 const templateTitle = computed(() => task.value?.template_title || '未知模板')
 
-// 当前任务在账号任务列表中的位置
-const currentTaskIdx = computed(() => {
-  if (!task.value || !accountTaskList.value.length) return -1
-  return accountTaskList.value.findIndex(t => t.id === task.value.id)
-})
-
-// 当前账号在所有账号列表中的位置
-const currentAccountIdx = computed(() => {
-  if (!task.value || !allAccounts.value.length) return -1
-  return allAccounts.value.findIndex(a => a.id === task.value.account_id)
-})
-
-const hasPrevVideo = computed(() => currentTaskIdx.value > 0)
-const hasNextVideo = computed(() => currentTaskIdx.value >= 0 && currentTaskIdx.value < accountTaskList.value.length - 1)
-const hasPrevBlogger = computed(() => currentAccountIdx.value > 0)
-const hasNextBlogger = computed(() => currentAccountIdx.value >= 0 && currentAccountIdx.value < allAccounts.value.length - 1)
+const hasPrevVideo = computed(() => !!navInfo.value?.prev_task)
+const hasNextVideo = computed(() => !!navInfo.value?.next_task)
+const hasPrevBlogger = computed(() => !!navInfo.value?.prev_blogger_task)
+const hasNextBlogger = computed(() => !!navInfo.value?.next_blogger_task)
 
 // 当前账号任务选择进度统计
-// 父任务状态为 pending_publish / queued / publishing / published 表示已选定
-const SELECTED_STATUSES = new Set(['pending_publish', 'queued', 'publishing', 'published'])
 const selectionStats = computed(() => {
-  const list = accountTaskList.value
-  if (!list.length) return null
-  const selected = list.filter(t => SELECTED_STATUSES.has(t.status)).length
-  const total = list.length
-  return { selected, unselected: total - selected, total }
+  const nav = navInfo.value
+  if (!nav || !nav.total) return null
+  const selected = nav.selected_count
+  const unselected = nav.total - selected
+  return { selected, unselected, total: nav.total }
 })
 
 const timeline = computed(() => {
@@ -715,91 +699,38 @@ async function handleRollback(sub) {
 
 async function loadNavigationData() {
   if (!task.value) return
-  // 若博主跳转函数已预填充 accountTaskList，直接跳过任务列表请求（避免 800ms 去重拦截）
-  const skipTaskFetch = _navTaskListPrefilled
-  _navTaskListPrefilled = false
-
-  const [taskRes, accRes] = await Promise.allSettled([
-    skipTaskFetch
-      ? Promise.resolve(null)
-      : fetchVideoTasks(null, { accountId: task.value.account_id, page: 1, pageSize: 100 }),
-    fetchAccounts({ page: 1, page_size: 999 }),
-  ])
-  if (!skipTaskFetch) {
-    if (taskRes.status === 'fulfilled' && taskRes.value) {
-      const res = taskRes.value
-      accountTaskList.value = res.items ?? (Array.isArray(res) ? res : [])
-    } else if (taskRes.status === 'rejected' && !taskRes.reason?.isDuplicateRequest) {
-      console.error('[Nav] 加载账号任务列表失败', taskRes.reason)
-    }
-    // isDuplicateRequest 时静默忽略：数据已由博主跳转函数预填充，accountTaskList 有效
-  }
-  if (accRes.status === 'fulfilled') {
-    const res = accRes.value
-    allAccounts.value = res.items ?? (Array.isArray(res) ? res : [])
-  } else if (!accRes.reason?.isDuplicateRequest) {
-    console.error('[Nav] 加载账号列表失败', accRes.reason)
+  navLoading.value = true
+  try {
+    navInfo.value = await fetchTaskNavigation(task.value.id)
+  } catch (e) {
+    if (!e?.isDuplicateRequest) console.error('[Nav] 加载导航信息失败', e)
+  } finally {
+    navLoading.value = false
   }
 }
 
 function goToPrevVideo() {
-  const idx = currentTaskIdx.value
-  if (idx <= 0) return
-  const t = accountTaskList.value[idx - 1]
+  const t = navInfo.value?.prev_task
+  if (!t) return
   router.push(`/dashboard/video-tasks/${t.id}`)
 }
 
 function goToNextVideo() {
-  const idx = currentTaskIdx.value
-  if (idx < 0 || idx >= accountTaskList.value.length - 1) return
-  const t = accountTaskList.value[idx + 1]
+  const t = navInfo.value?.next_task
+  if (!t) return
   router.push(`/dashboard/video-tasks/${t.id}`)
 }
 
-async function goToPrevBlogger() {
-  const idx = currentAccountIdx.value
-  if (idx <= 0) return
-  navLoading.value = true
-  try {
-    for (let i = idx - 1; i >= 0; i--) {
-      const acc = allAccounts.value[i]
-      const res = await fetchVideoTasks(null, { accountId: acc.id, page: 1, pageSize: 100 })
-      const tasks = res.items ?? (Array.isArray(res) ? res : [])
-      if (tasks.length > 0) {
-        // 预填充任务列表，标记跳过 loadNavigationData 的重复请求
-        accountTaskList.value = tasks
-        _navTaskListPrefilled = true
-        router.push(`/dashboard/video-tasks/${tasks[tasks.length - 1].id}`)
-        return
-      }
-    }
-    ElMessage.info('没有更多博主了')
-  } finally {
-    navLoading.value = false
-  }
+function goToPrevBlogger() {
+  const t = navInfo.value?.prev_blogger_task
+  if (!t) return
+  router.push(`/dashboard/video-tasks/${t.id}`)
 }
 
-async function goToNextBlogger() {
-  const idx = currentAccountIdx.value
-  if (idx < 0 || idx >= allAccounts.value.length - 1) return
-  navLoading.value = true
-  try {
-    for (let i = idx + 1; i < allAccounts.value.length; i++) {
-      const acc = allAccounts.value[i]
-      const res = await fetchVideoTasks(null, { accountId: acc.id, page: 1, pageSize: 100 })
-      const tasks = res.items ?? (Array.isArray(res) ? res : [])
-      if (tasks.length > 0) {
-        // 预填充任务列表，标记跳过 loadNavigationData 的重复请求
-        accountTaskList.value = tasks
-        _navTaskListPrefilled = true
-        router.push(`/dashboard/video-tasks/${tasks[0].id}`)
-        return
-      }
-    }
-    ElMessage.info('没有更多博主了')
-  } finally {
-    navLoading.value = false
-  }
+function goToNextBlogger() {
+  const t = navInfo.value?.next_blogger_task
+  if (!t) return
+  router.push(`/dashboard/video-tasks/${t.id}`)
 }
 
 // 路由参数变化时重新加载（同一组件切换任务）
@@ -810,6 +741,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     account.value = null
     manualScores.value = {}
     manualNotes.value = {}
+    navInfo.value = null
     await loadTask()
     await loadAccount()
     await loadNavigationData()

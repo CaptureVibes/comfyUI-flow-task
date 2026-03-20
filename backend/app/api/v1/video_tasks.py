@@ -22,6 +22,7 @@ from app.schemas.video_task import (
     VideoTaskDetailRead,
     VideoTaskListItem,
     VideoTaskListPage,
+    VideoTaskNavRead,
     VideoTaskRead,
     VideoTaskStateRead,
 )
@@ -196,6 +197,40 @@ async def get_video_task_state(
     return task
 
 
+@router.get("/{task_id}/navigation", response_model=VideoTaskNavRead)
+async def get_video_task_navigation(
+    task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """Return prev/next task and prev/next blogger task for navigation without full list fetches."""
+    svc = VideoTaskService(db=session)
+    raw = await svc.get_task_navigation(task_id, owner_id)
+
+    def _task_item(t):
+        if t is None:
+            return None
+        from app.schemas.video_task import TaskNavItem
+        return TaskNavItem(id=t.id, status=t.status)
+
+    def _blogger_item(row):
+        if row is None:
+            return None
+        from app.schemas.video_task import TaskNavItem
+        t, acc = row.VideoTask, row.Account
+        return TaskNavItem(id=t.id, status=t.status, account_id=acc.id, account_name=acc.account_name)
+
+    return VideoTaskNavRead(
+        position=raw["position"],
+        total=raw["total"],
+        selected_count=raw["selected_count"],
+        prev_task=_task_item(raw["prev_task"]),
+        next_task=_task_item(raw["next_task"]),
+        prev_blogger_task=_blogger_item(raw["prev_blogger_task"]),
+        next_blogger_task=_blogger_item(raw["next_blogger_task"]),
+    )
+
+
 # ── Batch operations by date ───────────────────────────────────────────────────
 
 import logging
@@ -234,7 +269,7 @@ async def download_videos(
     svc = VideoTaskService(db=session)
     buf, filename = await svc.download_videos(target_date, owner_id)
     if buf is None:
-        raise HTTPException(status_code=404, detail="该日期没有已选定的视频")
+        raise HTTPException(status_code=404, detail="该日期没有已发布的视频")
     return StreamingResponse(
         buf,
         media_type="application/zip",

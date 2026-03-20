@@ -333,6 +333,106 @@ class VideoTaskService:
 
         return {"task": task, "account_name": account_name, "template_title": template_title}
 
+    async def get_task_navigation(self, task_id: uuid.UUID, owner_id: uuid.UUID | None) -> dict:
+        from sqlalchemy import func
+
+        task = await self.db.get(VideoTask, task_id)
+        if not task:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+        if owner_id is not None and task.owner_id != owner_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问")
+
+        account = await self.db.get(Account, task.account_id) if task.account_id else None
+
+        def _base_task_q():
+            q = select(VideoTask)
+            if owner_id is not None:
+                q = q.where(VideoTask.owner_id == owner_id)
+            return q
+
+        # Position: count tasks for same account with created_at > current (DESC order)
+        pos_q = select(func.count(VideoTask.id)).where(
+            VideoTask.account_id == task.account_id,
+            VideoTask.created_at > task.created_at,
+        )
+        if owner_id is not None:
+            pos_q = pos_q.where(VideoTask.owner_id == owner_id)
+        position: int = (await self.db.execute(pos_q)).scalar() or 0
+
+        # Total tasks for this account
+        total_q = select(func.count(VideoTask.id)).where(VideoTask.account_id == task.account_id)
+        if owner_id is not None:
+            total_q = total_q.where(VideoTask.owner_id == owner_id)
+        total: int = (await self.db.execute(total_q)).scalar() or 0
+
+        # Selected count (pending_publish / queued / publishing / published)
+        SELECTED_STATUSES = ("pending_publish", "queued", "publishing", "published")
+        sel_q = select(func.count(VideoTask.id)).where(
+            VideoTask.account_id == task.account_id,
+            VideoTask.status.in_(SELECTED_STATUSES),
+        )
+        if owner_id is not None:
+            sel_q = sel_q.where(VideoTask.owner_id == owner_id)
+        selected_count: int = (await self.db.execute(sel_q)).scalar() or 0
+
+        # Prev task (lower index = newer = created_at > current)
+        prev_q = (
+            _base_task_q()
+            .where(VideoTask.account_id == task.account_id, VideoTask.created_at > task.created_at)
+            .order_by(VideoTask.created_at.asc())
+            .limit(1)
+        )
+        prev_task = (await self.db.execute(prev_q)).scalar_one_or_none()
+
+        # Next task (higher index = older = created_at < current)
+        next_q = (
+            _base_task_q()
+            .where(VideoTask.account_id == task.account_id, VideoTask.created_at < task.created_at)
+            .order_by(VideoTask.created_at.desc())
+            .limit(1)
+        )
+        next_task = (await self.db.execute(next_q)).scalar_one_or_none()
+
+        # Prev blogger task: account with created_at > current_account (closer to index 0),
+        # pick closest account (ORDER BY account.created_at ASC), then last task of that account
+        prev_blogger_row = None
+        next_blogger_row = None
+        if account:
+            prev_blogger_q = (
+                select(VideoTask, Account)
+                .join(Account, Account.id == VideoTask.account_id)
+                .where(Account.created_at > account.created_at)
+                .order_by(Account.created_at.asc(), VideoTask.created_at.asc())
+                .limit(1)
+            )
+            if owner_id is not None:
+                prev_blogger_q = prev_blogger_q.where(VideoTask.owner_id == owner_id)
+            prev_blogger_row = (await self.db.execute(prev_blogger_q)).first()
+
+            # Next blogger task: account with created_at < current_account,
+            # pick closest account (ORDER BY account.created_at DESC), then newest task
+            next_blogger_q = (
+                select(VideoTask, Account)
+                .join(Account, Account.id == VideoTask.account_id)
+                .where(Account.created_at < account.created_at)
+                .order_by(Account.created_at.desc(), VideoTask.created_at.desc())
+                .limit(1)
+            )
+            if owner_id is not None:
+                next_blogger_q = next_blogger_q.where(VideoTask.owner_id == owner_id)
+            next_blogger_row = (await self.db.execute(next_blogger_q)).first()
+
+        return {
+            "position": position,
+            "total": total,
+            "selected_count": selected_count,
+            "prev_task": prev_task,
+            "next_task": next_task,
+            "prev_blogger_task": prev_blogger_row,
+            "next_blogger_task": next_blogger_row,
+            "account": account,
+        }
+
     async def delete_task(self, task_id: uuid.UUID, owner_id: uuid.UUID | None) -> bool:
         q = select(VideoTask).where(VideoTask.id == task_id)
         if owner_id is not None:
@@ -935,21 +1035,24 @@ class VideoTaskService:
         owner_id: uuid.UUID | None,
     ) -> tuple["io.BytesIO", str] | tuple[None, None]:
         """
-        下载指定日期所有已选定视频，按账号分文件夹打包成 ZIP 返回。
+        下载指定日期当天发布成功的视频，按账号分文件夹打包成 ZIP 返回。
         文件夹名：account_name
-        文件名：account_name_YYYYMMDD_HHMMSS.mp4（任务创建时间）
+        文件名：account_id_account_name_发布时间.mp4（VideoPublication.completed_at）
         """
         import io
         import re
         import zipfile
+        from sqlalchemy import func, cast, Date
+        from app.models.video_publication import VideoPublication
 
         stmt = (
-            select(VideoTask, VideoSubTask, Account)
+            select(VideoTask, VideoSubTask, VideoPublication, Account)
             .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .join(VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id)
             .join(Account, Account.id == VideoTask.account_id)
-            .where(VideoTask.target_date == target_date)
-            .where(VideoSubTask.selected.is_(True))
+            .where(VideoPublication.status == "completed")
             .where(VideoSubTask.result_video_url.isnot(None))
+            .where(cast(VideoPublication.completed_at, Date) == target_date)
         )
         if owner_id is not None:
             stmt = stmt.where(VideoTask.owner_id == owner_id)
@@ -968,10 +1071,11 @@ class VideoTaskService:
         buf = io.BytesIO()
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for task, sub_task, account in rows:
+                for task, sub_task, publication, account in rows:
                     folder = sanitize(account.account_name)
-                    created_str = task.created_at.strftime("%Y%m%d_%H%M%S")
-                    filename = f"{account.id}_{sanitize(account.account_name)}_{created_str}.mp4"
+                    pub_time = publication.completed_at or publication.updated_at or task.created_at
+                    pub_str = pub_time.strftime("%Y%m%d_%H%M%S")
+                    filename = f"{account.id}_{sanitize(account.account_name)}_{pub_str}.mp4"
                     arc_path = f"{root}/{folder}/{filename}"
                     try:
                         resp = await client.get(sub_task.result_video_url)
@@ -986,4 +1090,3 @@ class VideoTaskService:
 
         buf.seek(0)
         return buf, zip_filename
-        return result

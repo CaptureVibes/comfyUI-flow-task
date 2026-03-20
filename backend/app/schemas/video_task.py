@@ -105,3 +105,20 @@ class VideoTaskStateRead(BaseModel):
     sub_tasks: list[VideoSubTaskStateRead] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskNavItem(BaseModel):
+    id: uuid.UUID
+    status: str
+    account_id: uuid.UUID | None = None
+    account_name: str | None = None
+
+
+class VideoTaskNavRead(BaseModel):
+    position: int        # 0-based index in account task list (DESC by created_at)
+    total: int           # total tasks for this account
+    selected_count: int  # tasks with pending_publish/queued/publishing/published status
+    prev_task: TaskNavItem | None = None
+    next_task: TaskNavItem | None = None
+    prev_blogger_task: TaskNavItem | None = None
+    next_blogger_task: TaskNavItem | None = None
