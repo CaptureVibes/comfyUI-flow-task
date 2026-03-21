@@ -74,7 +74,7 @@ def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
     if "pending_publish" in statuses:
         return "pending_publish"
     if "reviewing" in statuses:
-        return "scoring"
+        return "reviewing"
     if "scoring" in statuses:
         return "scoring"
     if "generating" in statuses:
