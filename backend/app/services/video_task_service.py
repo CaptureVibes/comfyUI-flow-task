@@ -1026,6 +1026,7 @@ class VideoTaskService:
             system_settings=sys_cfg,
         )
         logger.info("_score_video: score_video_with_ai returned %s", result)
+        return result
 
     # ── Download videos ────────────────────────────────────────────────────────
 
