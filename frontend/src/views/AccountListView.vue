@@ -3,10 +3,6 @@
     <div class="al-header">
       <h1 class="al-title">AI博主</h1>
       <div style="display: flex; gap: 12px; align-items: center;">
-        <el-button class="al-tasks-btn" @click="$router.push('/dashboard/daily-tasks')">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          查看每日任务
-        </el-button>
         <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
           <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           {{ downloading ? '下载中...' : '下载视频' }}
@@ -406,7 +402,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish } from '../api/accounts'
 import { isDuplicateRequestError } from '../api/http'
@@ -414,6 +410,7 @@ import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
 import { createVideoTask, downloadLatestPublishedVideos } from '../api/video_tasks'
 
+const route = useRoute()
 const router = useRouter()
 
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
@@ -460,8 +457,14 @@ const items = ref([])
 const previewVisible = ref(false)
 const previewImage = ref({ url: '', title: '' })
 const total = ref(0)
-const page = ref(1)
+const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(20)
+
+function syncUrl() {
+  const query = {}
+  if (page.value > 1) query.page = String(page.value)
+  router.replace({ query })
+}
 
 // AI 博主配置弹窗
 const showAISettingsDialog = ref(false)
@@ -609,6 +612,7 @@ function goPage(p) {
   if (target === page.value) return
   page.value = target
   jumpPage.value = target
+  syncUrl()
   loadData()
 }
 
@@ -616,6 +620,7 @@ function handleSizeChange(val) {
   pageSize.value = val
   page.value = 1
   jumpPage.value = 1
+  syncUrl()
   loadData()
 }
 

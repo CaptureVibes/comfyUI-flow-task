@@ -42,8 +42,8 @@
     <div v-if="total > 0" class="tp-footer">
       <span class="tp-count-text">共 {{ total }} 条</span>
       <div class="tp-pagination">
-        <button class="pg-btn" :disabled="page <= 1" @click="page--; loadTopics()">← 上一页</button>
-        <button class="pg-btn" :disabled="page * pageSize >= total" @click="page++; loadTopics()">下一页 →</button>
+        <button class="pg-btn" :disabled="page <= 1" @click="page--; syncUrl(); loadTopics()">← 上一页</button>
+        <button class="pg-btn" :disabled="page * pageSize >= total" @click="page++; syncUrl(); loadTopics()">下一页 →</button>
       </div>
     </div>
 
@@ -95,14 +95,24 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchTopics, createTopic, patchTopic, deleteTopic, fetchKeywordGenConfig, updateKeywordGenConfig } from '../api/topics'
+
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
 const topics = ref([])
 const total = ref(0)
-const page = ref(1)
+const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(20)
+
+function syncUrl() {
+  const query = {}
+  if (page.value > 1) query.page = String(page.value)
+  router.replace({ query })
+}
 
 // Topic form
 const showAddTopicDialog = ref(false)

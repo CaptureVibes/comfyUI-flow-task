@@ -357,7 +357,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, resumeVideoTaskScoring } from '../api/video_tasks.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
@@ -388,19 +388,24 @@ const STATUS_LABELS = {
   abandoned: '已废弃',
 }
 
+const route = useRoute()
 const router = useRouter()
 const today = new Date().toISOString().slice(0, 10)
-const targetDate = ref(today)
+
+// State synced with URL query
+const targetDate = ref(route.query.date || today)
+const currentPage = ref(Number(route.query.page) || 1)
+const pageSize = ref(Number(route.query.page_size) || 20)
+const activeFilter = ref(route.query.status || null)
+const selectedBloggerId = ref(route.query.blogger_id || null)
+
 const tasks = ref([])
 const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(20)
 const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
 const continuingScoring = ref(false)
 const taskStats = ref({})
-const activeFilter = ref(null)
 
 // Blogger searchable dropdown state
 const bloggers = ref([])
@@ -408,7 +413,16 @@ const bloggerOptions = ref([])
 const bloggerSearchInput = ref('')
 const bloggerDropdownOpen = ref(false)
 const selectedBlogger = ref(null)  // { value, label, handle, avatar }
-const selectedBloggerId = ref(null)
+
+function syncUrl() {
+  const query = {}
+  if (targetDate.value && targetDate.value !== today) query.date = targetDate.value
+  if (currentPage.value > 1) query.page = String(currentPage.value)
+  if (pageSize.value !== 20) query.page_size = String(pageSize.value)
+  if (activeFilter.value) query.status = activeFilter.value
+  if (selectedBloggerId.value) query.blogger_id = selectedBloggerId.value
+  router.replace({ query })
+}
 
 const filteredBloggerOptions = computed(() => {
   const q = bloggerSearchInput.value.trim().toLowerCase()
@@ -445,6 +459,7 @@ function toggleFilter(status) {
     activeFilter.value = status
   }
   currentPage.value = 1
+  syncUrl()
   loadTasks()
 }
 
@@ -455,6 +470,7 @@ function firstShotUrl(shots) {
 }
 
 function goToDetail(taskId) {
+  syncUrl()
   router.push({ name: 'video-task-detail', params: { id: taskId } })
 }
 
@@ -486,6 +502,7 @@ async function loadTasks() {
 
 function onDateChange() {
   currentPage.value = 1
+  syncUrl()
   loadTasks()
 }
 
@@ -494,6 +511,7 @@ function onPageChange(page) {
   if (target === currentPage.value) return
   currentPage.value = target
   jumpPage.value = target
+  syncUrl()
   loadTasks()
 }
 
@@ -501,6 +519,7 @@ function handleSizeChange(val) {
   pageSize.value = val
   currentPage.value = 1
   jumpPage.value = 1
+  syncUrl()
   loadTasks()
 }
 
@@ -639,6 +658,7 @@ function selectBlogger(opt) {
   bloggerSearchInput.value = ''
   bloggerDropdownOpen.value = false
   currentPage.value = 1
+  syncUrl()
   loadTasks()
 }
 
@@ -648,13 +668,19 @@ function clearBloggerFilter() {
   bloggerSearchInput.value = ''
   bloggerDropdownOpen.value = false
   currentPage.value = 1
+  syncUrl()
   loadTasks()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await loadBloggers()
+  // Restore selectedBlogger object from URL blogger_id
+  if (selectedBloggerId.value) {
+    const opt = bloggerOptions.value.find(o => o.value === selectedBloggerId.value)
+    if (opt) selectedBlogger.value = opt
+  }
   loadTasks()
   loadStats()
-  loadBloggers()
 })
 </script>
 

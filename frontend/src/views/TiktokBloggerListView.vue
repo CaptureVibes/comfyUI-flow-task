@@ -15,7 +15,7 @@
         :key="tab.value"
         class="bl-tab"
         :class="{ active: selectedPlatform === tab.value }"
-        @click="selectedPlatform = tab.value; page = 1; loadData()"
+        @click="selectedPlatform = tab.value; page = 1; syncUrl(); loadData()"
       >{{ tab.label }}</button>
     </div>
 
@@ -109,19 +109,27 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchBloggers, createBlogger, deleteBlogger } from '../api/tiktok_bloggers'
 
+const route = useRoute()
 const router = useRouter()
 
 const items = ref([])
 const total = ref(0)
-const page = ref(1)
+const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(20)
 const loading = ref(false)
 const deleting = ref(null)
-const selectedPlatform = ref('')
+const selectedPlatform = ref(route.query.platform || '')
+
+function syncUrl() {
+  const query = {}
+  if (page.value > 1) query.page = String(page.value)
+  if (selectedPlatform.value) query.platform = selectedPlatform.value
+  router.replace({ query })
+}
 const showAddDialog = ref(false)
 const profileUrl = ref('')
 const adding = ref(false)
@@ -154,6 +162,7 @@ async function loadData() {
 
 function goPage(p) {
   page.value = p
+  syncUrl()
   loadData()
 }
 

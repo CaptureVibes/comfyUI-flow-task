@@ -40,12 +40,12 @@
 
     <!-- Navigation -->
     <nav class="sidebar-nav">
-      <router-link
+      <a
         v-for="item in menuItems"
         :key="item.name"
-        :to="item.path"
         class="nav-item"
         :class="{ active: isActive(item.name) }"
+        @click.prevent="handleNavClick(item)"
       >
         <div class="nav-icon">
           <component :is="item.iconComponent" />
@@ -61,7 +61,7 @@
         >
           <span class="nav-tooltip-trigger" />
         </el-tooltip>
-      </router-link>
+      </a>
     </nav>
 
     <!-- Collapse toggle -->
@@ -91,7 +91,7 @@
 
 <script setup>
 import { h } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 
 defineProps({
@@ -101,6 +101,7 @@ defineProps({
 defineEmits(['toggle'])
 
 const route = useRoute()
+const router = useRouter()
 const { isAdmin } = useAuth()
 
 /* ── SVG Icon components ── */
@@ -264,6 +265,16 @@ function isActive(name) {
   const routeName = route.name || ''
   const parentName = route.meta?.parent || ''
   return routeName === name || parentName === name
+}
+
+function handleNavClick(item) {
+  const parentName = route.meta?.parent || ''
+  // If currently in a child page of this module, go back to preserve query params
+  if (parentName === item.name) {
+    router.back()
+  } else {
+    router.push(item.path)
+  }
 }
 </script>
 

@@ -2,7 +2,7 @@
   <div class="vtfd-page">
     <!-- Header -->
     <div class="vtfd-header">
-      <div class="vtfd-back" @click="$router.push('/dashboard/video-ai-templates')">
+      <div class="vtfd-back" @click="$router.back()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         返回列表
       </div>
