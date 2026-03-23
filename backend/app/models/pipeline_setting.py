@@ -50,10 +50,16 @@ class PipelineSetting(Base):
     ai_account_avatar_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_photo_video_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_photo_image_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    ai_account_name_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-2.5-flash")
+    ai_account_name_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     ai_account_avatar_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")
     ai_account_avatar_size: Mapped[str] = mapped_column(String(20), nullable=False, default="1:1")
     ai_account_avatar_quality: Mapped[str] = mapped_column(String(10), nullable=False, default="1K")
+
+    # 关键词生成配置
+    keyword_gen_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    keyword_gen_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    keyword_gen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    keyword_gen_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

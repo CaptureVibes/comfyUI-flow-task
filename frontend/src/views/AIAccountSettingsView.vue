@@ -32,7 +32,7 @@
             />
           </el-form-item>
           <el-form-item label="视频理解模型">
-            <el-input v-model="form.ai_account_video_model" placeholder="e.g. gemini-2.5-flash" class="aias-input" />
+            <el-input v-model="form.ai_account_video_model" placeholder="e.g. gemini-3.1-pro-preview" class="aias-input" />
           </el-form-item>
         </div>
       </div>
@@ -54,7 +54,7 @@
             />
           </el-form-item>
           <el-form-item label="名称生成模型">
-            <el-input v-model="form.ai_account_name_model" placeholder="e.g. gemini-2.5-flash" class="aias-input" />
+            <el-input v-model="form.ai_account_name_model" placeholder="e.g. gemini-3.1-pro-preview" class="aias-input" />
           </el-form-item>
         </div>
       </div>
@@ -141,10 +141,10 @@ const saving = ref(false)
 const form = reactive({
   // 视频理解
   ai_account_video_prompt: '',
-  ai_account_video_model: 'gemini-2.5-flash',
+  ai_account_video_model: 'gemini-3.1-pro-preview',
   // 名称生成
   ai_account_name_prompt: '',
-  ai_account_name_model: 'gemini-2.5-flash',
+  ai_account_name_model: 'gemini-3.1-pro-preview',
   // 头像生成
   ai_account_avatar_prompt: '',
   ai_account_avatar_model: 'nano2',
@@ -163,9 +163,9 @@ async function loadSettings() {
     const data = await fetchPipelineSettings()
     form._pipeline = data
     form.ai_account_video_prompt = data.ai_account_video_prompt || ''
-    form.ai_account_video_model = data.ai_account_video_model || 'gemini-2.5-flash'
+    form.ai_account_video_model = data.ai_account_video_model || 'gemini-3.1-pro-preview'
     form.ai_account_name_prompt = data.ai_account_name_prompt || ''
-    form.ai_account_name_model = data.ai_account_name_model || 'gemini-2.5-flash'
+    form.ai_account_name_model = data.ai_account_name_model || 'gemini-3.1-pro-preview'
     form.ai_account_avatar_prompt = data.ai_account_avatar_prompt || ''
     form.ai_account_avatar_model = data.ai_account_avatar_model || 'nano2'
     form.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'

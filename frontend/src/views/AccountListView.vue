@@ -79,7 +79,7 @@
             <el-input v-model="aiSettingsForm.ai_account_video_prompt" type="textarea" :rows="4" placeholder="请输入视频分析提示词..." />
           </el-form-item>
           <el-form-item label="视频理解模型">
-            <el-input v-model="aiSettingsForm.ai_account_video_model" placeholder="e.g. gemini-2.5-flash" />
+            <el-input v-model="aiSettingsForm.ai_account_video_model" placeholder="e.g. gemini-3.1-pro-preview" />
           </el-form-item>
         </div>
 
@@ -93,7 +93,7 @@
             <el-input v-model="aiSettingsForm.ai_account_name_prompt" type="textarea" :rows="4" placeholder="请输入名称生成提示词..." />
           </el-form-item>
           <el-form-item label="名称生成模型">
-            <el-input v-model="aiSettingsForm.ai_account_name_model" placeholder="e.g. gemini-2.5-flash" />
+            <el-input v-model="aiSettingsForm.ai_account_name_model" placeholder="e.g. gemini-3.1-pro-preview" />
           </el-form-item>
         </div>
 
@@ -473,7 +473,7 @@ const aiSettingsForm = ref({
   ai_account_video_prompt: '',
   ai_account_video_model: 'gemini-3.1-pro-preview',
   ai_account_name_prompt: '',
-  ai_account_name_model: 'gemini-2.5-flash',
+  ai_account_name_model: 'gemini-3.1-pro-preview',
   ai_account_avatar_prompt: '',
   ai_account_avatar_model: 'gemini-3.1-flash-image-preview',
   ai_account_avatar_size: '1:1',
@@ -492,7 +492,7 @@ async function openAISettings() {
     aiSettingsForm.value.ai_account_video_prompt = data.ai_account_video_prompt || ''
     aiSettingsForm.value.ai_account_video_model = data.ai_account_video_model || 'gemini-3.1-pro-preview'
     aiSettingsForm.value.ai_account_name_prompt = data.ai_account_name_prompt || ''
-    aiSettingsForm.value.ai_account_name_model = data.ai_account_name_model || 'gemini-2.5-flash'
+    aiSettingsForm.value.ai_account_name_model = data.ai_account_name_model || 'gemini-3.1-pro-preview'
     aiSettingsForm.value.ai_account_avatar_prompt = data.ai_account_avatar_prompt || ''
     aiSettingsForm.value.ai_account_avatar_model = data.ai_account_avatar_model || 'gemini-3.1-flash-image-preview'
     aiSettingsForm.value.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'

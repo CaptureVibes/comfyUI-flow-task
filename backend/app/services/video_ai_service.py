@@ -12,6 +12,7 @@ from uuid import UUID
 
 import httpx
 
+from app.services.evolink_api import call_evolink_gemini_api
 from app.db.session import SessionLocal
 from app.models.enums import VideoAIProcessStatus
 from app.models.video_ai_template import VideoAITemplate
@@ -173,83 +174,6 @@ def _ensure_persist_worker() -> None:
         return
     loop = asyncio.get_running_loop()
     _persist_worker_task = loop.create_task(_persist_worker_loop())
-
-
-# =============================================================================
-# EvoLink API 调用
-# =============================================================================
-
-
-async def _call_evolink_api(
-    *,
-    api_base_url: str,
-    api_key: str,
-    model_name: str,
-    video_url: str,
-    prompt: str,
-    temperature: float = 0.3,
-) -> str:
-    """
-    调用 EvoLink API (Gemini 协议) 进行视频分析
-
-    Args:
-        api_base_url: API 基础 URL
-        api_key: API 密钥
-        model_name: 模型名称（如 gemini-2.5-flash）
-        video_url: 视频 URL（必须是公网可访问的）
-        prompt: 提示词
-        temperature: 生成温度（0-2）
-
-    Returns:
-        AI 返回的文本内容
-
-    Raises:
-        ValueError: 响应格式错误
-        httpx.HTTPStatusError: HTTP 请求失败
-    """
-    # 构建请求 URL 和 payload
-    url = f"{api_base_url.rstrip('/')}/v1beta/models/{model_name}:generateContent"
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"fileData": {"mimeType": "video/mp4", "fileUri": video_url}},
-                    {"text": prompt},
-                ],
-            }
-        ],
-        "generationConfig": {"temperature": temperature},
-    }
-
-    # 记录请求日志（隐藏 API 密钥）
-    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-    logger.info("EvoLink API request: url=%s, model=%s, api_key=%s, temperature=%s", url, model_name, masked_key, temperature)
-    logger.info("EvoLink API request: video_url=%s", video_url)
-    logger.info("EvoLink API request: prompt=%s", prompt[:400] if len(prompt) > 400 else prompt)
-    logger.debug("EvoLink API request: payload=%s", payload)
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        if not resp.is_success:
-            logger.error("EvoLink API error: status=%d, response=%s", resp.status_code, resp.text)
-        resp.raise_for_status()
-        data = resp.json()
-
-    # 记录原始响应（用于调试）
-    logger.info("EvoLink API raw response: %s", json.dumps(data, ensure_ascii=False)[:1000])
-
-    # 从 Gemini 风格的响应中提取文本
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        logger.info("EvoLink API extracted text: %s", text[:500] if len(text) > 500 else text)
-        return text
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError(f"Unexpected EvoLink response format: {data}") from exc
 
 
 # =============================================================================
@@ -844,25 +768,14 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 _set_status(template_id, VideoAIProcessStatus.understanding)
                 logger.info("[%s] understanding started", template_id)
 
-                last_exc: Exception | None = None
-                prompt_description = ""
-                for attempt in range(1, 4):
-                    try:
-                        prompt_description = await _call_evolink_api(
-                            api_base_url=api_base_url,
-                            api_key=api_key,
-                            model_name=understand_model,
-                            video_url=video_url,
-                            prompt=understand_prompt,
-                            temperature=understand_temperature,
-                        )
-                        last_exc = None
-                        break
-                    except Exception as exc:
-                        last_exc = exc
-                        logger.warning("[%s] understanding attempt %d/3 failed: %s", template_id, attempt, exc)
-                if last_exc is not None:
-                    raise last_exc
+                prompt_description = await call_evolink_gemini_api(
+                    api_base_url=api_base_url,
+                    api_key=api_key,
+                    model_name=understand_model,
+                    video_url=video_url,
+                    prompt=understand_prompt,
+                    temperature=understand_temperature,
+                )
 
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.understanding))
                 state["prompt_description"] = prompt_description

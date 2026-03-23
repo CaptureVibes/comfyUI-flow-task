@@ -59,7 +59,12 @@ class PipelineSettingsPayload(BaseModel):
     ai_account_avatar_prompt: str = ""
     ai_account_photo_video_prompt: str = ""
     ai_account_photo_image_prompt: str = ""
-    ai_account_name_model: str = "gemini-2.5-flash"
+    ai_account_name_model: str = "gemini-3.1-pro-preview"
     ai_account_avatar_model: str = "gemini-3.1-flash-image-preview"
     ai_account_avatar_size: str = "1:1"
     ai_account_avatar_quality: str = "1K"
+    # 关键词生成配置
+    keyword_gen_model: str = "gemini-3.1-pro-preview"
+    keyword_gen_prompt: str = ""
+    keyword_gen_count: int = 50
+    keyword_gen_temperature: float = 0.7

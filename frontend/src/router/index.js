@@ -110,7 +110,19 @@ const routes = [
         path: 'tiktok-bloggers',
         name: 'tiktok-bloggers',
         component: () => import('../views/TiktokBloggerListView.vue'),
-        meta: { title: 'TikTok博主' }
+        meta: { title: 'TK博主' }
+      },
+      {
+        path: 'topics',
+        name: 'topics',
+        component: () => import('../views/TopicListView.vue'),
+        meta: { title: '主题词管理' }
+      },
+      {
+        path: 'topics/:id',
+        name: 'topic-detail',
+        component: () => import('../views/TopicDetailView.vue'),
+        meta: { title: '主题词详情', parent: 'topics' }
       },
       {
         path: 'video-library/new',

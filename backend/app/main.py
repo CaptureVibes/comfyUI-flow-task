@@ -25,6 +25,7 @@ from app.services.video_task_service import (
     start_video_scoring_queue_processor,
     stop_video_scoring_queue_processor,
 )
+from app.services.topic_service import recover_stuck_keyword_gen_on_startup
 
 setup_logging(settings.log_level, settings.log_dir)
 logger = logging.getLogger("app")
@@ -92,6 +93,7 @@ async def startup_event() -> None:
     start_video_publication_poller()
     # start_video_stats_collector()  # 暂停：每日统计定时任务
     start_account_publish_scheduler()
+    await recover_stuck_keyword_gen_on_startup()
 
 
 @app.on_event("shutdown")

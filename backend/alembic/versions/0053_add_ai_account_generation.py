@@ -56,7 +56,7 @@ def upgrade() -> None:
         ('ai_account_avatar_prompt', sa.Column('ai_account_avatar_prompt', sa.Text(), nullable=False, server_default='')),
         ('ai_account_photo_video_prompt', sa.Column('ai_account_photo_video_prompt', sa.Text(), nullable=False, server_default='')),
         ('ai_account_photo_image_prompt', sa.Column('ai_account_photo_image_prompt', sa.Text(), nullable=False, server_default='')),
-        ('ai_account_name_model', sa.Column('ai_account_name_model', sa.String(200), nullable=False, server_default='gemini-2.5-flash')),
+        ('ai_account_name_model', sa.Column('ai_account_name_model', sa.String(200), nullable=False, server_default='gemini-3.1-pro-preview')),
         ('ai_account_avatar_model', sa.Column('ai_account_avatar_model', sa.String(200), nullable=False, server_default='nano2')),
         ('ai_account_avatar_size', sa.Column('ai_account_avatar_size', sa.String(20), nullable=False, server_default='1:1')),
         ('ai_account_avatar_quality', sa.Column('ai_account_avatar_quality', sa.String(10), nullable=False, server_default='1K')),

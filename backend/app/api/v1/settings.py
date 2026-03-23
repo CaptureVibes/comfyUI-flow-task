@@ -12,6 +12,7 @@ from app.schemas.settings import (
     PipelineSettingsPayload,
     SystemSettingsPayload,
 )
+from app.schemas.topic import KeywordGenConfigPayload
 from app.services.comfyui_settings_service import (
     fetch_ports_runtime_status,
     get_or_create_comfyui_settings,
@@ -104,6 +105,10 @@ async def get_pipeline_settings(
         ai_account_avatar_model=row.ai_account_avatar_model,
         ai_account_avatar_size=row.ai_account_avatar_size,
         ai_account_avatar_quality=row.ai_account_avatar_quality,
+        keyword_gen_model=row.keyword_gen_model,
+        keyword_gen_prompt=row.keyword_gen_prompt,
+        keyword_gen_count=row.keyword_gen_count,
+        keyword_gen_temperature=row.keyword_gen_temperature,
     )
 
 
@@ -139,6 +144,48 @@ async def put_pipeline_settings(
         ai_account_avatar_model=row.ai_account_avatar_model,
         ai_account_avatar_size=row.ai_account_avatar_size,
         ai_account_avatar_quality=row.ai_account_avatar_quality,
+        keyword_gen_model=row.keyword_gen_model,
+        keyword_gen_prompt=row.keyword_gen_prompt,
+        keyword_gen_count=row.keyword_gen_count,
+        keyword_gen_temperature=row.keyword_gen_temperature,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Keyword generation config (per-user, isolated save)
+# ---------------------------------------------------------------------------
+
+@router.get("/keyword-gen-config", response_model=KeywordGenConfigPayload)
+async def get_keyword_gen_config(
+    token: TokenData = Depends(require_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> KeywordGenConfigPayload:
+    row = await get_or_create_pipeline_settings(session, owner_id=token.user_id)
+    return KeywordGenConfigPayload(
+        keyword_gen_model=row.keyword_gen_model,
+        keyword_gen_prompt=row.keyword_gen_prompt,
+        keyword_gen_count=row.keyword_gen_count,
+        keyword_gen_temperature=row.keyword_gen_temperature,
+    )
+
+
+@router.put("/keyword-gen-config", response_model=KeywordGenConfigPayload)
+async def put_keyword_gen_config(
+    payload: KeywordGenConfigPayload,
+    token: TokenData = Depends(require_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> KeywordGenConfigPayload:
+    row = await get_or_create_pipeline_settings(session, owner_id=token.user_id)
+    updates = payload.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(row, field, value)
+    await session.commit()
+    await session.refresh(row)
+    return KeywordGenConfigPayload(
+        keyword_gen_model=row.keyword_gen_model,
+        keyword_gen_prompt=row.keyword_gen_prompt,
+        keyword_gen_count=row.keyword_gen_count,
+        keyword_gen_temperature=row.keyword_gen_temperature,
     )
 
 
