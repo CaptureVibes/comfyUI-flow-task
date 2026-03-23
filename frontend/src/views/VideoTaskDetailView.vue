@@ -311,20 +311,17 @@
                     <span class="vtd-dim-weight">权重 {{ dim.weight }}%</span>
                   </div>
                   <div class="vtd-dim-desc">{{ dim.desc }}</div>
-                  <div class="vtd-dim-scores">
+                  <div class="vtd-dim-scores-grid">
                     <button
-                      v-for="s in 5"
+                      v-for="s in [0,1,2,3,4,5]"
                       :key="s"
                       class="vtd-dim-score-btn"
-                      :class="{
-                        active: dimensionScores[sub.id]?.[dim.key] === s,
-                        [`vtd-score-${s}`]: dimensionScores[sub.id]?.[dim.key] === s,
-                      }"
+                      :class="[`vtd-score-${s}`, { active: dimensionScores[sub.id]?.[dim.key] === s }]"
                       @click="setDimensionScore(sub, dim.key, s)"
-                    >{{ s }}</button>
-                  </div>
-                  <div class="vtd-dim-score-labels">
-                    <span>Fail</span><span>Poor</span><span>OK</span><span>Good</span><span>Great</span>
+                    >
+                      <span class="vtd-dim-btn-num">{{ s }}</span>
+                      <span class="vtd-dim-btn-label">{{ SCORE_LABELS[s] }}</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -517,6 +514,8 @@ const DIMENSIONS = [
   { key: 'camera_composition', label: '镜头与构图', weight: 12, desc: '景别、运镜、构图、稳定' },
   { key: 'visual_environment', label: '画面与环境', weight: 11, desc: '光影色调、曝光肤色、背景与风格统一' },
 ]
+
+const SCORE_LABELS = ['Fail', 'Terrible', 'Bad', 'Normal', 'Good', 'Awesome']
 
 const route = useRoute()
 const router = useRouter()
@@ -1732,16 +1731,19 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
-.vtd-dim-scores {
-  display: flex;
+.vtd-dim-scores-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
 }
 
 .vtd-dim-score-btn {
-  flex: 1;
-  padding: 6px 0;
-  font-size: 13px;
-  font-weight: 700;
+  --btn-color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 0;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   background: #fff;
@@ -1750,26 +1752,39 @@ onUnmounted(() => {
   transition: all 0.15s;
 }
 
+.vtd-dim-score-btn.vtd-score-0 { --btn-color: #dc2626; }
+.vtd-dim-score-btn.vtd-score-1 { --btn-color: #f97316; }
+.vtd-dim-score-btn.vtd-score-2 { --btn-color: #eab308; }
+.vtd-dim-score-btn.vtd-score-3 { --btn-color: #84cc16; }
+.vtd-dim-score-btn.vtd-score-4 { --btn-color: #22c55e; }
+.vtd-dim-score-btn.vtd-score-5 { --btn-color: #7c3aed; }
+
+.vtd-dim-btn-num {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.vtd-dim-btn-label {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.85;
+}
+
 .vtd-dim-score-btn:hover:not(.active) {
   border-color: #94a3b8;
   color: #1e293b;
 }
 
 .vtd-dim-score-btn.active {
+  background: var(--btn-color);
   color: #fff;
-  border-color: transparent;
+  border-color: var(--btn-color);
 }
 
-.vtd-dim-score-btn.vtd-score-1 { background: #ef4444; }
-.vtd-dim-score-btn.vtd-score-2 { background: #f97316; }
-.vtd-dim-score-btn.vtd-score-3 { background: #eab308; }
-.vtd-dim-score-btn.vtd-score-4 { background: #22c55e; }
-.vtd-dim-score-btn.vtd-score-5 { background: #10b981; }
-
-.vtd-dim-score-labels {
-  display: flex;
-  justify-content: space-between;
-  padding: 2px 2px 0;
+.vtd-dim-score-labels-placeholder {
+  /* removed, labels now inside buttons */
   font-size: 9px;
   color: #94a3b8;
 }
