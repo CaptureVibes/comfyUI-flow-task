@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select, update
+from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -288,6 +288,11 @@ async def _generate_one(mk_id: uuid.UUID, owner_id: uuid.UUID) -> None:
 
                 logger.info("Keyword gen response for [%s]: %s", mk.name, text[:500])
                 keyword_list = _parse_keywords_from_text(text)
+
+                # Delete old keywords before inserting new ones (replace, not append)
+                await session.execute(
+                    sa_delete(Keyword).where(Keyword.mother_keyword_id == mk_id)
+                )
 
                 now = _utcnow()
                 for kw_text in keyword_list:
