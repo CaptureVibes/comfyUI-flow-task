@@ -371,6 +371,7 @@ async def update_sub_task_note(
         owner_id,
         manual_note=payload.manual_note,
         manual_score=payload.manual_score,
+        elsa_score=payload.elsa_score,
         temporal_consistency=payload.temporal_consistency,
         character_integrity=payload.character_integrity,
         audio_sync=payload.audio_sync,

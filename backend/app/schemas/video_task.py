@@ -29,6 +29,7 @@ class VideoSubTaskRead(BaseModel):
     scoring_error: str | None = None  # Error message when AI scoring fails
     manual_score: int | None = None  # User-written score (0-100)
     manual_note: str | None = None   # User-written note, independent of AI scoring
+    elsa_score: int | None = None    # Elsa review score (0-100)
     temporal_consistency: bool | None = None
     character_integrity: bool | None = None
     audio_sync: bool | None = None
@@ -89,6 +90,7 @@ class VideoSubTaskStatusUpdate(BaseModel):
 class VideoSubTaskNoteUpdate(BaseModel):
     manual_score: int | None = None
     manual_note: str | None = None
+    elsa_score: int | None = None
     temporal_consistency: bool | None = None
     character_integrity: bool | None = None
     audio_sync: bool | None = None

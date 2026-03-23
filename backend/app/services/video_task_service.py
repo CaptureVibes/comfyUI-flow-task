@@ -702,6 +702,7 @@ class VideoTaskService:
         owner_id: uuid.UUID | None,
         manual_note: str | None,
         manual_score: int | None = None,
+        elsa_score: int | None = None,
         temporal_consistency: bool | None = None,
         character_integrity: bool | None = None,
         audio_sync: bool | None = None,
@@ -749,6 +750,9 @@ class VideoTaskService:
         elif sub.critical_fail:
             sub.weighted_total_score = 0
             sub.manual_score = 0
+
+        if elsa_score is not None:
+            sub.elsa_score = elsa_score
 
         if manual_note is not None:
             sub.manual_note = manual_note

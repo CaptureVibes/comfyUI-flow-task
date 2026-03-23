@@ -335,6 +335,22 @@
               </div>
             </div>
 
+            <!-- Elsa Score -->
+            <div class="vtd-elsa-score-row" style="margin-top: 8px;">
+              <label class="vtd-note-col-label">Elsa锐评</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                :value="elsaScores[sub.id]"
+                class="vtd-elsa-input"
+                placeholder="0-100"
+                @input="e => elsaScores[sub.id] = e.target.value === '' ? null : Math.min(100, Math.max(0, Number(e.target.value)))"
+                @blur="handleSaveNote(sub)"
+              />
+              <span v-if="elsaScores[sub.id] != null" class="vtd-elsa-suffix">分</span>
+            </div>
+
             <!-- Note textarea -->
             <div class="vtd-note-reason-col" style="margin-top: 8px;">
               <div class="vtd-note-col-label">评分备注</div>
@@ -526,6 +542,8 @@ const selecting = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
+// Elsa锐评分数：{ [subId]: number|null }
+const elsaScores = ref({})
 // 手动备注：{ [subId]: draftText }
 const manualNotes = ref({})
 // 关键穿帮检测：{ [subId]: { temporal_consistency: bool, ... } }
@@ -657,6 +675,9 @@ async function loadTask(polling = false) {
       // 初始化 draft 状态（首次加载时同步数据库已有值）
       if (task.value?.sub_tasks) {
         task.value.sub_tasks.forEach(sub => {
+          if (elsaScores.value[sub.id] === undefined) {
+            elsaScores.value[sub.id] = sub.elsa_score ?? null
+          }
           if (manualNotes.value[sub.id] === undefined) {
             manualNotes.value[sub.id] = sub.manual_note ?? ''
           }
@@ -729,6 +750,7 @@ async function handleSaveNote(sub) {
     const dims = dimensionScores.value[sub.id] || {}
     const payload = {
       manual_note: manualNotes.value[sub.id] || null,
+      elsa_score: elsaScores.value[sub.id] ?? null,
       temporal_consistency: checks.temporal_consistency ?? null,
       character_integrity: checks.character_integrity ?? null,
       audio_sync: checks.audio_sync ?? null,
@@ -737,6 +759,7 @@ async function handleSaveNote(sub) {
     const updated = await saveSubTaskNote(sub.id, payload)
     sub.manual_score = updated.manual_score
     sub.manual_note = updated.manual_note
+    sub.elsa_score = updated.elsa_score
     sub.temporal_consistency = updated.temporal_consistency
     sub.character_integrity = updated.character_integrity
     sub.audio_sync = updated.audio_sync
@@ -870,6 +893,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     stopAutoRefresh()
     task.value = null
     account.value = null
+    elsaScores.value = {}
     manualNotes.value = {}
     criticalChecks.value = {}
     dimensionScores.value = {}
@@ -1490,6 +1514,35 @@ onUnmounted(() => {
   font-weight: 600;
   color: #6366f1;
   letter-spacing: 0.02em;
+}
+
+.vtd-elsa-score-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vtd-elsa-input {
+  width: 88px;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+  -moz-appearance: textfield;
+}
+.vtd-elsa-input::-webkit-outer-spin-button,
+.vtd-elsa-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.vtd-elsa-input:focus {
+  border-color: #6366f1;
+}
+.vtd-elsa-suffix {
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .vtd-note-score-wrap {

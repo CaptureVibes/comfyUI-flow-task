@@ -76,6 +76,7 @@ class VideoSubTask(Base):
     # Manual score and note written by the user, independent of AI scoring
     manual_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     manual_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    elsa_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Critical checks (all must be True to pass; any False → critical_fail=True)
     temporal_consistency: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
