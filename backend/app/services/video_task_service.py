@@ -1091,3 +1091,91 @@ class VideoTaskService:
 
         buf.seek(0)
         return buf, zip_filename
+
+    async def download_latest_published_videos(
+        self,
+        owner_id: uuid.UUID | None,
+    ) -> tuple["io.BytesIO", str] | tuple[None, None]:
+        """
+        下载每个账号最新已发布的视频，同时打包对应的 caption/hashtag txt。
+        文件夹名：account_name
+        文件名：account_id_account_name_发布时间.mp4 / .txt
+        txt 内容：标题 + 描述 + 标签（来自 VideoPublication.request_payload，若无则留空）
+        以 VideoSubTask.status == 'published' 为主，LEFT JOIN VideoPublication 取 caption。
+        """
+        import io
+        import re
+        import zipfile
+        from sqlalchemy import outerjoin
+        from app.models.video_publication import VideoPublication
+
+        # 以 VideoSubTask.status='published' 为准，LEFT JOIN VideoPublication 取 caption
+        stmt = (
+            select(VideoTask, VideoSubTask, VideoPublication, Account)
+            .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .outerjoin(VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id)
+            .join(Account, Account.id == VideoTask.account_id)
+            .where(VideoSubTask.status == "published")
+            .where(VideoSubTask.result_video_url.isnot(None))
+            .order_by(VideoSubTask.updated_at.desc())
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+
+        rows = (await self.db.execute(stmt)).all()
+        if not rows:
+            return None, None
+
+        # 每个账号只保留最新一条（已按 updated_at DESC 排序）
+        seen_accounts: set[uuid.UUID] = set()
+        latest_rows = []
+        for row in rows:
+            task, sub_task, publication, account = row
+            if account.id not in seen_accounts:
+                seen_accounts.add(account.id)
+                latest_rows.append(row)
+
+        def sanitize(name: str) -> str:
+            return re.sub(r'[\\/:*?"<>|]', '_', name).strip()
+
+        def build_caption_txt(payload: dict | None) -> str:
+            if not payload:
+                return ""
+            lines = []
+            if payload.get("title"):
+                lines.append(f"标题：{payload['title']}")
+            if payload.get("description"):
+                lines.append(f"描述：{payload['description']}")
+            tags = payload.get("tags") or []
+            if tags:
+                lines.append(f"标签：{' '.join(f'#{t}' if not t.startswith('#') else t for t in tags)}")
+            return "\n".join(lines)
+
+        root = "videos_latest"
+        zip_filename = "videos_latest.zip"
+
+        buf = io.BytesIO()
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for task, sub_task, publication, account in latest_rows:
+                    folder = sanitize(account.account_name)
+                    pub_time = sub_task.updated_at or task.created_at
+                    pub_str = pub_time.strftime("%Y%m%d_%H%M%S")
+                    base_name = f"{account.id}_{sanitize(account.account_name)}_{pub_str}"
+                    video_path = f"{root}/{folder}/{base_name}.mp4"
+                    txt_path = f"{root}/{folder}/{base_name}_caption.txt"
+                    try:
+                        resp = await client.get(sub_task.result_video_url)
+                        resp.raise_for_status()
+                        zf.writestr(video_path, resp.content)
+                        caption_text = build_caption_txt(publication.request_payload)
+                        zf.writestr(txt_path, caption_text.encode("utf-8"))
+                        logger.info("Packed latest video for account %s → %s", account.account_name, video_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "Skip latest video for account %s: %s",
+                            account.account_name, exc,
+                        )
+
+        buf.seek(0)
+        return buf, zip_filename

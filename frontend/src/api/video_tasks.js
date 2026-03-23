@@ -65,6 +65,14 @@ export async function downloadVideos(dateStr) {
   return response.data  // Blob
 }
 
+export async function downloadLatestPublishedVideos() {
+  const response = await http.get('/video-tasks/download-latest-published', {
+    responseType: 'blob',
+    timeout: 300000,
+  })
+  return response.data  // Blob
+}
+
 export async function resumeVideoTaskScoring(dateStr) {
   const { data } = await http.post(`/video-tasks/daily/${dateStr}/resume-scoring`, undefined, { timeout: 60000 })
   return data

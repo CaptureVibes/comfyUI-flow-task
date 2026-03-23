@@ -111,6 +111,26 @@ async def list_video_tasks(
     return VideoTaskListPage(items=items, total=total, page=page, page_size=page_size)
 
 
+@router.get("/download-latest-published")
+async def download_latest_published_videos(
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+):
+    """下载每个账号最新已发布的视频，含 caption/hashtag txt，打包成 ZIP 返回。"""
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+
+    svc = VideoTaskService(db=session)
+    buf, filename = await svc.download_latest_published_videos(owner_id)
+    if buf is None:
+        raise HTTPException(status_code=404, detail="没有已发布的视频")
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/stats", response_model=dict[str, int])
 async def get_video_task_stats(
     target_date: date | None = Query(default=None),

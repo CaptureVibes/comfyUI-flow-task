@@ -7,9 +7,9 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           查看每日任务
         </el-button>
-        <el-button class="al-tasks-btn" @click="openDownloadDialog">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          下载视频
+        <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
+          <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          {{ downloading ? '下载中...' : '下载视频' }}
         </el-button>
         <el-button class="al-config-btn" @click="openAISettings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -55,38 +55,6 @@
         </el-button>
       </div>
     </div>
-
-    <!-- 下载视频弹窗 -->
-    <el-dialog
-      v-model="showDownloadDialog"
-      title="下载视频"
-      width="400px"
-      :close-on-click-modal="!downloading"
-    >
-      <div style="display:flex; flex-direction:column; gap:16px;">
-        <div style="font-size:14px; color:#606266;">请选择要下载的日期，系统将下载该日期所有已选定视频并打包成 ZIP。</div>
-        <el-date-picker
-          v-model="downloadDate"
-          type="date"
-          placeholder="选择日期"
-          format="YYYY-MM-DD"
-          value-format="YYYY-MM-DD"
-          style="width:100%"
-          :disabled="downloading"
-        />
-      </div>
-      <template #footer>
-        <el-button @click="showDownloadDialog = false" :disabled="downloading">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="downloading"
-          :disabled="!downloadDate"
-          @click="handleDownload"
-        >
-          {{ downloading ? '打包下载中...' : '确认下载' }}
-        </el-button>
-      </template>
-    </el-dialog>
 
     <!-- AI博主配置弹窗 -->
     <el-dialog
@@ -444,7 +412,7 @@ import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, d
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
-import { createVideoTask, downloadVideos } from '../api/video_tasks'
+import { createVideoTask, downloadLatestPublishedVideos } from '../api/video_tasks'
 
 const router = useRouter()
 
@@ -455,35 +423,31 @@ const loading = ref(false)
 const deleting = ref(null)
 
 // 下载视频
-const showDownloadDialog = ref(false)
-const downloadDate = ref('')
 const downloading = ref(false)
 
-function openDownloadDialog() {
-  downloadDate.value = ''
-  showDownloadDialog.value = true
-}
-
 async function handleDownload() {
-  if (!downloadDate.value || downloading.value) return
+  if (downloading.value) return
   downloading.value = true
   try {
-    const blob = await downloadVideos(downloadDate.value)
-    const url = URL.createObjectURL(blob)
+    const blob = await downloadLatestPublishedVideos()
+    const blobUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
-    a.download = `videos_${downloadDate.value}.zip`
+    a.href = blobUrl
+    a.download = 'videos_latest.zip'
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    showDownloadDialog.value = false
-    ElMessage.success('下载成功')
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000)
+    ElMessage.success('打包完成，已开始下载')
   } catch (e) {
-    const msg = e?.response?.data
-      ? (typeof e.response.data === 'string' ? e.response.data : await e.response.data.text?.() || '下载失败')
-      : (e?.message || '下载失败')
-    ElMessage.error(msg.includes('没有已发布') ? '该日期没有已发布的视频' : '下载失败，请稍后重试')
+    let errText = ''
+    if (e?.response?.data instanceof Blob) {
+      errText = await e.response.data.text().catch(() => '')
+    } else if (typeof e?.response?.data === 'string') {
+      errText = e.response.data
+    }
+    const detail = errText ? (JSON.parse(errText).detail || errText) : (e?.message || '')
+    ElMessage.error(detail.includes('没有已发布') ? '暂无已发布的视频' : '下载失败，请稍后重试')
   } finally {
     downloading.value = false
   }
