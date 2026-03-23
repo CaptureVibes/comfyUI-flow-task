@@ -351,6 +351,7 @@ const bloggerScrollRef = ref(null)
 const pagedBloggers = ref([])
 const pagedBloggersLoading = ref(false)
 const pagedBloggersLoaded = ref(false)
+const bloggerAllPagesLoaded = ref(false)
 const bloggerPage = ref(0)
 const bloggerTotal = ref(0)
 const BLOGGER_PAGE_SIZE = 20
@@ -444,11 +445,10 @@ async function loadPagedBloggers({ reset = false } = {}) {
     pagedBloggers.value = []
     bloggerPage.value = 0
     bloggerTotal.value = 0
+    bloggerAllPagesLoaded.value = false
     pagedBloggersLoaded.value = false
   }
-  if (pagedBloggersLoaded.value && bloggerTotal.value > 0 && pagedBloggers.value.length >= bloggerTotal.value) {
-    return
-  }
+  if (bloggerAllPagesLoaded.value) return
 
   pagedBloggersLoading.value = true
   try {
@@ -465,6 +465,12 @@ async function loadPagedBloggers({ reset = false } = {}) {
     bloggerPage.value = Number(res.data?.page || nextPage)
     bloggerTotal.value = Number(res.data?.total || 0)
     pagedBloggersLoaded.value = true
+    // Mark all pages loaded when API returned fewer items than page size (last page)
+    // or when we've fetched all pages based on total count
+    const totalPages = Math.ceil(bloggerTotal.value / BLOGGER_PAGE_SIZE)
+    if (items.length < BLOGGER_PAGE_SIZE || bloggerPage.value >= totalPages) {
+      bloggerAllPagesLoaded.value = true
+    }
   } catch (err) {
     console.error('加载博主分页列表失败:', err)
   } finally {
@@ -476,7 +482,7 @@ async function loadPagedBloggers({ reset = false } = {}) {
 async function ensurePagedBloggersScrollable() {
   if (bloggerSearchQuery.value.trim()) return
   if (!pagedBloggersLoaded.value) return
-  if (bloggerTotal.value > 0 && pagedBloggers.value.length >= bloggerTotal.value) return
+  if (bloggerAllPagesLoaded.value) return
   await nextTick()
   const el = bloggerScrollRef.value
   if (!el) return

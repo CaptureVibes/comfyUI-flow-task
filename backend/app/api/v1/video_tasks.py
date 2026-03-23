@@ -364,9 +364,18 @@ async def update_sub_task_note(
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
-    """保存用户手动填写的备注，不影响子任务状态"""
+    """保存用户手动填写的备注和评分，不影响子任务状态"""
     svc = VideoTaskService(db=session)
-    return await svc.update_sub_task_note(sub_task_id, owner_id, payload.manual_note, payload.manual_score)
+    return await svc.update_sub_task_note(
+        sub_task_id,
+        owner_id,
+        manual_note=payload.manual_note,
+        manual_score=payload.manual_score,
+        temporal_consistency=payload.temporal_consistency,
+        character_integrity=payload.character_integrity,
+        audio_sync=payload.audio_sync,
+        dimension_scores=payload.dimension_scores,
+    )
 
 
 @router.delete("/subtasks/{sub_task_id}", status_code=status.HTTP_200_OK)

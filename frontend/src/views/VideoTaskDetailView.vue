@@ -200,7 +200,13 @@
 
           <!-- AI Score Details -->
           <div v-if="hasAiScores(sub)" class="vtd-ai-details">
-            <div class="vtd-ai-details-title">AI 评分详情</div>
+            <div class="vtd-ai-details-header" @click="toggleAiReason(sub.id)">
+              <span class="vtd-ai-details-title">AI 评分详情</span>
+              <svg
+                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"
+                :style="{ transform: aiReasonExpanded[sub.id] ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }"
+              ><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
             <div class="vtd-ai-scores">
               <div class="vtd-ai-score-item">
                 <span class="vtd-ai-round">第一轮</span>
@@ -222,16 +228,16 @@
               </div>
             </div>
 
-            <!-- Round 1 Reason -->
-            <div v-if="sub.round1_reason" class="vtd-ai-reason">
-              <div class="vtd-ai-reason-label">第一轮评分理由</div>
-              <div class="vtd-ai-reason-text">{{ sub.round1_reason }}</div>
-            </div>
-
-            <!-- Round 2 Reason -->
-            <div v-if="sub.round2_reason" class="vtd-ai-reason">
-              <div class="vtd-ai-reason-label">第二轮评分理由</div>
-              <div class="vtd-ai-reason-text">{{ sub.round2_reason }}</div>
+            <!-- Collapsible reasons -->
+            <div v-if="aiReasonExpanded[sub.id]">
+              <div v-if="sub.round1_reason" class="vtd-ai-reason">
+                <div class="vtd-ai-reason-label">第一轮评分理由</div>
+                <div class="vtd-ai-reason-text">{{ sub.round1_reason }}</div>
+              </div>
+              <div v-if="sub.round2_reason" class="vtd-ai-reason">
+                <div class="vtd-ai-reason-label">第二轮评分理由</div>
+                <div class="vtd-ai-reason-text">{{ sub.round2_reason }}</div>
+              </div>
             </div>
           </div>
 
@@ -245,47 +251,107 @@
             <span class="vtd-error-text">{{ sub.scoring_error }}</span>
           </div>
 
-          <!-- Manual Note -->
+          <!-- Scoring Section -->
           <div class="vtd-manual-note">
             <div class="vtd-manual-note-label">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="margin-right:5px;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              我的备注
+              人工评分
             </div>
-            <div class="vtd-note-row">
-              <!-- 左：我的打分 -->
-              <div class="vtd-note-score-col">
-                <div class="vtd-note-col-label">我的打分</div>
-                <div class="vtd-note-score-wrap">
-                  <input
-                    v-model.number="manualScores[sub.id]"
-                    class="vtd-note-score-input"
-                    type="number"
-                    min="0"
-                    max="100"
-                    placeholder="0-100"
-                  />
-                  <span class="vtd-note-score-unit">分</span>
+
+            <!-- Step 1: Critical Checks -->
+            <div class="vtd-critical-section">
+              <div class="vtd-critical-title">关键穿帮检测</div>
+              <div class="vtd-critical-checks">
+                <label
+                  v-for="ck in CRITICAL_CHECKS"
+                  :key="ck.key"
+                  class="vtd-critical-item"
+                  :class="{
+                    'vtd-critical-pass': criticalChecks[sub.id]?.[ck.key] === true,
+                    'vtd-critical-fail': criticalChecks[sub.id]?.[ck.key] === false,
+                  }"
+                >
+                  <span class="vtd-critical-label">{{ ck.label }}</span>
+                  <span class="vtd-critical-desc">{{ ck.desc }}</span>
+                  <div class="vtd-critical-btns">
+                    <button
+                      class="vtd-ck-btn vtd-ck-pass"
+                      :class="{ active: criticalChecks[sub.id]?.[ck.key] === true }"
+                      @click="setCriticalCheck(sub, ck.key, true)"
+                    >Pass</button>
+                    <button
+                      class="vtd-ck-btn vtd-ck-fail"
+                      :class="{ active: criticalChecks[sub.id]?.[ck.key] === false }"
+                      @click="setCriticalCheck(sub, ck.key, false)"
+                    >Fail</button>
+                  </div>
+                </label>
+              </div>
+              <div v-if="sub.critical_fail === true" class="vtd-critical-verdict vtd-verdict-fail">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                穿帮 FAIL — 无需打分
+              </div>
+              <div v-else-if="sub.critical_fail === false" class="vtd-critical-verdict vtd-verdict-pass">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                通过关键检测
+              </div>
+            </div>
+
+            <!-- Step 2: Dimension Scoring (only if not critical_fail) -->
+            <div v-if="sub.critical_fail !== true" class="vtd-dimension-section">
+              <div class="vtd-dimension-title">多维度评分</div>
+              <div class="vtd-dimension-grid">
+                <div
+                  v-for="dim in DIMENSIONS"
+                  :key="dim.key"
+                  class="vtd-dim-item"
+                >
+                  <div class="vtd-dim-header">
+                    <span class="vtd-dim-name">{{ dim.label }}</span>
+                    <span class="vtd-dim-weight">权重 {{ dim.weight }}%</span>
+                  </div>
+                  <div class="vtd-dim-desc">{{ dim.desc }}</div>
+                  <div class="vtd-dim-scores">
+                    <button
+                      v-for="s in 5"
+                      :key="s"
+                      class="vtd-dim-score-btn"
+                      :class="{
+                        active: dimensionScores[sub.id]?.[dim.key] === s,
+                        [`vtd-score-${s}`]: dimensionScores[sub.id]?.[dim.key] === s,
+                      }"
+                      @click="setDimensionScore(sub, dim.key, s)"
+                    >{{ s }}</button>
+                  </div>
+                  <div class="vtd-dim-score-labels">
+                    <span>Fail</span><span>Poor</span><span>OK</span><span>Good</span><span>Great</span>
+                  </div>
                 </div>
               </div>
-              <!-- 右：评分理由 -->
-              <div class="vtd-note-reason-col">
-                <div class="vtd-note-col-label">评分理由</div>
-                <textarea
-                  v-model="manualNotes[sub.id]"
-                  class="vtd-note-textarea"
-                  placeholder="输入评分理由或备注..."
-                  rows="3"
-                />
+              <!-- Weighted Total -->
+              <div v-if="sub.weighted_total_score != null" class="vtd-weighted-total">
+                综合得分：
+                <span class="vtd-weighted-value" :class="getWeightedScoreClass(sub.weighted_total_score)">
+                  {{ sub.weighted_total_score }}
+                </span>
+                <span class="vtd-weighted-max">/ 100</span>
               </div>
             </div>
-            <button
-              class="vtd-note-save-btn"
-              :class="{ loading: savingNote[sub.id] }"
-              :disabled="savingNote[sub.id]"
-              @click="handleSaveNote(sub)"
-            >
-              {{ savingNote[sub.id] ? '保存中...' : '保存备注' }}
-            </button>
+
+            <!-- Note textarea -->
+            <div class="vtd-note-reason-col" style="margin-top: 8px;">
+              <div class="vtd-note-col-label">评分备注</div>
+              <textarea
+                v-model="manualNotes[sub.id]"
+                class="vtd-note-textarea"
+                placeholder="输入评分理由或备注..."
+                rows="3"
+                @blur="handleSaveNote(sub)"
+              />
+            </div>
+
+            <!-- Auto-save indicator -->
+            <div v-if="savingNote[sub.id]" class="vtd-autosave-indicator">保存中...</div>
           </div>
 
           <!-- Actions -->
@@ -437,6 +503,21 @@ const TIMELINE_STEPS = [
 
 const STATUS_ORDER = ['pending', 'generating', 'scoring', 'pending_publish', 'publishing', 'published']
 
+const CRITICAL_CHECKS = [
+  { key: 'temporal_consistency', label: '时序一致性', desc: '是否存在明显跨帧跳变' },
+  { key: 'character_integrity', label: '人物结构完整性', desc: '是否存在严重人物结构错误' },
+  { key: 'audio_sync', label: '声画同步', desc: '是否存在严重声画不同步' },
+]
+
+const DIMENSIONS = [
+  { key: 'audio_visual', label: '声画与听觉', weight: 20, desc: 'BGM、节奏卡点、人声自然度、口型同步' },
+  { key: 'character_realism', label: '人物与全身拟真', weight: 30, desc: '面部、身体结构、动作自然度、反AI感' },
+  { key: 'performance_narrative', label: '表演与叙事', weight: 15, desc: '情绪表达、行为逻辑、Hook与收束' },
+  { key: 'editing_transition', label: '剪辑与转场', weight: 12, desc: '转场动机、节奏、结构' },
+  { key: 'camera_composition', label: '镜头与构图', weight: 12, desc: '景别、运镜、构图、稳定' },
+  { key: 'visual_environment', label: '画面与环境', weight: 11, desc: '光影色调、曝光肤色、背景与风格统一' },
+]
+
 const route = useRoute()
 const router = useRouter()
 const task = ref(null)
@@ -446,10 +527,14 @@ const selecting = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
-// 手动打分：{ [subId]: number | '' }
-const manualScores = ref({})
 // 手动备注：{ [subId]: draftText }
 const manualNotes = ref({})
+// 关键穿帮检测：{ [subId]: { temporal_consistency: bool, ... } }
+const criticalChecks = ref({})
+// 多维度打分：{ [subId]: { audio_visual: 3, ... } }
+const dimensionScores = ref({})
+// AI评分理由展开状态：{ [subId]: boolean }
+const aiReasonExpanded = ref({})
 // 保存中状态：{ [subId]: boolean }
 const savingNote = ref({})
 
@@ -570,14 +655,21 @@ async function loadTask(polling = false) {
       }
     } else {
       task.value = await fetchVideoTask(route.params.id)
-      // 初始化 manualScores / manualNotes draft（首次加载时同步数据库已有值）
+      // 初始化 draft 状态（首次加载时同步数据库已有值）
       if (task.value?.sub_tasks) {
         task.value.sub_tasks.forEach(sub => {
-          if (manualScores.value[sub.id] === undefined) {
-            manualScores.value[sub.id] = sub.manual_score ?? ''
-          }
           if (manualNotes.value[sub.id] === undefined) {
             manualNotes.value[sub.id] = sub.manual_note ?? ''
+          }
+          if (criticalChecks.value[sub.id] === undefined) {
+            criticalChecks.value[sub.id] = {
+              temporal_consistency: sub.temporal_consistency ?? null,
+              character_integrity: sub.character_integrity ?? null,
+              audio_sync: sub.audio_sync ?? null,
+            }
+          }
+          if (dimensionScores.value[sub.id] === undefined) {
+            dimensionScores.value[sub.id] = sub.dimension_scores ? { ...sub.dimension_scores } : {}
           }
         })
       }
@@ -620,20 +712,55 @@ function stopAutoRefresh() {
   }
 }
 
+function toggleAiReason(subId) {
+  aiReasonExpanded.value[subId] = !aiReasonExpanded.value[subId]
+}
+
+function getWeightedScoreClass(score) {
+  if (score >= 80) return 'vtd-ws-high'
+  if (score >= 60) return 'vtd-ws-medium'
+  return 'vtd-ws-low'
+}
+
 async function handleSaveNote(sub) {
   if (savingNote.value[sub.id]) return
   savingNote.value[sub.id] = true
   try {
-    const updated = await saveSubTaskNote(sub.id, manualNotes.value[sub.id] || null, manualScores.value[sub.id])
-    // 同步回数据
+    const checks = criticalChecks.value[sub.id] || {}
+    const dims = dimensionScores.value[sub.id] || {}
+    const payload = {
+      manual_note: manualNotes.value[sub.id] || null,
+      temporal_consistency: checks.temporal_consistency ?? null,
+      character_integrity: checks.character_integrity ?? null,
+      audio_sync: checks.audio_sync ?? null,
+      dimension_scores: Object.keys(dims).length > 0 ? dims : null,
+    }
+    const updated = await saveSubTaskNote(sub.id, payload)
     sub.manual_score = updated.manual_score
     sub.manual_note = updated.manual_note
-    ElMessage.success('备注已保存')
+    sub.temporal_consistency = updated.temporal_consistency
+    sub.character_integrity = updated.character_integrity
+    sub.audio_sync = updated.audio_sync
+    sub.critical_fail = updated.critical_fail
+    sub.dimension_scores = updated.dimension_scores
+    sub.weighted_total_score = updated.weighted_total_score
   } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '保存备注失败')
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
   } finally {
     savingNote.value[sub.id] = false
   }
+}
+
+async function setCriticalCheck(sub, key, value) {
+  if (!criticalChecks.value[sub.id]) criticalChecks.value[sub.id] = {}
+  criticalChecks.value[sub.id][key] = value
+  await handleSaveNote(sub)
+}
+
+async function setDimensionScore(sub, key, value) {
+  if (!dimensionScores.value[sub.id]) dimensionScores.value[sub.id] = {}
+  dimensionScores.value[sub.id][key] = value
+  await handleSaveNote(sub)
 }
 
 async function handleEnqueue(sub) {
@@ -670,10 +797,15 @@ async function handleSelect(sub) {
   try {
     await patchSubTaskStatus(sub.id, { status: 'pending_publish', selected: true })
     ElMessage.success('已选定发布版本')
-    await loadTask()
-    if (shouldAutoRefresh()) {
-      startAutoRefresh()
+    // 本地更新状态，不刷新页面避免滚动位置丢失
+    sub.status = 'pending_publish'
+    sub.selected = true
+    for (const sibling of task.value.sub_tasks) {
+      if (sibling.id !== sub.id && sibling.status !== 'published' && sibling.status !== 'abandoned') {
+        sibling.status = 'abandoned'
+      }
     }
+    task.value.status = 'pending_publish'
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   } finally {
@@ -739,8 +871,9 @@ watch(() => route.params.id, async (newId, oldId) => {
     stopAutoRefresh()
     task.value = null
     account.value = null
-    manualScores.value = {}
     manualNotes.value = {}
+    criticalChecks.value = {}
+    dimensionScores.value = {}
     navInfo.value = null
     await loadTask()
     await loadAccount()
@@ -1198,6 +1331,14 @@ onUnmounted(() => {
   background: #fafbfc;
 }
 
+.vtd-ai-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
 .vtd-ai-details-title {
   font-size: 12px;
   font-weight: 600;
@@ -1432,32 +1573,240 @@ onUnmounted(() => {
   color: #a5b4fc;
 }
 
-.vtd-note-save-btn {
-  align-self: flex-end;
+/* Critical checks section */
+.vtd-critical-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vtd-critical-title,
+.vtd-dimension-title {
   font-size: 12px;
-  font-weight: 600;
-  padding: 6px 16px;
+  font-weight: 700;
+  color: #374151;
+  letter-spacing: 0.02em;
+}
+
+.vtd-critical-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vtd-critical-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid #c7d2fe;
-  background: #eef2ff;
-  color: #4f46e5;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  transition: all 0.15s;
+}
+
+.vtd-critical-item.vtd-critical-pass {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.vtd-critical-item.vtd-critical-fail {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.vtd-critical-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  min-width: 100px;
+}
+
+.vtd-critical-desc {
+  font-size: 12px;
+  color: #64748b;
+  flex: 1;
+}
+
+.vtd-critical-btns {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.vtd-ck-btn {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
   cursor: pointer;
   transition: all 0.15s;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
 }
 
-.vtd-note-save-btn:hover:not(:disabled) {
-  background: #6366f1;
+.vtd-ck-pass.active {
+  background: #10b981;
   color: #fff;
-  border-color: #6366f1;
+  border-color: #10b981;
 }
 
-.vtd-note-save-btn:disabled,
-.vtd-note-save-btn.loading {
-  opacity: 0.6;
-  cursor: not-allowed;
+.vtd-ck-fail.active {
+  background: #ef4444;
+  color: #fff;
+  border-color: #ef4444;
+}
+
+.vtd-ck-btn:hover:not(.active) {
+  border-color: #94a3b8;
+}
+
+.vtd-critical-verdict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.vtd-verdict-fail {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.vtd-verdict-pass {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+
+/* Dimension scoring */
+.vtd-dimension-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.vtd-dimension-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.vtd-dim-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.vtd-dim-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.vtd-dim-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.vtd-dim-weight {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6366f1;
+  background: #eef2ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.vtd-dim-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+.vtd-dim-scores {
+  display: flex;
+  gap: 4px;
+}
+
+.vtd-dim-score-btn {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.vtd-dim-score-btn:hover:not(.active) {
+  border-color: #94a3b8;
+  color: #1e293b;
+}
+
+.vtd-dim-score-btn.active {
+  color: #fff;
+  border-color: transparent;
+}
+
+.vtd-dim-score-btn.vtd-score-1 { background: #ef4444; }
+.vtd-dim-score-btn.vtd-score-2 { background: #f97316; }
+.vtd-dim-score-btn.vtd-score-3 { background: #eab308; }
+.vtd-dim-score-btn.vtd-score-4 { background: #22c55e; }
+.vtd-dim-score-btn.vtd-score-5 { background: #10b981; }
+
+.vtd-dim-score-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 2px 0;
+  font-size: 9px;
+  color: #94a3b8;
+}
+
+.vtd-weighted-total {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.vtd-weighted-value {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.vtd-ws-high { color: #10b981; }
+.vtd-ws-medium { color: #eab308; }
+.vtd-ws-low { color: #ef4444; }
+
+.vtd-weighted-max {
+  font-size: 13px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.vtd-autosave-indicator {
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: right;
+  font-style: italic;
 }
 
 /* Sticky bottom nav bar */

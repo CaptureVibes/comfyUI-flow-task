@@ -114,10 +114,7 @@ export async function deleteSubTask(subTaskId) {
   return data
 }
 
-export async function saveSubTaskNote(subTaskId, manualNote, manualScore) {
-  const { data } = await http.patch(`/video-tasks/subtasks/${subTaskId}/note`, {
-    manual_note: manualNote ?? null,
-    manual_score: manualScore != null && manualScore !== '' ? Number(manualScore) : null,
-  })
+export async function saveSubTaskNote(subTaskId, payload) {
+  const { data } = await http.patch(`/video-tasks/subtasks/${subTaskId}/note`, payload)
   return data
 }

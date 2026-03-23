@@ -344,23 +344,30 @@ class VideoTaskService:
 
         account = await self.db.get(Account, task.account_id) if task.account_id else None
 
+        # Navigation only shows tasks in 'reviewing' (待决策) status
+        NAV_STATUS = "reviewing"
+
         def _base_task_q():
-            q = select(VideoTask)
+            q = select(VideoTask).where(VideoTask.status == NAV_STATUS)
             if owner_id is not None:
                 q = q.where(VideoTask.owner_id == owner_id)
             return q
 
-        # Position: count tasks for same account with created_at > current (DESC order)
+        # Position: count reviewing tasks for same account with created_at > current (DESC order)
         pos_q = select(func.count(VideoTask.id)).where(
             VideoTask.account_id == task.account_id,
+            VideoTask.status == NAV_STATUS,
             VideoTask.created_at > task.created_at,
         )
         if owner_id is not None:
             pos_q = pos_q.where(VideoTask.owner_id == owner_id)
         position: int = (await self.db.execute(pos_q)).scalar() or 0
 
-        # Total tasks for this account
-        total_q = select(func.count(VideoTask.id)).where(VideoTask.account_id == task.account_id)
+        # Total reviewing tasks for this account
+        total_q = select(func.count(VideoTask.id)).where(
+            VideoTask.account_id == task.account_id,
+            VideoTask.status == NAV_STATUS,
+        )
         if owner_id is not None:
             total_q = total_q.where(VideoTask.owner_id == owner_id)
         total: int = (await self.db.execute(total_q)).scalar() or 0
@@ -375,7 +382,7 @@ class VideoTaskService:
             sel_q = sel_q.where(VideoTask.owner_id == owner_id)
         selected_count: int = (await self.db.execute(sel_q)).scalar() or 0
 
-        # Prev task (lower index = newer = created_at > current)
+        # Prev task (lower index = newer = created_at > current), only reviewing
         prev_q = (
             _base_task_q()
             .where(VideoTask.account_id == task.account_id, VideoTask.created_at > task.created_at)
@@ -384,7 +391,7 @@ class VideoTaskService:
         )
         prev_task = (await self.db.execute(prev_q)).scalar_one_or_none()
 
-        # Next task (higher index = older = created_at < current)
+        # Next task (higher index = older = created_at < current), only reviewing
         next_q = (
             _base_task_q()
             .where(VideoTask.account_id == task.account_id, VideoTask.created_at < task.created_at)
@@ -393,8 +400,7 @@ class VideoTaskService:
         )
         next_task = (await self.db.execute(next_q)).scalar_one_or_none()
 
-        # Prev blogger task: account with created_at > current_account (closer to index 0),
-        # pick closest account (ORDER BY account.created_at ASC), then last task of that account
+        # Prev/next blogger task: only reviewing status
         prev_blogger_row = None
         next_blogger_row = None
         if account:
@@ -402,6 +408,7 @@ class VideoTaskService:
                 select(VideoTask, Account)
                 .join(Account, Account.id == VideoTask.account_id)
                 .where(Account.created_at > account.created_at)
+                .where(VideoTask.status == NAV_STATUS)
                 .order_by(Account.created_at.asc(), VideoTask.created_at.asc())
                 .limit(1)
             )
@@ -409,12 +416,11 @@ class VideoTaskService:
                 prev_blogger_q = prev_blogger_q.where(VideoTask.owner_id == owner_id)
             prev_blogger_row = (await self.db.execute(prev_blogger_q)).first()
 
-            # Next blogger task: account with created_at < current_account,
-            # pick closest account (ORDER BY account.created_at DESC), then newest task
             next_blogger_q = (
                 select(VideoTask, Account)
                 .join(Account, Account.id == VideoTask.account_id)
                 .where(Account.created_at < account.created_at)
+                .where(VideoTask.status == NAV_STATUS)
                 .order_by(Account.created_at.desc(), VideoTask.created_at.desc())
                 .limit(1)
             )
@@ -680,12 +686,26 @@ class VideoTaskService:
         await self.db.refresh(sub)
         return sub
 
+    # Dimension weights for multi-dimension scoring
+    DIMENSION_WEIGHTS = {
+        "audio_visual": 20,        # 声画与听觉
+        "character_realism": 30,   # 人物与全身拟真
+        "performance_narrative": 15, # 表演与叙事
+        "editing_transition": 12,  # 剪辑与转场
+        "camera_composition": 12,  # 镜头与构图
+        "visual_environment": 11,  # 画面与环境
+    }
+
     async def update_sub_task_note(
         self,
         sub_task_id: uuid.UUID,
         owner_id: uuid.UUID | None,
         manual_note: str | None,
         manual_score: int | None = None,
+        temporal_consistency: bool | None = None,
+        character_integrity: bool | None = None,
+        audio_sync: bool | None = None,
+        dimension_scores: dict | None = None,
     ) -> VideoSubTask:
         q = select(VideoSubTask).where(VideoSubTask.id == sub_task_id).options(
             selectinload(VideoSubTask.task)
@@ -695,8 +715,44 @@ class VideoTaskService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
         if owner_id is not None and sub.task.owner_id != owner_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
-        sub.manual_score = manual_score
-        sub.manual_note = manual_note
+
+        # Update critical checks if provided
+        if temporal_consistency is not None:
+            sub.temporal_consistency = temporal_consistency
+        if character_integrity is not None:
+            sub.character_integrity = character_integrity
+        if audio_sync is not None:
+            sub.audio_sync = audio_sync
+
+        # Compute critical_fail: any False → fail
+        checks = [sub.temporal_consistency, sub.character_integrity, sub.audio_sync]
+        if any(v is False for v in checks):
+            sub.critical_fail = True
+        elif all(v is True for v in checks):
+            sub.critical_fail = False
+        else:
+            sub.critical_fail = None  # Not fully evaluated yet
+
+        # Update dimension scores if provided
+        if dimension_scores is not None:
+            sub.dimension_scores = dimension_scores
+
+        # Compute weighted total score from dimension_scores
+        if sub.dimension_scores and not sub.critical_fail:
+            total = 0.0
+            for dim, weight in self.DIMENSION_WEIGHTS.items():
+                score = sub.dimension_scores.get(dim)
+                if score is not None:
+                    total += (score / 5) * weight
+            sub.weighted_total_score = round(total, 1)
+            sub.manual_score = round(total)
+        elif sub.critical_fail:
+            sub.weighted_total_score = 0
+            sub.manual_score = 0
+
+        if manual_note is not None:
+            sub.manual_note = manual_note
+
         await self.db.commit()
         await self.db.refresh(sub)
         return sub

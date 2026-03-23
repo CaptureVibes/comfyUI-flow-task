@@ -29,6 +29,12 @@ class VideoSubTaskRead(BaseModel):
     scoring_error: str | None = None  # Error message when AI scoring fails
     manual_score: int | None = None  # User-written score (0-100)
     manual_note: str | None = None   # User-written note, independent of AI scoring
+    temporal_consistency: bool | None = None
+    character_integrity: bool | None = None
+    audio_sync: bool | None = None
+    critical_fail: bool | None = None
+    dimension_scores: dict | None = None
+    weighted_total_score: float | None = None
     queue_order: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -83,6 +89,10 @@ class VideoSubTaskStatusUpdate(BaseModel):
 class VideoSubTaskNoteUpdate(BaseModel):
     manual_score: int | None = None
     manual_note: str | None = None
+    temporal_consistency: bool | None = None
+    character_integrity: bool | None = None
+    audio_sync: bool | None = None
+    dimension_scores: dict | None = None
 
 
 class VideoSubTaskStateRead(BaseModel):

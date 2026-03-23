@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, JSON, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, JSON, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -76,6 +76,17 @@ class VideoSubTask(Base):
     # Manual score and note written by the user, independent of AI scoring
     manual_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     manual_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Critical checks (all must be True to pass; any False → critical_fail=True)
+    temporal_consistency: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    character_integrity: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    audio_sync: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    critical_fail: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # Multi-dimension scoring: {"audio_visual": 3, "character_realism": 4, ...}
+    dimension_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Weighted total score 0-100
+    weighted_total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # True when this sub-task's video was chosen by the user for publishing
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
