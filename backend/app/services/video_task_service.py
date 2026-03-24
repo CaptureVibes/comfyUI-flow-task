@@ -992,11 +992,10 @@ class VideoTaskService:
             sub.scoring_error = None
             processed += 1
 
+            sub.status = "reviewing"
             if final_score < 0:
-                sub.status = "abandoned"
-                logger.info("Sub-task %s abandoned due to low AI score", sub.id)
+                logger.info("Sub-task %s AI score below threshold (final=%.1f), keeping in reviewing", sub.id, final_score)
             else:
-                sub.status = "reviewing"
                 logger.info("Sub-task %s AI scored successfully: final=%.1f", sub.id, final_score)
 
         refreshed_task = (
