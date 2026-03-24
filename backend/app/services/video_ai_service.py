@@ -1095,10 +1095,11 @@ async def restart_template(template_id: str) -> None:
     await enqueue_template(template_id, clear_stages=True)
 
 
-async def reanalyze_template(template_id: str) -> None:
+async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     """
     仅重新执行视频理解（understanding）步骤，更新 prompt_description，
     不跑后续的 imagegen/splitting/face_removing/upscaling。
+    失败自动重试最多 max_retries 次。
     """
     from uuid import UUID
     from app.services.system_settings_service import get_or_create_system_settings
@@ -1139,19 +1140,33 @@ async def reanalyze_template(template_id: str) -> None:
             understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
             understand_temperature = 0.3
 
-        # 调用 AI 视频理解
-        prompt_description = await call_evolink_gemini_api(
-            api_base_url=api_base_url,
-            api_key=api_key,
-            model_name=understand_model,
-            video_url=video_url,
-            prompt=understand_prompt,
-            temperature=understand_temperature,
-        )
+    # 带重试的 AI 调用（在 session 外执行，避免长时间占用连接）
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            prompt_description = await call_evolink_gemini_api(
+                api_base_url=api_base_url,
+                api_key=api_key,
+                model_name=understand_model,
+                video_url=video_url,
+                prompt=understand_prompt,
+                temperature=understand_temperature,
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("[%s] reanalyze attempt %d/%d failed: %s", template_id, attempt, max_retries, exc)
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+    else:
+        raise last_exc  # type: ignore[misc]
 
-        # 更新数据库
-        tpl.prompt_description = prompt_description
-        await session.commit()
+    # 更新数据库
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, uuid_val)
+        if tpl:
+            tpl.prompt_description = prompt_description
+            await session.commit()
 
     # 同步更新内存状态（如果存在的话）
     if template_id in video_ai_states:
@@ -1159,6 +1174,55 @@ async def reanalyze_template(template_id: str) -> None:
         video_ai_states[template_id]["updated_at"] = _utcnow_iso()
 
     logger.info("[%s] reanalyze completed, prompt_description=%d chars", template_id, len(prompt_description))
+
+
+async def batch_reanalyze_templates(owner_id: str | None = None, concurrency: int = 5) -> dict:
+    """
+    后台批量重新分析所有 success 状态的模板。
+    使用 Semaphore 控制并发，每个模板内部自带重试。
+
+    Returns:
+        {"total": N, "success": N, "fail": N, "errors": {template_id: error_msg}}
+    """
+    from sqlalchemy import select as sa_select
+    from uuid import UUID
+
+    # 1. 查询所有 success 模板
+    async with SessionLocal() as session:
+        stmt = sa_select(VideoAITemplate.id).where(
+            VideoAITemplate.process_status == VideoAIProcessStatus.success
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
+        rows = (await session.execute(stmt)).scalars().all()
+
+    template_ids = [str(tid) for tid in rows]
+    if not template_ids:
+        return {"total": 0, "success": 0, "fail": 0, "errors": {}}
+
+    logger.info("batch_reanalyze started: %d templates, concurrency=%d", len(template_ids), concurrency)
+
+    # 2. 并发执行，Semaphore 限流
+    sem = asyncio.Semaphore(concurrency)
+    results: dict[str, str | None] = {}  # template_id -> error_msg or None
+
+    async def _worker(tid: str) -> None:
+        async with sem:
+            try:
+                await reanalyze_template(tid)
+                results[tid] = None
+            except Exception as exc:
+                results[tid] = str(exc)
+                logger.error("[%s] batch_reanalyze failed: %s", tid, exc)
+
+    await asyncio.gather(*[_worker(tid) for tid in template_ids])
+
+    success_count = sum(1 for v in results.values() if v is None)
+    fail_count = sum(1 for v in results.values() if v is not None)
+    errors = {k: v for k, v in results.items() if v is not None}
+
+    logger.info("batch_reanalyze done: total=%d success=%d fail=%d", len(template_ids), success_count, fail_count)
+    return {"total": len(template_ids), "success": success_count, "fail": fail_count, "errors": errors}
 
 
 def get_template_state(template_id: str) -> dict | None:

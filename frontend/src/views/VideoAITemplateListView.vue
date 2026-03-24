@@ -8,6 +8,10 @@
           <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
           一键重试
         </el-button>
+        <el-button class="vai-retry-btn" :loading="batchReanalyzing" @click="handleBatchReanalyze">
+          <svg v-if="!batchReanalyzing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          一键重新分析
+        </el-button>
         <el-button class="vai-config-btn" @click="openConfig">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           流程配置
@@ -143,17 +147,6 @@
               <svg v-if="actioning !== item.id + '-pause'" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
               暂停
-            </button>
-            <!-- success: re-analyze -->
-            <button
-              v-if="item.process_status === 'success'"
-              class="vt-action-btn vt-action-restart"
-              :disabled="!!actioning"
-              @click.stop="handleReanalyze(item)"
-            >
-              <svg v-if="actioning !== item.id + '-reanalyze'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
-              <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-              重新分析
             </button>
           </div>
         </div>
@@ -497,9 +490,9 @@ import {
   startVideoAITemplate,
   pauseVideoAITemplate,
   restartVideoAITemplate,
-  reanalyzeVideoAITemplate,
   resumeVideoAITemplate,
   deleteVideoAITemplate,
+  batchReanalyzeTemplates,
 } from '../api/video_ai_templates'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { isDuplicateRequestError } from '../api/http'
@@ -514,6 +507,7 @@ const loading = ref(false)
 const deleting = ref(null)
 const actioning = ref(null)
 const batchResuming = ref(false)
+const batchReanalyzing = ref(false)
 const items = ref([])
 const total = ref(0)
 const page = ref(Number(route.query.page) || 1)
@@ -839,23 +833,22 @@ async function handleRestart(item) {
   }
 }
 
-async function handleReanalyze(item) {
+async function handleBatchReanalyze() {
   try {
     await ElMessageBox.confirm(
-      `确定重新分析模板「${item.title}」？将重新执行AI视频理解，覆盖现有分析内容。`,
-      '重新分析确认',
+      '确定对所有已成功的模板重新执行AI视频分析？将覆盖现有分析内容。',
+      '一键重新分析',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
-  actioning.value = item.id + '-reanalyze'
+  batchReanalyzing.value = true
   try {
-    await reanalyzeVideoAITemplate(item.id)
-    ElMessage.success('重新分析完成')
-    await loadData()
+    await batchReanalyzeTemplates()
+    ElMessage.success('已触发批量重新分析，后台处理中')
   } catch (err) {
-    ElMessage.error(err?.response?.data?.detail || '重新分析失败')
+    ElMessage.error(err?.response?.data?.detail || '触发批量重新分析失败')
   } finally {
-    actioning.value = null
+    batchReanalyzing.value = false
   }
 }
 

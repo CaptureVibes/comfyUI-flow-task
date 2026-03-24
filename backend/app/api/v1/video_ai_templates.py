@@ -31,6 +31,7 @@ from app.schemas.video_ai_template import (
     VideoSourceSummary,
 )
 from app.services.video_ai_service import (
+    batch_reanalyze_templates,
     enqueue_template,
     get_template_state,
     pause_template,
@@ -354,6 +355,17 @@ async def batch_create_and_start(
 ) -> dict[str, str]:
     """触发后台批量创建模板，立即返回 202。"""
     asyncio.create_task(_do_batch_create_and_start(creator_id, owner_id))
+    return {"status": "accepted"}
+
+
+@router.post("/batch-reanalyze", status_code=status.HTTP_202_ACCEPTED)
+async def batch_reanalyze(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict[str, str]:
+    """批量重新分析所有 success 模板的视频理解内容，后台异步执行。"""
+    asyncio.create_task(batch_reanalyze_templates(
+        owner_id=str(owner_id) if owner_id else None,
+    ))
     return {"status": "accepted"}
 
 
