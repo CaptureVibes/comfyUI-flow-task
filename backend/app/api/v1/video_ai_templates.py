@@ -34,6 +34,7 @@ from app.services.video_ai_service import (
     enqueue_template,
     get_template_state,
     pause_template,
+    reanalyze_template,
     restart_template,
     resume_template,
 )
@@ -711,6 +712,22 @@ async def restart_template_endpoint(
 ) -> VideoAITemplateRead:
     tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
     await restart_template(str(tpl.id))
+    await session.refresh(tpl)
+    return await _to_read(session, tpl)
+
+
+@router.post("/{tpl_id}/reanalyze", response_model=VideoAITemplateRead)
+async def reanalyze_template_endpoint(
+    tpl_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> VideoAITemplateRead:
+    """仅重新执行视频理解（AI分析），不重跑后续图片生成等步骤。"""
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    try:
+        await reanalyze_template(str(tpl.id))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     await session.refresh(tpl)
     return await _to_read(session, tpl)
 

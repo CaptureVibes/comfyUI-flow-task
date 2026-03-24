@@ -144,6 +144,17 @@
               <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
               暂停
             </button>
+            <!-- success: re-analyze -->
+            <button
+              v-if="item.process_status === 'success'"
+              class="vt-action-btn vt-action-restart"
+              :disabled="!!actioning"
+              @click.stop="handleReanalyze(item)"
+            >
+              <svg v-if="actioning !== item.id + '-reanalyze'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+              <svg v-else class="vt-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              重新分析
+            </button>
           </div>
         </div>
 
@@ -486,6 +497,7 @@ import {
   startVideoAITemplate,
   pauseVideoAITemplate,
   restartVideoAITemplate,
+  reanalyzeVideoAITemplate,
   resumeVideoAITemplate,
   deleteVideoAITemplate,
 } from '../api/video_ai_templates'
@@ -822,6 +834,26 @@ async function handleRestart(item) {
     await loadData()
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '重跑失败')
+  } finally {
+    actioning.value = null
+  }
+}
+
+async function handleReanalyze(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定重新分析模板「${item.title}」？将重新执行AI视频理解，覆盖现有分析内容。`,
+      '重新分析确认',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  actioning.value = item.id + '-reanalyze'
+  try {
+    await reanalyzeVideoAITemplate(item.id)
+    ElMessage.success('重新分析完成')
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '重新分析失败')
   } finally {
     actioning.value = null
   }

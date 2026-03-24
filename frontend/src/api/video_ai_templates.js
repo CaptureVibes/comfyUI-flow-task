@@ -67,6 +67,11 @@ export async function restartVideoAITemplate(id) {
   return data
 }
 
+export async function reanalyzeVideoAITemplate(id) {
+  const { data } = await http.post(`/video-ai-templates/${id}/reanalyze`)
+  return data
+}
+
 export async function fetchVideoAITemplateState(id) {
   const { data } = await http.get(`/video-ai-templates/${id}/state`)
   return data

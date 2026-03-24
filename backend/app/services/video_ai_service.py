@@ -1095,6 +1095,72 @@ async def restart_template(template_id: str) -> None:
     await enqueue_template(template_id, clear_stages=True)
 
 
+async def reanalyze_template(template_id: str) -> None:
+    """
+    仅重新执行视频理解（understanding）步骤，更新 prompt_description，
+    不跑后续的 imagegen/splitting/face_removing/upscaling。
+    """
+    from uuid import UUID
+    from app.services.system_settings_service import get_or_create_system_settings
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+    from app.services.evolink_api import call_evolink_gemini_api
+    from app.models.video_source import VideoSource
+
+    uuid_val = UUID(template_id)
+
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, uuid_val)
+        if not tpl:
+            raise ValueError("模板不存在")
+
+        # 加载视频 URL
+        video_url: str | None = None
+        if tpl.video_source_id:
+            vs = await session.get(VideoSource, tpl.video_source_id)
+            if vs:
+                video_url = vs.local_video_url or vs.video_url
+        if not video_url:
+            raise ValueError("视频地址不可用")
+
+        # 加载配置
+        sys_cfg = await get_or_create_system_settings(session)
+        api_key = sys_cfg.evolink_api_key
+        api_base_url = sys_cfg.evolink_api_base_url
+        if not api_key:
+            raise ValueError("系统未配置 EvoLink API Key")
+
+        if tpl.owner_id is not None:
+            pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
+            understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
+            understand_prompt = pipeline_cfg.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
+            understand_temperature = pipeline_cfg.understand_temperature
+        else:
+            understand_model = "gemini-3.1-pro-preview"
+            understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
+            understand_temperature = 0.3
+
+        # 调用 AI 视频理解
+        prompt_description = await call_evolink_gemini_api(
+            api_base_url=api_base_url,
+            api_key=api_key,
+            model_name=understand_model,
+            video_url=video_url,
+            prompt=understand_prompt,
+            temperature=understand_temperature,
+        )
+
+        # 更新数据库
+        tpl.prompt_description = prompt_description
+        await session.commit()
+
+    # 同步更新内存状态（如果存在的话）
+    if template_id in video_ai_states:
+        video_ai_states[template_id]["prompt_description"] = prompt_description
+        video_ai_states[template_id]["updated_at"] = _utcnow_iso()
+
+    logger.info("[%s] reanalyze completed, prompt_description=%d chars", template_id, len(prompt_description))
+
+
 def get_template_state(template_id: str) -> dict | None:
     """
     获取模板的内存状态
