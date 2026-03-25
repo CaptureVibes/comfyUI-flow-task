@@ -517,9 +517,10 @@ async def delete_video_source(
 
 
 async def _upload_video_file(file_path: str, filename: str) -> str:
-    """Upload a local video file to the storage API. Returns the permanent URL. Retries up to 3 times."""
-    last_exc: Exception | None = None
-    for attempt in range(1, 4):
+    """Upload a local video file to the storage API. Returns the permanent URL. Infinite retry."""
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 with open(file_path, "rb") as f:
@@ -535,12 +536,12 @@ async def _upload_video_file(file_path: str, filename: str) -> str:
             if not url:
                 raise RuntimeError(f"Upload API response missing data.url: {payload}")
             return url
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            last_exc = exc
-            logger.warning("_upload_video_file failed (attempt %d/3): %s", attempt, exc)
-            if attempt < 3:
-                await asyncio.sleep(attempt)
-    raise RuntimeError(f"Upload failed after 3 attempts: {last_exc}") from last_exc
+            delay = min(attempt * 2, 30)
+            logger.warning("_upload_video_file failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
+            await asyncio.sleep(delay)
 
 
 async def _download_video(source_url: str, out_path: str) -> str:
@@ -548,16 +549,17 @@ async def _download_video(source_url: str, out_path: str) -> str:
     Returns the actual output file path. Retries up to 3 times."""
     if _is_tiktok_url(source_url):
         from app.services import tiktok_api_client
-        last_exc: Exception | None = None
-        for attempt in range(1, 4):
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 return await tiktok_api_client.download_video(source_url, out_path)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                last_exc = exc
-                logger.warning("tiktok download failed (attempt %d/3): %s", attempt, exc)
-                if attempt < 3:
-                    await asyncio.sleep(attempt)
-        raise RuntimeError(f"TikTok download failed after 3 attempts: {last_exc}") from last_exc
+                delay = min(attempt * 2, 30)
+                logger.warning("tiktok download failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
+                await asyncio.sleep(delay)
 
     def _run() -> str:
         try:
@@ -576,47 +578,58 @@ async def _download_video(source_url: str, out_path: str) -> str:
             # yt-dlp may append extension; get actual filename
             return ydl.prepare_filename(info)
 
-    last_exc_ytdlp: Exception | None = None
-    for attempt in range(1, 4):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             return await asyncio.to_thread(_run)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            last_exc_ytdlp = exc
-            logger.warning("_download_video yt-dlp failed (attempt %d/3): %s", attempt, exc)
-            if attempt < 3:
-                await asyncio.sleep(attempt)
-    raise RuntimeError(f"Download failed after 3 attempts: {last_exc_ytdlp}") from last_exc_ytdlp
+            delay = min(attempt * 2, 30)
+            logger.warning("_download_video yt-dlp failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
+            await asyncio.sleep(delay)
 
 
 async def _do_download_and_upload(vs_id: UUID) -> None:
-    """Background coroutine: download + upload, then persist result."""
-    async with SessionLocal() as session:
-        vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
-        if not vs:
-            return
-
-        # Determine filename from title or id
-        safe_title = (vs.video_title or str(vs_id))[:60].replace("/", "_").replace("\\", "_")
-        filename = f"{safe_title}.mp4"
-
+    """Background coroutine: download + upload, then persist result. Infinite retry."""
+    while True:
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                out_template = os.path.join(tmpdir, "video")
-                actual_path = await _download_video(vs.source_url, out_template)
-                if not os.path.exists(actual_path):
-                    alt = out_template + ".mp4"
-                    actual_path = alt if os.path.exists(alt) else actual_path
+            async with SessionLocal() as session:
+                vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
+                if not vs:
+                    return
 
-                permanent_url = await _upload_video_file(actual_path, filename)
+                safe_title = (vs.video_title or str(vs_id))[:60].replace("/", "_").replace("\\", "_")
+                filename = f"{safe_title}.mp4"
 
-            vs.local_video_url = permanent_url
-            vs.download_status = "done"
-            await session.commit()
-            logger.info("Video %s downloaded and uploaded: %s", vs_id, permanent_url)
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    out_template = os.path.join(tmpdir, "video")
+                    actual_path = await _download_video(vs.source_url, out_template)
+                    if not os.path.exists(actual_path):
+                        alt = out_template + ".mp4"
+                        actual_path = alt if os.path.exists(alt) else actual_path
+
+                    permanent_url = await _upload_video_file(actual_path, filename)
+
+                vs.local_video_url = permanent_url
+                vs.download_status = "done"
+                await session.commit()
+                logger.info("Video %s downloaded and uploaded: %s", vs_id, permanent_url)
+                return
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.error("Video %s permanently failed: %s", vs_id, exc)
-            vs.download_status = "failed"
-            await session.commit()
+            logger.warning("Video %s 下载上传失败，5秒后重试: %s", vs_id, exc)
+            try:
+                async with SessionLocal() as session:
+                    vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
+                    if vs:
+                        vs.download_status = "failed"
+                        await session.commit()
+            except Exception:
+                pass
+            await asyncio.sleep(5)
 
 
 async def trigger_download_and_upload(
@@ -632,6 +645,24 @@ async def trigger_download_and_upload(
     await session.refresh(vs)
     asyncio.create_task(_do_download_and_upload(vs_id))
     return vs
+
+
+async def recover_stuck_downloads_on_startup() -> None:
+    """启动时恢复中断的下载：将 downloading/failed 状态的 video_sources 重新触发下载。"""
+    async with SessionLocal() as session:
+        stmt = select(VideoSource).where(
+            VideoSource.download_status.in_(["downloading", "failed"])
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+
+    if not rows:
+        logger.info("No stuck video downloads found on startup")
+        return
+
+    logger.info("Recovering %d stuck video downloads on startup", len(rows))
+    for vs in rows:
+        asyncio.create_task(_do_download_and_upload(vs.id))
+    logger.info("All stuck video downloads re-triggered")
 
 
 async def get_stats_history(

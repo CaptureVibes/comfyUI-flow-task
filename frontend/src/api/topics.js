@@ -86,3 +86,10 @@ export async function updateKeywordGenConfig(payload) {
   const { data } = await http.put('/settings/keyword-gen-config', payload)
   return data
 }
+
+// ── 全量关键词（候选库下拉使用）─────────────────────────────────────────────
+
+export async function fetchAllKeywords() {
+  const { data } = await http.get('/topics/keywords/all')
+  return data
+}

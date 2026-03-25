@@ -94,7 +94,9 @@ async def _poll_once() -> None:
                 service = VideoPublicationService(db)
                 await service.sync_publication_status(pub_id)
         except ValueError as e:
-            logger.warning("Skipping publication %s: %s", pub_id, e)
+            logger.error("Skipping publication %s: %s", pub_id, e)
+        except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as e:
+            logger.error("【发布同步】publication %s 连接超时", pub_id)
         except Exception:
             logger.exception("Failed to sync publication %s", pub_id)
 

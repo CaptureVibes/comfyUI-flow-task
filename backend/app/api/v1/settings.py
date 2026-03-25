@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import TokenData, require_current_user
 from app.db.session import get_db
 from app.schemas.settings import (
+    CandidateConfigPayload,
     ComfyUIPortStatusItem,
     ComfyUIPortsStatusResponse,
     ComfyUISettingsPayload,
@@ -186,6 +187,72 @@ async def put_keyword_gen_config(
         keyword_gen_prompt=row.keyword_gen_prompt,
         keyword_gen_count=row.keyword_gen_count,
         keyword_gen_temperature=row.keyword_gen_temperature,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 候选库配置（per-user，独立保存）
+# ---------------------------------------------------------------------------
+
+@router.get("/candidate-config", response_model=CandidateConfigPayload)
+async def get_candidate_config(
+    token: TokenData = Depends(require_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CandidateConfigPayload:
+    row = await get_or_create_pipeline_settings(session, owner_id=token.user_id)
+    return CandidateConfigPayload(
+        candidate_max_bloggers=row.candidate_max_bloggers,
+        candidate_exclusive_threshold=row.candidate_exclusive_threshold,
+        candidate_max_videos_per_blogger=row.candidate_max_videos_per_blogger,
+        candidate_max_duration_seconds=row.candidate_max_duration_seconds,
+        candidate_retry_delay_seconds=row.candidate_retry_delay_seconds,
+        candidate_min_play_count=row.candidate_min_play_count,
+        candidate_publish_after_date=row.candidate_publish_after_date,
+        candidate_shared_top_n=row.candidate_shared_top_n,
+        candidate_ai_review_enabled=row.candidate_ai_review_enabled,
+        candidate_ai_review_model=row.candidate_ai_review_model,
+        candidate_ai_review_prompt=row.candidate_ai_review_prompt,
+        candidate_schedule_enabled=row.candidate_schedule_enabled,
+        candidate_schedule_cron=row.candidate_schedule_cron,
+    )
+
+
+@router.put("/candidate-config", response_model=CandidateConfigPayload)
+async def put_candidate_config(
+    payload: CandidateConfigPayload,
+    token: TokenData = Depends(require_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CandidateConfigPayload:
+    row = await get_or_create_pipeline_settings(session, owner_id=token.user_id)
+    row.candidate_max_bloggers = payload.candidate_max_bloggers
+    row.candidate_exclusive_threshold = payload.candidate_exclusive_threshold
+    row.candidate_max_videos_per_blogger = payload.candidate_max_videos_per_blogger
+    row.candidate_max_duration_seconds = payload.candidate_max_duration_seconds
+    row.candidate_retry_delay_seconds = payload.candidate_retry_delay_seconds
+    row.candidate_min_play_count = payload.candidate_min_play_count
+    row.candidate_publish_after_date = payload.candidate_publish_after_date
+    row.candidate_shared_top_n = payload.candidate_shared_top_n
+    row.candidate_ai_review_enabled = payload.candidate_ai_review_enabled
+    row.candidate_ai_review_model = payload.candidate_ai_review_model
+    row.candidate_ai_review_prompt = payload.candidate_ai_review_prompt
+    row.candidate_schedule_enabled = payload.candidate_schedule_enabled
+    row.candidate_schedule_cron = payload.candidate_schedule_cron
+    await session.commit()
+    await session.refresh(row)
+    return CandidateConfigPayload(
+        candidate_max_bloggers=row.candidate_max_bloggers,
+        candidate_exclusive_threshold=row.candidate_exclusive_threshold,
+        candidate_max_videos_per_blogger=row.candidate_max_videos_per_blogger,
+        candidate_max_duration_seconds=row.candidate_max_duration_seconds,
+        candidate_retry_delay_seconds=row.candidate_retry_delay_seconds,
+        candidate_min_play_count=row.candidate_min_play_count,
+        candidate_publish_after_date=row.candidate_publish_after_date,
+        candidate_shared_top_n=row.candidate_shared_top_n,
+        candidate_ai_review_enabled=row.candidate_ai_review_enabled,
+        candidate_ai_review_model=row.candidate_ai_review_model,
+        candidate_ai_review_prompt=row.candidate_ai_review_prompt,
+        candidate_schedule_enabled=row.candidate_schedule_enabled,
+        candidate_schedule_cron=row.candidate_schedule_cron,
     )
 
 

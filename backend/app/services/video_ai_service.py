@@ -37,7 +37,7 @@ _queue_processor_task: asyncio.Task | None = None
 _persist_worker_task: asyncio.Task | None = None
 
 # 并发数：同时处理的最大任务数
-_CONCURRENCY = 50
+_CONCURRENCY = 10
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
 _PERSIST_INTERVAL = 2.0
 
@@ -799,9 +799,9 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 _set_status(template_id, VideoAIProcessStatus.imagegen)
                 logger.info("[%s] imagegen stage started", template_id)
 
-                last_exc = None
-                shots = []
-                for attempt in range(1, 4):
+                attempt = 0
+                while True:
+                    attempt += 1
                     try:
                         shots = await _run_imagegen_stage(
                             template_id=template_id,
@@ -813,13 +813,13 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                             size=imagegen_size,
                             quality=imagegen_quality,
                         )
-                        last_exc = None
                         break
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as exc:
-                        last_exc = exc
-                        logger.warning("[%s] imagegen attempt %d/3 failed: %s", template_id, attempt, exc)
-                if last_exc is not None:
-                    raise last_exc
+                        delay = min(attempt * 2, 30)
+                        logger.warning("[%s] imagegen attempt %d failed (%ds后重试): %s", template_id, attempt, delay, exc)
+                        await asyncio.sleep(delay)
 
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.imagegen))
                 state["extracted_shots"] = shots
@@ -1255,6 +1255,91 @@ def start_video_ai_queue_processor() -> None:
     loop = asyncio.get_event_loop()
     _queue_processor_task = loop.create_task(_queue_processor_loop())
     logger.info("Video AI queue processor started")
+
+
+async def recover_stuck_templates_on_startup() -> None:
+    """启动时恢复中断的模板：
+    - pending 且视频已下载完成 → 直接入队
+    - pending 且视频还在下载 → 启动协程等下载完再入队
+    - 其他运行中状态（understanding/imagegen/...）→ 直接入队（断点续跑）
+    """
+    from sqlalchemy import select as sa_select
+    from app.models.video_source import VideoSource
+
+    _RUNNING_STATUSES = [
+        VideoAIProcessStatus.paused,       # 重启时被取消导致的暂停，自动恢复
+        VideoAIProcessStatus.fail,         # 失败的模板，重启后自动重试
+        VideoAIProcessStatus.understanding,
+        VideoAIProcessStatus.imagegen,
+        VideoAIProcessStatus.splitting,
+        VideoAIProcessStatus.face_removing,
+        VideoAIProcessStatus.upscaling,
+    ]
+
+    async with SessionLocal() as session:
+        # 运行中状态直接入队
+        running_tpls = (await session.execute(
+            sa_select(VideoAITemplate).where(
+                VideoAITemplate.process_status.in_(_RUNNING_STATUSES)
+            )
+        )).scalars().all()
+
+        # pending 状态需要检查视频下载状态
+        pending_tpls = (await session.execute(
+            sa_select(VideoAITemplate).where(
+                VideoAITemplate.process_status == VideoAIProcessStatus.pending
+            )
+        )).scalars().all()
+
+        # 查出所有 pending 模板关联的视频下载状态
+        vs_ids = [t.video_source_id for t in pending_tpls if t.video_source_id]
+        vs_status_map: dict = {}
+        if vs_ids:
+            vs_rows = (await session.execute(
+                sa_select(VideoSource.id, VideoSource.download_status).where(VideoSource.id.in_(vs_ids))
+            )).all()
+            vs_status_map = {str(r.id): r.download_status for r in vs_rows}
+
+    total = len(running_tpls) + len(pending_tpls)
+    if not total:
+        logger.info("No stuck video AI templates found on startup")
+        return
+
+    logger.info("Recovering %d stuck video AI templates on startup (%d running, %d pending)",
+                total, len(running_tpls), len(pending_tpls))
+
+    # 运行中状态直接断点续跑入队
+    for tpl in running_tpls:
+        await enqueue_template(str(tpl.id))
+
+    # pending 状态按下载情况处理
+    for tpl in pending_tpls:
+        download_status = vs_status_map.get(str(tpl.video_source_id)) if tpl.video_source_id else "done"
+        if download_status == "done":
+            await enqueue_template(str(tpl.id))
+        else:
+            # 视频还没下载完，启动协程等待
+            import asyncio as _asyncio
+            _asyncio.get_event_loop().create_task(_wait_download_then_enqueue(str(tpl.id), tpl.video_source_id))
+
+    logger.info("All stuck video AI templates recovery triggered")
+
+
+async def _wait_download_then_enqueue(tpl_id: str, vs_id) -> None:
+    """等视频下载完成后将模板入队（用于重启恢复）。"""
+    from app.models.video_source import VideoSource
+    from sqlalchemy import select as sa_select
+    while True:
+        try:
+            async with SessionLocal() as session:
+                vs = await session.scalar(sa_select(VideoSource).where(VideoSource.id == vs_id))
+                if vs is None or vs.download_status == "done":
+                    break
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            raise
+    await enqueue_template(tpl_id)
+    logger.info("[%s] enqueued after download completion (startup recovery)", tpl_id)
 
 
 async def stop_video_ai_queue_processor() -> None:

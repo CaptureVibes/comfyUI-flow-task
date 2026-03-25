@@ -23,6 +23,7 @@ from app.models.tag import Tag, VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
 from app.models.account_blogger_binding import AccountBloggerBinding
 from app.models.topic import Topic, MotherKeyword, Keyword
+from app.models.candidate_video import CandidateVideo
 
 __all__ = [
     "Task", "SubTask", "SubTaskPhoto", "SubTaskGeneratedImage", "TaskTemplate",
@@ -35,4 +36,5 @@ __all__ = [
     "TiktokBlogger",
     "AccountBloggerBinding",
     "Topic", "MotherKeyword", "Keyword",
+    "CandidateVideo",
 ]

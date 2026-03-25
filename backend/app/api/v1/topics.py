@@ -232,3 +232,43 @@ async def batch_generate_keywords_endpoint(
 ) -> dict:
     count = await batch_generate_keywords_for_topic(session, topic_id, creator_id)
     return {"queued": count}
+
+
+# ── 全量关键词列表（用于候选库下拉选择）────────────────────────────────────────
+
+@router.get("/keywords/all")
+async def list_all_keywords_endpoint(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """返回当前用户所有 keyword（id + keyword 文本 + mother_keyword 名 + topic 信息），用于候选库目录树"""
+    from sqlalchemy import select
+    from app.models.topic import Keyword, MotherKeyword, Topic
+
+    q = (
+        select(
+            Keyword,
+            MotherKeyword.name.label("mk_name"),
+            MotherKeyword.id.label("mk_id"),
+            Topic.name.label("topic_name"),
+            Topic.id.label("topic_id"),
+        )
+        .join(MotherKeyword, Keyword.mother_keyword_id == MotherKeyword.id)
+        .join(Topic, MotherKeyword.topic_id == Topic.id)
+    )
+    if owner_id is not None:
+        q = q.where(Keyword.owner_id == owner_id)
+
+    rows = (await session.execute(q.order_by(Topic.name, MotherKeyword.name, Keyword.keyword))).all()
+
+    return [
+        {
+            "id": str(row.Keyword.id),
+            "keyword": row.Keyword.keyword,
+            "mother_keyword": row.mk_name,
+            "mother_keyword_id": str(row.mk_id),
+            "topic_name": row.topic_name,
+            "topic_id": str(row.topic_id),
+        }
+        for row in rows
+    ]

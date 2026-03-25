@@ -61,6 +61,23 @@ class PipelineSetting(Base):
     keyword_gen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     keyword_gen_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
 
+    # 候选库搜索配置（按用户独立）
+    candidate_max_bloggers: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    candidate_exclusive_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    candidate_max_videos_per_blogger: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    candidate_max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    candidate_retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    candidate_min_play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidate_publish_after_date: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 格式 YYYY-MM-DD，空=不限制
+    candidate_shared_top_n: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    # 候选库 AI 审核配置
+    candidate_ai_review_enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
+    candidate_ai_review_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    candidate_ai_review_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 候选库定时抓取
+    candidate_schedule_enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
+    candidate_schedule_cron: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

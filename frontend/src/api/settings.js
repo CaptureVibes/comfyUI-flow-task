@@ -34,3 +34,13 @@ export async function updatePipelineSettings(payload) {
   const { data } = await http.put('/settings/pipeline', payload)
   return data
 }
+
+export async function fetchCandidateConfig() {
+  const { data } = await http.get('/settings/candidate-config')
+  return data
+}
+
+export async function updateCandidateConfig(payload) {
+  const { data } = await http.put('/settings/candidate-config', payload)
+  return data
+}

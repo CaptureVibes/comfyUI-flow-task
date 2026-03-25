@@ -125,6 +125,12 @@ const routes = [
         meta: { title: '主题词详情', parent: 'topics' }
       },
       {
+        path: 'candidate-library',
+        name: 'candidate-library',
+        component: () => import('../views/CandidateLibraryView.vue'),
+        meta: { title: '候选库' }
+      },
+      {
         path: 'video-library/new',
         name: 'video-library-create',
         component: () => import('../views/VideoSourceFormView.vue'),

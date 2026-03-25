@@ -72,9 +72,10 @@ class UpstreamImageUploadService:
         extension = mimetypes.guess_extension(content_type) or ".png"
         safe_name = filename or f"upload-{uuid.uuid4().hex}{extension}"
 
-        last_exc: Exception | None = None
         response = None
-        for attempt in range(1, 4):
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
                     response = await client.post(
@@ -84,26 +85,16 @@ class UpstreamImageUploadService:
                     )
                 if response.status_code >= 400:
                     raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
-                last_exc = None
                 break
-            except httpx.RequestError as exc:
-                last_exc = exc
-                if attempt < 3:
-                    await asyncio.sleep(attempt)
-            except UpstreamError as exc:
-                last_exc = exc
-                if attempt < 3:
-                    await asyncio.sleep(attempt)
-
-        if last_exc is not None:
-            if isinstance(last_exc, UpstreamError) and response is not None and response.status_code < 500:
-                raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
-            if isinstance(last_exc, UpstreamError):
-                raise last_exc
-            raise UpstreamError(f"Upload upstream request failed after 3 attempts: {last_exc}") from last_exc
-
-        if response.status_code >= 400:
-            raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                delay = min(attempt * 2, 30)
+                import logging as _logging
+                _logging.getLogger("app.upload_service").warning(
+                    "upload_image attempt %d failed (%ds后重试): %s", attempt, delay, exc
+                )
+                await asyncio.sleep(delay)
 
         try:
             payload = response.json()

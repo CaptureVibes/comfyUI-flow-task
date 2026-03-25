@@ -64,6 +64,7 @@
             :readonly="!canEdit"
           />
         </el-form-item>
+
       </el-form>
 
       <div class="evo-pipeline-hint">
@@ -255,6 +256,12 @@ onMounted(() => {
   font-size: 12px;
   color: #6b7d98;
   margin-top: 8px;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-left: 10px;
 }
 
 .ports-preview {

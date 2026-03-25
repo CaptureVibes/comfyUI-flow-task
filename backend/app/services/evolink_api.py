@@ -11,8 +11,6 @@ import httpx
 logger = logging.getLogger("app.evolink_api")
 
 _DEFAULT_TIMEOUT = 120.0
-_DEFAULT_MAX_RETRIES = 3
-_RETRY_BACKOFF_BASE = 2.0  # seconds: 2, 4, 8 ...
 
 
 def _mask_key(api_key: str) -> str:
@@ -35,22 +33,16 @@ async def call_evolink_gemini_api(
     prompt: str,
     temperature: float = 0.3,
     video_url: str | None = None,
-    max_retries: int = _DEFAULT_MAX_RETRIES,
     timeout: float = _DEFAULT_TIMEOUT,
 ) -> str:
     """
-    Call EvoLink API (Gemini protocol) with automatic retry.
+    Call EvoLink API (Gemini protocol) with infinite retry.
 
     Supports both text-only and video+text calls.
     Returns the extracted text content.
-
-    Raises:
-        httpx.HTTPStatusError: after all retries exhausted
-        ValueError: if response format is unexpected
     """
     url = f"{api_base_url.rstrip('/')}/v1beta/models/{model_name}:generateContent"
 
-    # Build parts: optional video + text
     parts: list[dict] = []
     if video_url:
         parts.append({"fileData": {"mimeType": "video/mp4", "fileUri": video_url}})
@@ -68,9 +60,9 @@ async def call_evolink_gemini_api(
     )
     logger.info("EvoLink API prompt: %s", prompt[:400])
 
-    last_exc: Exception | None = None
-
-    for attempt in range(1, max_retries + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(
@@ -80,8 +72,8 @@ async def call_evolink_gemini_api(
                 )
                 if not resp.is_success:
                     logger.error(
-                        "EvoLink API error (attempt %d/%d): status=%d, body=%s",
-                        attempt, max_retries, resp.status_code, resp.text[:500],
+                        "EvoLink API error (attempt %d): status=%d, body=%s",
+                        attempt, resp.status_code, resp.text[:500],
                     )
                 resp.raise_for_status()
                 data = resp.json()
@@ -91,19 +83,12 @@ async def call_evolink_gemini_api(
             logger.info("EvoLink API extracted text: %s", text[:500])
             return text
 
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            last_exc = exc
-            if attempt < max_retries:
-                wait = _RETRY_BACKOFF_BASE ** attempt
-                logger.warning(
-                    "EvoLink API attempt %d/%d failed: %s — retrying in %.1fs",
-                    attempt, max_retries, exc, wait,
-                )
-                await asyncio.sleep(wait)
-            else:
-                logger.error(
-                    "EvoLink API attempt %d/%d failed (giving up): %s",
-                    attempt, max_retries, exc,
-                )
-
-    raise last_exc  # type: ignore[misc]
+            delay = min(attempt * 2, 30)
+            logger.warning(
+                "EvoLink API attempt %d failed (%ds后重试): %s",
+                attempt, delay, exc,
+            )
+            await asyncio.sleep(delay)
