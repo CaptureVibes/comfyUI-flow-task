@@ -34,7 +34,7 @@ class VideoSourceSummary(BaseModel):
 
 
 class VideoAITemplateCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1)
     description: str | None = None
     video_source_id: uuid.UUID | None = None
     prompt_description: str | None = None
@@ -44,7 +44,7 @@ class VideoAITemplateCreate(BaseModel):
 
 
 class VideoAITemplatePatch(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1)
     description: str | None = None
     video_source_id: uuid.UUID | None = None
     prompt_description: str | None = None

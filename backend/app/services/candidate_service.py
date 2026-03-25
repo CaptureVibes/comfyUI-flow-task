@@ -580,7 +580,7 @@ async def _import_to_video_library(
                 from app.models.video_ai_template import VideoAITemplate
                 tpl = VideoAITemplate(
                     owner_id=owner_id,
-                    title=vs.video_title or vs.blogger_name or "新模板",
+                    title=(vs.video_title or vs.blogger_name or "新模板")[:200],
                     description="",
                     video_source_id=vs.id,
                     process_status=VideoAIProcessStatus.pending,
