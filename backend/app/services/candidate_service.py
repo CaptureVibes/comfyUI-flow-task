@@ -251,6 +251,8 @@ async def _ai_review_single(
 
     while True:
         try:
+            logger.info("【候选库AI审核】请求 URL: %s", url)
+            logger.info("【候选库AI审核】请求 payload: %s", _json.dumps(payload, ensure_ascii=False)[:1000])
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
                     url, json=payload,
