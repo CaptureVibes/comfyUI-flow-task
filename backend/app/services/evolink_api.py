@@ -85,10 +85,14 @@ async def call_evolink_gemini_api(
 
         except asyncio.CancelledError:
             raise
+        except httpx.HTTPStatusError as exc:
+            if 400 <= exc.response.status_code < 500:
+                logger.error("EvoLink API 4xx error (不重试): %s", exc)
+                raise
+            delay = min(attempt * 2, 30)
+            logger.warning("EvoLink API attempt %d failed (%ds后重试): %s", attempt, delay, exc)
+            await asyncio.sleep(delay)
         except Exception as exc:
             delay = min(attempt * 2, 30)
-            logger.warning(
-                "EvoLink API attempt %d failed (%ds后重试): %s",
-                attempt, delay, exc,
-            )
+            logger.warning("EvoLink API attempt %d failed (%ds后重试): %s", attempt, delay, exc)
             await asyncio.sleep(delay)
