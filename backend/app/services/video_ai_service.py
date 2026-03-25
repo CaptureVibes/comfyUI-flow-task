@@ -799,9 +799,8 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 _set_status(template_id, VideoAIProcessStatus.imagegen)
                 logger.info("[%s] imagegen stage started", template_id)
 
-                attempt = 0
-                while True:
-                    attempt += 1
+                last_exc = None
+                for attempt in range(1, 4):
                     try:
                         shots = await _run_imagegen_stage(
                             template_id=template_id,
@@ -813,13 +812,18 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                             size=imagegen_size,
                             quality=imagegen_quality,
                         )
+                        last_exc = None
                         break
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
+                        last_exc = exc
                         delay = min(attempt * 2, 30)
-                        logger.warning("[%s] imagegen attempt %d failed (%ds后重试): %s", template_id, attempt, delay, exc)
-                        await asyncio.sleep(delay)
+                        logger.warning("[%s] imagegen attempt %d/3 failed (%ds后重试): %s", template_id, attempt, delay, exc)
+                        if attempt < 3:
+                            await asyncio.sleep(delay)
+                if last_exc is not None:
+                    raise last_exc
 
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.imagegen))
                 state["extracted_shots"] = shots
