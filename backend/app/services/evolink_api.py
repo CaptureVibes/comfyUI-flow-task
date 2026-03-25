@@ -90,7 +90,7 @@ async def call_evolink_gemini_api(
                 logger.error(
                     "EvoLink API 4xx error (不重试): %s\nurl=%s\nmodel=%s\nvideo_url=%s\nprompt=%s\npayload=%s",
                     exc, url, model_name, video_url, prompt[:500],
-                    json.dumps(payload, ensure_ascii=False)[:2000],
+                    json.dumps(payload, ensure_ascii=False),
                 )
                 raise
             delay = min(attempt * 2, 30)
