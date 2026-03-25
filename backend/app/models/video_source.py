@@ -20,7 +20,7 @@ class VideoSource(Base):
     owner_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     platform: Mapped[str | None] = mapped_column(String(50), nullable=True)
     blogger_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    video_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    video_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_desc: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Video description")
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
