@@ -169,6 +169,7 @@ async def _process_user(ps: PipelineSetting, *, now_utc: datetime, now_local: da
     logger.info("【候选库调度器】用户 %s 开始定时抓取，共 %d 个关键词，最多 5 个并发", owner_id, total)
     logger.info("=" * 60)
 
+    interval_seconds = (ps.candidate_search_interval_minutes or 0) * 60
     sem = asyncio.Semaphore(_CONCURRENT_SEARCH_COUNT)
 
     async def _process_keyword(idx: int, keyword_id: str, keyword_text: str) -> None:
@@ -185,6 +186,9 @@ async def _process_user(ps: PipelineSetting, *, now_utc: datetime, now_local: da
                 logger.info("=========【候选库调度器】[%d/%d] 关键词「%s」搜索完成 =========", idx, total, keyword_text)
             except Exception:
                 logger.exception("【候选库调度器】[%d/%d] 关键词「%s」搜索失败", idx, total, keyword_text)
+            if interval_seconds > 0 and idx < total:
+                logger.info("【候选库调度器】关键词间隔等待 %d 秒", interval_seconds)
+                await asyncio.sleep(interval_seconds)
 
     tasks = [
         asyncio.create_task(_process_keyword(idx, kid, ktxt))

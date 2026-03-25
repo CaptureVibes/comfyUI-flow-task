@@ -246,6 +246,11 @@
           <el-input-number v-model="configForm.candidate_shared_top_n" :min="1" :max="1000" />
           <span class="cf-hint">共享结果按播放量从高到低只保留前 N 条（默认 50）</span>
         </div>
+        <div class="cf-row">
+          <label class="cf-label">关键词间隔（min）</label>
+          <el-input-number v-model="configForm.candidate_search_interval_minutes" :min="0" :max="1440" />
+          <span class="cf-hint">每处理完一个关键词后等待的时间，0 = 不间隔</span>
+        </div>
 
         <div class="cf-divider"></div>
         <h4 class="cf-section-title">AI 审核配置</h4>
@@ -545,6 +550,7 @@ const configForm = ref({
   candidate_min_play_count: 0,
   candidate_publish_after_date: null,
   candidate_shared_top_n: 50,
+  candidate_search_interval_minutes: 0,
   candidate_ai_review_enabled: false,
   candidate_ai_review_model: 'gemini-3.1-pro-preview',
   candidate_ai_review_prompt: '',

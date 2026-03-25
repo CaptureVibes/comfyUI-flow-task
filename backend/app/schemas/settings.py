@@ -47,6 +47,7 @@ class CandidateConfigPayload(BaseModel):
     candidate_ai_review_prompt: str = ""
     candidate_schedule_enabled: bool = False
     candidate_schedule_cron: str | None = None
+    candidate_search_interval_minutes: int = 0
 
 
 class CandidateSearchPayload(BaseModel):

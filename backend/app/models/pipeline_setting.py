@@ -77,6 +77,7 @@ class PipelineSetting(Base):
     # 候选库定时抓取
     candidate_schedule_enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
     candidate_schedule_cron: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    candidate_search_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0=不间隔
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
