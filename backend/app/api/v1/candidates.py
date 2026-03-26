@@ -183,11 +183,17 @@ async def batch_ai_review(
 async def batch_import(
     body: CandidateBatchImportRequest,
     token: TokenData = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
 ):
-    """手动批量导入 ai_passed 的候选视频到视频库"""
+    """手动批量导入 ai_passed 的候选视频到视频库（后台异步执行，立即返回）"""
     owner_id = None if token.is_admin else str(token.user_id)
-    result = await candidate_service.import_candidates_by_ids(
-        session, body.ids, owner_id
-    )
-    return result
+    ids = body.ids
+
+    async def _bg():
+        async with SessionLocal() as bg_session:
+            try:
+                await candidate_service.import_candidates_by_ids(bg_session, ids, owner_id)
+            except Exception as exc:
+                logger.exception("【候选库】后台导入异常: %s", exc)
+
+    asyncio.create_task(_bg())
+    return {"message": f"导入已启动，共 {len(ids)} 条视频"}

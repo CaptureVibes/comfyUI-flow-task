@@ -26,7 +26,7 @@ def upgrade() -> None:
         "evolink_settings",
         sa.Column("key", sa.String(32), primary_key=True),
         sa.Column("api_key", sa.Text(), nullable=False, server_default=""),
-        sa.Column("model_name", sa.String(200), nullable=False, server_default="gemini-2.0-flash"),
+        sa.Column("model_name", sa.String(200), nullable=False, server_default="gemini-3.1-pro-preview"),
         sa.Column("understand_prompt", sa.Text(), nullable=False, server_default=""),
         sa.Column("extract_prompt", sa.Text(), nullable=False, server_default=""),
         sa.Column("api_base_url", sa.Text(), nullable=False, server_default="https://api.evolink.ai"),

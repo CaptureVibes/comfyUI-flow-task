@@ -105,16 +105,7 @@
             <span class="aias-section-tag">阶段四：照片生成</span>
             <span class="aias-section-desc">随机选取一个视频，先用 Gemini 生成描述，再用 Nano2 生成照片</span>
           </div>
-          <el-form-item label="视频理解提示词（阶段4-1）">
-            <el-input
-              v-model="form.ai_account_photo_video_prompt"
-              type="textarea"
-              :rows="4"
-              placeholder="请描述视频中人物的外貌特征、肤色、发型、表情、体型等，用于生成写实人物照片..."
-              class="aias-input"
-            />
-          </el-form-item>
-          <el-form-item label="照片生成提示词（阶段4-2）">
+          <el-form-item label="照片生成提示词">
             <el-input
               v-model="form.ai_account_photo_image_prompt"
               type="textarea"
@@ -151,7 +142,6 @@ const form = reactive({
   ai_account_avatar_size: '1:1',
   ai_account_avatar_quality: '1K',
   // 照片生成
-  ai_account_photo_video_prompt: '',
   ai_account_photo_image_prompt: '',
   // 保留其他字段，保存时透传
   _pipeline: null,
@@ -170,7 +160,6 @@ async function loadSettings() {
     form.ai_account_avatar_model = data.ai_account_avatar_model || 'nano2'
     form.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'
     form.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
-    form.ai_account_photo_video_prompt = data.ai_account_photo_video_prompt || ''
     form.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
@@ -194,7 +183,6 @@ async function handleSave() {
       ai_account_avatar_model: form.ai_account_avatar_model,
       ai_account_avatar_size: form.ai_account_avatar_size,
       ai_account_avatar_quality: form.ai_account_avatar_quality,
-      ai_account_photo_video_prompt: form.ai_account_photo_video_prompt,
       ai_account_photo_image_prompt: form.ai_account_photo_image_prompt,
     }
     await updatePipelineSettings(payload)

@@ -549,8 +549,9 @@ async def _download_video(source_url: str, out_path: str) -> str:
     Returns the actual output file path. Retries up to 3 times."""
     if _is_tiktok_url(source_url):
         from app.services import tiktok_api_client
+        _MAX_TIKTOK_ATTEMPTS = 3
         attempt = 0
-        while True:
+        while attempt < _MAX_TIKTOK_ATTEMPTS:
             attempt += 1
             try:
                 return await tiktok_api_client.download_video(source_url, out_path)
@@ -558,8 +559,10 @@ async def _download_video(source_url: str, out_path: str) -> str:
                 raise
             except Exception as exc:
                 delay = min(attempt * 2, 30)
-                logger.warning("tiktok download failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
-                await asyncio.sleep(delay)
+                logger.warning("tiktok download failed (attempt %d/%d, %ds后重试): %s", attempt, _MAX_TIKTOK_ATTEMPTS, delay, exc)
+                if attempt < _MAX_TIKTOK_ATTEMPTS:
+                    await asyncio.sleep(delay)
+        raise RuntimeError(f"TikTok 视频下载失败，已重试 {_MAX_TIKTOK_ATTEMPTS} 次: {source_url}")
 
     def _run() -> str:
         try:

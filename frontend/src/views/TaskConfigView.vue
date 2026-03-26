@@ -109,7 +109,7 @@
               <input
                 v-model="config.round2_model"
                 class="tc-input"
-                placeholder="如: gemini-2.0-flash"
+                placeholder="如: gemini-3.1-pro-preview"
                 :disabled="!config.round2_enabled"
               />
             </div>
@@ -249,17 +249,17 @@ const saving = ref(false)
 const config = reactive({
   round1_enabled: true,
   round1_prompt: '',
-  round1_model: 'gemini-2.0-flash',
+  round1_model: 'gemini-3.1-pro-preview',
   round1_threshold: 60,
   round1_weight: 0.7,
   round2_enabled: true,
   round2_prompt: '',
-  round2_model: 'gemini-2.0-flash',
+  round2_model: 'gemini-3.1-pro-preview',
   round2_threshold: 70,
   round2_weight: 0.3,
   final_threshold: 65,
   auto_publish_enabled: false,
-  auto_publish_model: 'gemini-2.0-flash',
+  auto_publish_model: 'gemini-3.1-pro-preview',
   auto_publish_prompt: '',
 })
 

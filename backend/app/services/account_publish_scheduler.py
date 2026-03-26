@@ -278,7 +278,7 @@ async def _load_auto_publish_config(account: Account) -> dict | None:
             return None
 
         return {
-            "model": cfg.auto_publish_model or "gemini-2.0-flash",
+            "model": cfg.auto_publish_model or "gemini-3.1-pro-preview",
             "prompt": cfg.auto_publish_prompt,
             "api_key": api_key,
             "api_base_url": api_base_url,

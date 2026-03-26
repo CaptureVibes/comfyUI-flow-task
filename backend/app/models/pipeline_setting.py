@@ -48,7 +48,6 @@ class PipelineSetting(Base):
     ai_account_video_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     ai_account_name_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_avatar_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    ai_account_photo_video_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_photo_image_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_name_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     ai_account_avatar_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")
@@ -78,6 +77,9 @@ class PipelineSetting(Base):
     candidate_schedule_enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
     candidate_schedule_cron: Mapped[str | None] = mapped_column(String(100), nullable=True)
     candidate_search_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0=不间隔
+    # 人脸选择配置
+    face_select_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    face_select_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

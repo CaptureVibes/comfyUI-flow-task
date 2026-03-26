@@ -109,7 +109,6 @@ class PipelineSettingsPayload(BaseModel):
     ai_account_video_model: str = "gemini-3.1-pro-preview"
     ai_account_name_prompt: str = ""
     ai_account_avatar_prompt: str = ""
-    ai_account_photo_video_prompt: str = ""
     ai_account_photo_image_prompt: str = ""
     ai_account_name_model: str = "gemini-3.1-pro-preview"
     ai_account_avatar_model: str = "gemini-3.1-flash-image-preview"
@@ -120,6 +119,9 @@ class PipelineSettingsPayload(BaseModel):
     keyword_gen_prompt: str = ""
     keyword_gen_count: int = 50
     keyword_gen_temperature: float = 0.7
+    # 人脸选择配置
+    face_select_model: str = "gemini-3.1-pro-preview"
+    face_select_prompt: str = ""
 
 
 class CandidateBatchAIReviewRequest(BaseModel):

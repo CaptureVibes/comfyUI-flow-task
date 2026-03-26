@@ -22,4 +22,4 @@ def downgrade() -> None:
     import sqlalchemy as sa
     op.add_column("evolink_settings", sa.Column("image_gen_api_key", sa.Text(), nullable=False, server_default=""))
     op.add_column("evolink_settings", sa.Column("image_gen_api_base_url", sa.Text(), nullable=False, server_default=""))
-    op.add_column("evolink_settings", sa.Column("model_name", sa.String(200), nullable=False, server_default="gemini-2.0-flash"))
+    op.add_column("evolink_settings", sa.Column("model_name", sa.String(200), nullable=False, server_default="gemini-3.1-pro-preview"))

@@ -852,7 +852,7 @@ async function handleBatchImport() {
   try {
     const ids = Array.from(selectedIds.value)
     const res = await batchImportCandidates(ids)
-    ElMessage.success(`导入完成：成功 ${res.imported ?? 0} 个，失败 ${res.failed ?? 0} 个`)
+    ElMessage.success(res.message || `导入已启动，共 ${ids.length} 条视频，后台处理中`)
     selectedIds.value = new Set()
     await Promise.all([loadVideos(), loadTabCounts()])
   } catch {
@@ -891,7 +891,7 @@ async function handleImportAll() {
       return
     }
     const res = await batchImportCandidates(allIds)
-    ElMessage.success(`一键导入完成：成功 ${res.imported ?? 0} 个，失败 ${res.failed ?? 0} 个`)
+    ElMessage.success(res.message || `导入已启动，共 ${allIds.length} 条视频，后台处理中`)
     selectedIds.value = new Set()
     await Promise.all([loadVideos(), loadTabCounts()])
   } catch {

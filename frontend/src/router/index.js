@@ -131,6 +131,12 @@ const routes = [
         meta: { title: '候选库' }
       },
       {
+        path: 'face-library',
+        name: 'face-library',
+        component: () => import('../views/FaceLibraryView.vue'),
+        meta: { title: '人脸库' }
+      },
+      {
         path: 'video-library/new',
         name: 'video-library-create',
         component: () => import('../views/VideoSourceFormView.vue'),

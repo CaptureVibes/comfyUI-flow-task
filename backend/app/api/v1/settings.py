@@ -100,7 +100,6 @@ async def get_pipeline_settings(
         ai_account_video_model=row.ai_account_video_model,
         ai_account_name_prompt=row.ai_account_name_prompt,
         ai_account_avatar_prompt=row.ai_account_avatar_prompt,
-        ai_account_photo_video_prompt=row.ai_account_photo_video_prompt,
         ai_account_photo_image_prompt=row.ai_account_photo_image_prompt,
         ai_account_name_model=row.ai_account_name_model,
         ai_account_avatar_model=row.ai_account_avatar_model,
@@ -110,6 +109,8 @@ async def get_pipeline_settings(
         keyword_gen_prompt=row.keyword_gen_prompt,
         keyword_gen_count=row.keyword_gen_count,
         keyword_gen_temperature=row.keyword_gen_temperature,
+        face_select_model=row.face_select_model,
+        face_select_prompt=row.face_select_prompt,
     )
 
 
@@ -139,7 +140,6 @@ async def put_pipeline_settings(
         ai_account_video_model=row.ai_account_video_model,
         ai_account_name_prompt=row.ai_account_name_prompt,
         ai_account_avatar_prompt=row.ai_account_avatar_prompt,
-        ai_account_photo_video_prompt=row.ai_account_photo_video_prompt,
         ai_account_photo_image_prompt=row.ai_account_photo_image_prompt,
         ai_account_name_model=row.ai_account_name_model,
         ai_account_avatar_model=row.ai_account_avatar_model,
@@ -149,6 +149,8 @@ async def put_pipeline_settings(
         keyword_gen_prompt=row.keyword_gen_prompt,
         keyword_gen_count=row.keyword_gen_count,
         keyword_gen_temperature=row.keyword_gen_temperature,
+        face_select_model=row.face_select_model,
+        face_select_prompt=row.face_select_prompt,
     )
 
 

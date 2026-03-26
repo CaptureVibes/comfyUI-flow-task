@@ -24,7 +24,7 @@ def upgrade() -> None:
     if "auto_publish_enabled" not in existing_cols:
         op.add_column("video_task_configs", sa.Column("auto_publish_enabled", sa.Boolean(), nullable=False, server_default="false"))
     if "auto_publish_model" not in existing_cols:
-        op.add_column("video_task_configs", sa.Column("auto_publish_model", sa.String(200), nullable=False, server_default="gemini-2.0-flash"))
+        op.add_column("video_task_configs", sa.Column("auto_publish_model", sa.String(200), nullable=False, server_default="gemini-3.1-pro-preview"))
     if "auto_publish_prompt" not in existing_cols:
         op.add_column("video_task_configs", sa.Column("auto_publish_prompt", sa.Text(), nullable=False, server_default=""))
 

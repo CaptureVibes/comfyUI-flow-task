@@ -229,24 +229,26 @@ async def _extract_frames(video_url: str, template_id: str) -> list[str]:
         logger.info("[%s] Extracting %d frames at timestamps: %s", template_id, len(timestamps), timestamps)
 
         # 4. 用 ffmpeg 批量抽帧
+        file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
+        logger.info("[%s] Downloaded video file size: %d bytes", template_id, file_size)
+
         frames_dir = os.path.join(tmpdir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
 
-        # 用 select filter 精确抽帧（只抽指定时间戳）
-        # 先用 -ss 输出单帧，批量并发
         frame_paths = []
         for i, ts in enumerate(timestamps):
             frame_path = os.path.join(frames_dir, f"frame_{i:03d}.jpg")
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-y", "-ss", str(ts), "-i", video_path,
                 "-vframes", "1", "-q:v", "3", frame_path,
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            await proc.wait()
+            _, stderr_data = await proc.communicate()
             if os.path.exists(frame_path) and os.path.getsize(frame_path) > 0:
                 frame_paths.append(frame_path)
             else:
-                logger.warning("[%s] Frame at t=%.1fs failed to extract", template_id, ts)
+                stderr_text = stderr_data.decode(errors="replace")[-300:] if stderr_data else ""
+                logger.warning("[%s] Frame at t=%.1fs failed to extract, ffmpeg stderr: %s", template_id, ts, stderr_text)
 
         # 5. 读取帧为 GCS 可上传的临时 URL（这里返回 base64 data URL 供后续上传）
         data_urls = []

@@ -24,7 +24,7 @@ def upgrade() -> None:
         op.drop_column("pipeline_settings", "candidate_max_publish_days")
 
     # Fix default model
-    op.execute("UPDATE pipeline_settings SET candidate_ai_review_model = 'gemini-3.1-pro-preview' WHERE candidate_ai_review_model = 'gemini-2.0-flash'")
+    op.execute("UPDATE pipeline_settings SET candidate_ai_review_model = 'gemini-3.1-pro-preview' WHERE candidate_ai_review_model = 'gemini-3.1-pro-preview'")
 
 
 def downgrade() -> None:

@@ -158,7 +158,7 @@ async def _score_single_round(
     Args:
         video_url: CDN URL of the video
         scoring_prompt: The scoring criteria prompt
-        model: Model name (e.g., gemini-2.0-flash)
+        model: Model name (e.g., gemini-3.1-pro-preview)
         api_key: EvoLink API key
         api_base_url: EvoLink API base URL
         round_num: Round number (1 or 2) for logging

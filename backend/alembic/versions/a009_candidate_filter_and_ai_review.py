@@ -24,7 +24,7 @@ def upgrade() -> None:
     if "candidate_ai_review_enabled" not in existing_cols:
         op.add_column("pipeline_settings", sa.Column("candidate_ai_review_enabled", sa.Boolean(), nullable=False, server_default="false"))
     if "candidate_ai_review_model" not in existing_cols:
-        op.add_column("pipeline_settings", sa.Column("candidate_ai_review_model", sa.String(200), nullable=False, server_default="gemini-2.0-flash"))
+        op.add_column("pipeline_settings", sa.Column("candidate_ai_review_model", sa.String(200), nullable=False, server_default="gemini-3.1-pro-preview"))
     if "candidate_ai_review_prompt" not in existing_cols:
         op.add_column("pipeline_settings", sa.Column("candidate_ai_review_prompt", sa.Text(), nullable=False, server_default=""))
 

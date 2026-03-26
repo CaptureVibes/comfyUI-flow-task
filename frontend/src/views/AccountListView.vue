@@ -99,10 +99,7 @@
             <span class="ai-cfg-tag">阶段三：照片候选生成</span>
             <span class="ai-cfg-desc">随机选择最多 3 个不同视频，每个视频并发生成 3 张照片候选，用户后续手动选择一张进入头像生成</span>
           </div>
-          <el-form-item label="视频理解提示词（阶段3-1）">
-            <el-input v-model="aiSettingsForm.ai_account_photo_video_prompt" type="textarea" :rows="3" placeholder="描述视频中人物外貌特征，用于生成写实人物照片..." />
-          </el-form-item>
-          <el-form-item label="照片生成提示词（阶段3-2）">
+          <el-form-item label="照片生成提示词">
             <el-input v-model="aiSettingsForm.ai_account_photo_image_prompt" type="textarea" :rows="3" placeholder="Nano2 生图提示词前缀，将与视频描述拼接后调用生图..." />
           </el-form-item>
         </div>
@@ -481,7 +478,6 @@ const aiSettingsForm = ref({
   ai_account_avatar_model: 'gemini-3.1-flash-image-preview',
   ai_account_avatar_size: '1:1',
   ai_account_avatar_quality: '1K',
-  ai_account_photo_video_prompt: '',
   ai_account_photo_image_prompt: '',
 })
 
@@ -500,7 +496,6 @@ async function openAISettings() {
     aiSettingsForm.value.ai_account_avatar_model = data.ai_account_avatar_model || 'gemini-3.1-flash-image-preview'
     aiSettingsForm.value.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'
     aiSettingsForm.value.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
-    aiSettingsForm.value.ai_account_photo_video_prompt = data.ai_account_photo_video_prompt || ''
     aiSettingsForm.value.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
@@ -525,7 +520,6 @@ async function saveAISettings() {
       ai_account_avatar_model: aiSettingsForm.value.ai_account_avatar_model,
       ai_account_avatar_size: aiSettingsForm.value.ai_account_avatar_size,
       ai_account_avatar_quality: aiSettingsForm.value.ai_account_avatar_quality,
-      ai_account_photo_video_prompt: aiSettingsForm.value.ai_account_photo_video_prompt,
       ai_account_photo_image_prompt: aiSettingsForm.value.ai_account_photo_image_prompt,
     }
     await updatePipelineSettings(payload)

@@ -96,14 +96,20 @@ async def _rapidapi_fetch_video(url: str) -> dict:
     if not video_id:
         raise RuntimeError(f"Cannot extract video_id from URL: {url}")
 
+    params = {"videoId": video_id}
+    headers = _rapidapi_headers()
+    logger.info("RapidAPI fetch_video request: url=%s params=%s", f"{_RAPIDAPI_BASE}/api/post/detail", params)
+
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.get(
             f"{_RAPIDAPI_BASE}/api/post/detail",
-            params={"videoId": video_id},
-            headers=_rapidapi_headers(),
+            params=params,
+            headers=headers,
         )
         resp.raise_for_status()
         body = resp.json()
+
+    logger.info("RapidAPI fetch_video response keys=%s", list(body.keys()))
 
     # tiktok-api23 一般将视频数据放在 data 或 itemInfo.itemStruct
     data = (
@@ -367,20 +373,45 @@ async def fetch_blogger_info(profile_url: str) -> dict:
 
 
 async def download_video(source_url: str, out_path: str) -> str:
-    """获取视频直链后用 httpx 流式下载到 out_path（.mp4）。
+    """通过 RapidAPI /api/download/video 获取无水印直链并下载到 out_path（.mp4）。
     返回实际写入的文件路径。
     """
-    # 先拿直链
-    info = await fetch_video_info(source_url)
+    if not settings.rapidapi_key:
+        raise RuntimeError("RAPIDAPI_KEY not configured")
 
-    logger.info(f"source_url: {source_url}")
-    direct_url = info.get("video_url")
+    # Step 1: 调用 RapidAPI 下载接口获取无水印直链
+    logger.info("download_video: calling RapidAPI download API for %s", source_url)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{_RAPIDAPI_BASE}/api/download/video",
+            params={"url": source_url},
+            headers={
+                **_rapidapi_headers(),
+                "Content-Type": "application/json",
+            },
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    logger.info("download_video: RapidAPI download response keys=%s", list(body.keys()))
+
+    # 从返回中提取无水印视频链接
+    data = body.get("data") or body
+    direct_url = (
+        data.get("hdplay")
+        or data.get("play")
+        or data.get("wmplay")
+        or data.get("video_url")
+        or None
+    )
     if not direct_url:
-        raise RuntimeError(f"No downloadable video URL returned for {source_url}")
+        raise RuntimeError(f"RapidAPI download API returned no video URL: {body}")
 
+    logger.info("download_video: got direct_url=%s", direct_url[:120])
+
+    # Step 2: 流式下载视频文件
     file_path = out_path if out_path.endswith(".mp4") else out_path + ".mp4"
 
-    logger.info("download_video: downloading from %s -> %s", direct_url[:80], file_path)
     async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
         async with client.stream("GET", direct_url) as resp:
             resp.raise_for_status()
@@ -388,4 +419,5 @@ async def download_video(source_url: str, out_path: str) -> str:
                 async for chunk in resp.aiter_bytes(chunk_size=1024 * 256):
                     f.write(chunk)
 
+    logger.info("download_video: saved to %s", file_path)
     return file_path

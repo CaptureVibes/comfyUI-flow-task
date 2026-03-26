@@ -256,6 +256,18 @@ const IconCandidateLibrary = () => h('svg', {
   h('line', { x1: 10, y1: 7, x2: 10, y2: 17 })
 ])
 
+// 人脸库图标 (person face / portrait)
+const IconFaceLibrary = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('circle', { cx: 12, cy: 8, r: 4 }),
+  h('path', { d: 'M9 11.5c0 1.5 1.343 3 3 3s3-1.5 3-3' }),
+  h('rect', { x: 3, y: 3, width: 18, height: 18, rx: 3 }),
+  h('path', { d: 'M6 21v-1a6 6 0 0 1 12 0v1' })
+])
+
 const baseMenuItems = [
   { path: '/dashboard', name: 'tasks', label: '任务列表', iconComponent: IconList },
   { path: '/dashboard/templates', name: 'templates', label: '工作流模板', iconComponent: IconFlow },
@@ -264,6 +276,7 @@ const baseMenuItems = [
   { path: '/dashboard/tiktok-bloggers', name: 'tiktok-bloggers', label: 'TK博主', iconComponent: IconTiktokBlogger },
   { path: '/dashboard/topics', name: 'topics', label: '主题词', iconComponent: IconTopic },
   { path: '/dashboard/candidate-library', name: 'candidate-library', label: '候选库', iconComponent: IconCandidateLibrary },
+  { path: '/dashboard/face-library', name: 'face-library', label: '人脸库', iconComponent: IconFaceLibrary },
   { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: 'AI模板', iconComponent: IconVideoAI },
   { path: '/dashboard/accounts', name: 'accounts', label: 'AI博主', iconComponent: IconAccount },
   { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: '任务管理', iconComponent: IconTaskMgmt },

@@ -493,6 +493,7 @@ async def _download_then_enqueue_template(
     owner_id: uuid.UUID | None,
     blogger_name: str | None,
     keyword_text: str | None,
+    template_type: str | None = None,
 ) -> None:
     """后台协程：等待视频下载完成后打标签并将模板入队。"""
     from app.db.session import SessionLocal
@@ -519,8 +520,11 @@ async def _download_then_enqueue_template(
 
     try:
         async with SessionLocal() as session:
-            # ---- 打标签（关键词+博主名称拼接，get-or-create） ----
-            tag_name_parts = [p.strip() for p in [keyword_text, blogger_name] if p and p.strip()]
+            # ---- 打标签（共享=仅关键词，独享=关键词+博主名） ----
+            if template_type == "exclusive":
+                tag_name_parts = [p.strip() for p in [keyword_text, blogger_name] if p and p.strip()]
+            else:
+                tag_name_parts = [keyword_text.strip()] if keyword_text and keyword_text.strip() else []
             if tag_name_parts:
                 combined_tag_name = " ".join(tag_name_parts)
                 tid = await _get_or_create_tag(session, combined_tag_name, owner_id)
@@ -657,6 +661,7 @@ async def _import_to_video_library(
                         owner_id=owner_id,
                         blogger_name=vs.blogger_name,
                         keyword_text=cv.keyword_text,
+                        template_type=cv.template_type,
                     )
                 )
                 imported += 1
@@ -666,12 +671,18 @@ async def _import_to_video_library(
                 logger.debug("【候选库→视频库】[%d/%d] 已存在（create去重），跳过 video_url=%s", idx, total, cv.video_url)
 
         except Exception as exc:
-            cv.import_attempts = (cv.import_attempts or 0) + 1
-            await session.commit()
-            if cv.import_attempts >= _MAX_IMPORT_ATTEMPTS:
-                logger.warning("【候选库→视频库】[%d/%d] 导入失败已达 %d 次上限，放弃 video_url=%s: %s", idx, total, _MAX_IMPORT_ATTEMPTS, cv.video_url, exc)
+            await session.rollback()
+            # 重新加载 cv（rollback 后 ORM 对象已 detached）
+            cv = await session.get(CandidateVideo, cv.id)
+            if cv is not None:
+                cv.import_attempts = (cv.import_attempts or 0) + 1
+                await session.commit()
+                if cv.import_attempts >= _MAX_IMPORT_ATTEMPTS:
+                    logger.warning("【候选库→视频库】[%d/%d] 导入失败已达 %d 次上限，放弃 video_url=%s: %s", idx, total, _MAX_IMPORT_ATTEMPTS, cv.video_url, exc)
+                else:
+                    logger.warning("【候选库→视频库】[%d/%d] 导入失败（第%d次） video_url=%s: %s", idx, total, cv.import_attempts, cv.video_url, exc)
             else:
-                logger.warning("【候选库→视频库】[%d/%d] 导入失败（第%d次） video_url=%s: %s", idx, total, cv.import_attempts, cv.video_url, exc)
+                logger.warning("【候选库→视频库】[%d/%d] 导入失败且记录已不存在: %s", idx, total, exc)
 
     logger.info("【候选库→视频库】导入完成：共 %d 条，新导入 %d，跳过 %d", total, imported, skipped)
 
