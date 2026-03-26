@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,11 +9,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.models.face_photo import FacePhoto
 from app.models.tag import Tag, VideoSourceTag
 from app.schemas.face_photo import FacePhotoRead, TagWithFaceRead
 from app.services import face_select_service
+
+logger = logging.getLogger("app.face_library")
 
 router = APIRouter(prefix="/face-library", tags=["face-library"])
 
@@ -101,3 +105,74 @@ async def trigger_face_selection(
 
     asyncio.create_task(_run())
     return {"status": "submitted", "tag_id": str(tag_id)}
+
+
+_BULK_CONCURRENCY = 10
+
+
+@router.post("/bulk-select")
+async def bulk_select_faces(
+    token: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """一键生成人脸：为所有尚未生成人脸且有关联视频的标签批量执行 AI 人脸选择。"""
+    owner_id: uuid.UUID | None = None if token.is_admin else token.user_id
+    owner_id_str = str(owner_id) if owner_id else None
+    is_admin = token.is_admin
+
+    # 查找所有有关联视频但没有 face_photo 的 tag
+    tag_stmt = select(Tag.id).order_by(Tag.created_at.asc())
+    if owner_id is not None:
+        tag_stmt = tag_stmt.where(Tag.owner_id == owner_id)
+    all_tag_ids = [row[0] for row in (await session.execute(tag_stmt)).fetchall()]
+
+    if not all_tag_ids:
+        return {"message": "没有标签", "queued": 0}
+
+    # 排除已有 face_photo 的
+    existing_face_stmt = select(FacePhoto.tag_id).where(FacePhoto.tag_id.in_(all_tag_ids))
+    existing_face_tag_ids = set(
+        row[0] for row in (await session.execute(existing_face_stmt)).fetchall()
+    )
+
+    # 排除没有关联视频的
+    has_video_stmt = (
+        select(VideoSourceTag.tag_id)
+        .where(
+            VideoSourceTag.tag_id.in_(all_tag_ids),
+            VideoSourceTag.video_source_id.isnot(None),
+        )
+        .distinct()
+    )
+    has_video_tag_ids = set(
+        row[0] for row in (await session.execute(has_video_stmt)).fetchall()
+    )
+
+    pending_tag_ids = [
+        tid for tid in all_tag_ids
+        if tid not in existing_face_tag_ids and tid in has_video_tag_ids
+    ]
+
+    if not pending_tag_ids:
+        return {"message": "所有标签已有人脸或没有关联视频", "queued": 0}
+
+    # 后台批量执行，并发控制
+    sem = asyncio.Semaphore(_BULK_CONCURRENCY)
+
+    async def _process_one(tag_id: uuid.UUID) -> None:
+        async with sem:
+            try:
+                async with SessionLocal() as s:
+                    await face_select_service.select_face_for_tag(
+                        s, str(tag_id), owner_id_str, is_admin=is_admin
+                    )
+                logger.info("[批量人脸] tag_id=%s 成功", tag_id)
+            except Exception as exc:
+                logger.error("[批量人脸] tag_id=%s 失败: %s", tag_id, exc)
+
+    async def _run_all():
+        await asyncio.gather(*[_process_one(tid) for tid in pending_tag_ids])
+        logger.info("[批量人脸] 全部完成，共 %d 个标签", len(pending_tag_ids))
+
+    asyncio.create_task(_run_all())
+    return {"message": f"已启动批量人脸选择，共 {len(pending_tag_ids)} 个标签", "queued": len(pending_tag_ids)}
