@@ -159,6 +159,7 @@ async def list_templates(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=500),
     video_source_id: uuid.UUID | None = Query(None),
+    status: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoAITemplateListResponse:
@@ -177,6 +178,13 @@ async def list_templates(
     if video_source_id is not None:
         stmt = stmt.where(VideoAITemplate.video_source_id == video_source_id)
         total_stmt = total_stmt.where(VideoAITemplate.video_source_id == video_source_id)
+    if status is not None:
+        try:
+            status_enum = VideoAIProcessStatus(status)
+            stmt = stmt.where(VideoAITemplate.process_status == status_enum)
+            total_stmt = total_stmt.where(VideoAITemplate.process_status == status_enum)
+        except ValueError:
+            pass
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)
 

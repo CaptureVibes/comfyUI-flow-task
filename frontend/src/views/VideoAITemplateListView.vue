@@ -25,7 +25,7 @@
 
     <!-- Stats row -->
     <div class="vai-stats">
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'pending' }" style="--stat-color: #64748b; --stat-bg: #f1f5f9;" @click="toggleFilter('pending')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">排队中</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -33,7 +33,7 @@
         <div class="vai-stat-value">{{ templateStats.pending || 0 }}</div>
         <div class="vai-stat-sub">pending</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'understanding' }" style="--stat-color: #6366f1; --stat-bg: #eef2ff;" @click="toggleFilter('understanding')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">理解视频</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -41,7 +41,7 @@
         <div class="vai-stat-value">{{ templateStats.understanding || 0 }}</div>
         <div class="vai-stat-sub">understanding</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'imagegen' }" style="--stat-color: #8b5cf6; --stat-bg: #ede9fe;" @click="toggleFilter('imagegen')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">图片生成</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
@@ -49,7 +49,7 @@
         <div class="vai-stat-value">{{ templateStats.imagegen || 0 }}</div>
         <div class="vai-stat-sub">imagegen</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'splitting' }" style="--stat-color: #ec4899; --stat-bg: #fce7f3;" @click="toggleFilter('splitting')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">拆分图片</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -57,7 +57,7 @@
         <div class="vai-stat-value">{{ templateStats.splitting || 0 }}</div>
         <div class="vai-stat-sub">splitting</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'face_removing' }" style="--stat-color: #f59e0b; --stat-bg: #fef3c7;" @click="toggleFilter('face_removing')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">消除人脸</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><line x1="17" y1="3" x2="21" y2="7"/><line x1="21" y1="3" x2="17" y2="7"/></svg>
@@ -65,7 +65,7 @@
         <div class="vai-stat-value">{{ templateStats.face_removing || 0 }}</div>
         <div class="vai-stat-sub">face_removing</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'upscaling' }" style="--stat-color: #0ea5e9; --stat-bg: #e0f2fe;" @click="toggleFilter('upscaling')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">图片超分</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -73,7 +73,7 @@
         <div class="vai-stat-value">{{ templateStats.upscaling || 0 }}</div>
         <div class="vai-stat-sub">upscaling</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'success' }" style="--stat-color: #10b981; --stat-bg: #dcfce7;" @click="toggleFilter('success')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">成功</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
@@ -81,7 +81,7 @@
         <div class="vai-stat-value">{{ templateStats.success || 0 }}</div>
         <div class="vai-stat-sub">success</div>
       </div>
-      <div class="vai-stat-card">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'fail' }" style="--stat-color: #ef4444; --stat-bg: #fee2e2;" @click="toggleFilter('fail')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">失败</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
@@ -513,6 +513,7 @@ const total = ref(0)
 const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(Number(route.query.page_size) || 20)
 const jumpPage = ref(page.value)
+const activeFilter = ref(route.query.status || null)
 const templateStats = ref({})
 
 const playerVisible = ref(false)
@@ -622,7 +623,20 @@ function syncUrl() {
   const query = {}
   if (page.value > 1) query.page = String(page.value)
   if (pageSize.value !== 20) query.page_size = String(pageSize.value)
+  if (activeFilter.value) query.status = activeFilter.value
   router.replace({ query })
+}
+
+function toggleFilter(status) {
+  if (activeFilter.value === status) {
+    activeFilter.value = null
+  } else {
+    activeFilter.value = status
+  }
+  page.value = 1
+  jumpPage.value = 1
+  syncUrl()
+  loadData()
 }
 
 const STATUS_CONFIG = {
@@ -732,10 +746,11 @@ async function handleBatchResume() {
 async function loadData() {
   loading.value = true
   try {
-    const data = await fetchVideoAITemplates({ page: page.value, page_size: pageSize.value })
+    const params = { page: page.value, page_size: pageSize.value }
+    if (activeFilter.value) params.status = activeFilter.value
+    const data = await fetchVideoAITemplates(params)
     items.value = data.items || []
     total.value = data.total || 0
-    loadStats()
   } catch (err) {
     if (isDuplicateRequestError(err)) return
     ElMessage.error(err?.response?.data?.detail || '加载失败')
@@ -893,6 +908,7 @@ onActivated(() => {
   const q = route.query
   page.value = Number(q.page) || 1
   pageSize.value = Number(q.page_size) || 20
+  activeFilter.value = q.status || null
   jumpPage.value = page.value
   loadData()
   loadStats()
@@ -1128,6 +1144,8 @@ onActivated(() => {
   border-radius: 14px;
   padding: 16px 18px;
   box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  cursor: pointer;
+  transition: all .2s;
 }
 
 .vai-stat-top {
@@ -1158,6 +1176,17 @@ onActivated(() => {
   font-size: 11px;
   color: #94a3b8;
   font-family: monospace;
+}
+
+.vai-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,.08);
+}
+
+.vai-stat-active {
+  background: var(--stat-bg) !important;
+  border-color: var(--stat-color) !important;
+  box-shadow: 0 0 0 2px var(--stat-bg), 0 0 0 4px var(--stat-color) !important;
 }
 
 /* Card grid */
