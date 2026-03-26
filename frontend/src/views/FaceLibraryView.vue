@@ -18,6 +18,19 @@
         </svg>
         AI配置
       </button>
+      <button class="fl-btn-bulk" :disabled="bulkRunning" @click="handleBulkSelect">
+        <span v-if="bulkRunning" class="btn-spin"></span>
+        <span v-else>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </span>
+        一键生成人脸 ({{ pendingFaceCount }})
+      </button>
     </div>
 
     <div v-if="loading" class="fl-loading">加载中...</div>
@@ -108,14 +121,20 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchTagsWithFaces, triggerFaceSelection } from '../api/faceLibrary'
+import { fetchTagsWithFaces, triggerFaceSelection, bulkSelectFaces } from '../api/faceLibrary'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
 const tags = ref([])
 const loading = ref(false)
 const loadingTags = ref(new Set())
+const bulkRunning = ref(false)
+
+// 尚未生成人脸且有关联视频的标签数
+const pendingFaceCount = computed(() =>
+  tags.value.filter(t => !t.face_photo && t.video_count > 0).length
+)
 
 // 配置弹窗
 const showConfigDialog = ref(false)
@@ -155,6 +174,19 @@ async function handleSelectFace(tag) {
     const next = new Set(loadingTags.value)
     next.delete(tag.id)
     loadingTags.value = next
+  }
+}
+
+async function handleBulkSelect() {
+  if (pendingFaceCount.value === 0) return
+  bulkRunning.value = true
+  try {
+    const res = await bulkSelectFaces()
+    ElMessage.success(res.message || '批量人脸选择已启动')
+  } catch {
+    ElMessage.error('启动批量人脸选择失败')
+  } finally {
+    bulkRunning.value = false
   }
 }
 
@@ -212,7 +244,8 @@ onMounted(loadTags)
 }
 
 .fl-btn-refresh,
-.fl-btn-config {
+.fl-btn-config,
+.fl-btn-bulk {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -227,8 +260,11 @@ onMounted(loadTags)
 }
 .fl-btn-refresh:hover:not(:disabled),
 .fl-btn-config:hover:not(:disabled) { background: #f8fafc; }
+.fl-btn-bulk { background: #6366f1; color: #fff; border-color: #6366f1; }
+.fl-btn-bulk:hover:not(:disabled) { background: #4f46e5; border-color: #4f46e5; }
 .fl-btn-refresh:disabled,
-.fl-btn-config:disabled { opacity: 0.5; cursor: not-allowed; }
+.fl-btn-config:disabled,
+.fl-btn-bulk:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .fl-loading {
   color: #94a3b8;

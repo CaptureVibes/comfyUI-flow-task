@@ -9,3 +9,8 @@ export async function triggerFaceSelection(tagId) {
   const res = await http.post(`/face-library/tags/${tagId}/select-face`)
   return res.data
 }
+
+export async function bulkSelectFaces() {
+  const res = await http.post('/face-library/bulk-select')
+  return res.data
+}
