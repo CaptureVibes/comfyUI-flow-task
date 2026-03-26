@@ -28,12 +28,7 @@ _provider_idx: int = 0
 
 
 def _next_providers() -> tuple[str, str]:
-    """返回 (first, second)，first 是本次优先尝试的 provider。"""
-    global _provider_idx
-    idx = _provider_idx
-    _provider_idx += 1
-    if idx % 2 == 0:
-        return "tikwm", "rapidapi"
+    """返回 (first, second)，始终优先使用 RapidAPI。"""
     return "rapidapi", "tikwm"
 
 
@@ -377,6 +372,8 @@ async def download_video(source_url: str, out_path: str) -> str:
     """
     # 先拿直链
     info = await fetch_video_info(source_url)
+
+    logger.info(f"source_url: {source_url}")
     direct_url = info.get("video_url")
     if not direct_url:
         raise RuntimeError(f"No downloadable video URL returned for {source_url}")

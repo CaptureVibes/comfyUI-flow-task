@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import SessionLocal, get_db
-from app.schemas.settings import CandidateSearchPayload, CandidateVideoItem, CandidateVideoListResponse
+from app.schemas.settings import (
+    CandidateBatchAIReviewRequest,
+    CandidateBatchImportRequest,
+    CandidateSearchPayload,
+    CandidateVideoItem,
+    CandidateVideoListResponse,
+)
 from app.services import candidate_service
 from app.services.candidate_service import delete_candidate_video, list_candidate_videos
 
@@ -35,8 +41,9 @@ async def trigger_candidate_search(
         except ValueError:
             kid = None
 
+    # 不管是否 admin，都用 user_id 作为 owner_id 存入候选库
     owner_id: uuid.UUID | None = None
-    if not token.is_admin and token.user_id:
+    if token.user_id:
         owner_id = uuid.UUID(str(token.user_id))
 
     # 后台执行，不等待结果（后台任务自己管理 session 生命周期）
@@ -62,6 +69,8 @@ async def trigger_candidate_search(
 async def get_candidates(
     keyword_id: str | None = Query(None),
     template_type: str | None = Query(None, description="shared 或 exclusive"),
+    imported: bool | None = Query(None, description="true=已导入库, false=候选库, 不传=全部"),
+    status: str | None = Query(None, description="按状态筛选: pending/ai_reviewing/ai_passed/ai_failed/importing/imported/import_failed"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     token: TokenData = Depends(get_current_user),
@@ -83,6 +92,8 @@ async def get_candidates(
         owner_id=owner_id,
         keyword_id=kid,
         template_type=template_type,
+        imported=imported,
+        status=status,
         page=page,
         page_size=page_size,
     )
@@ -104,6 +115,9 @@ async def get_candidates(
             cdn_cover_url=row.cdn_cover_url,
             play_count=row.play_count,
             like_count=row.like_count,
+            status=str(row.status.value if hasattr(row.status, 'value') else row.status),
+            ai_reviewed=row.ai_reviewed,
+            ai_error=row.ai_error,
             created_at=row.created_at,
         )
         for row in result["items"]
@@ -132,3 +146,48 @@ async def remove_candidate_video(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="候选视频不存在或无权限删除")
     return Response(status_code=204)
+
+
+@router.post("/ai-review-all")
+async def bulk_ai_review(
+    template_type: str | None = Query(None, description="shared 或 exclusive，不传则全部"),
+    token: TokenData = Depends(get_current_user),
+):
+    """全量 AI 审核：将所有 pending/ai_failed 的候选视频加入后台审核队列（立即返回）"""
+    owner_id = None if token.is_admin else str(token.user_id)
+    result = await candidate_service.trigger_bulk_ai_review(template_type=template_type, owner_id=owner_id)
+    return {"message": f"已加入审核队列，共 {result['queued']} 条视频"}
+
+
+@router.post("/ai-review")
+async def batch_ai_review(
+    body: CandidateBatchAIReviewRequest,
+    token: TokenData = Depends(get_current_user),
+):
+    """手动批量 AI 审核候选视频（后台异步执行，立即返回）"""
+    owner_id = None if token.is_admin else str(token.user_id)
+    ids = body.ids
+
+    async def _bg():
+        async with SessionLocal() as bg_session:
+            try:
+                await candidate_service.ai_review_candidates_by_ids(bg_session, ids, owner_id)
+            except Exception as exc:
+                logger.exception("【候选库】后台 AI 审核异常: %s", exc)
+
+    asyncio.create_task(_bg())
+    return {"message": f"AI 审核已启动，共 {len(ids)} 条视频"}
+
+
+@router.post("/import")
+async def batch_import(
+    body: CandidateBatchImportRequest,
+    token: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """手动批量导入 ai_passed 的候选视频到视频库"""
+    owner_id = None if token.is_admin else str(token.user_id)
+    result = await candidate_service.import_candidates_by_ids(
+        session, body.ids, owner_id
+    )
+    return result

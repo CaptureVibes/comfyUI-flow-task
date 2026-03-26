@@ -15,14 +15,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, or_, select, update as sa_update, text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import httpx
 
-from app.models.candidate_video import CandidateVideo
+from app.models.candidate_video import CandidateVideo, CandidateVideoStatus
 from app.services import rapid_api
+from app.core.config import settings as app_settings
 from app.services.image_upload_service import image_upload_service
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
 from app.services.system_settings_service import get_or_create_system_settings
@@ -212,6 +213,55 @@ async def _search_blogger_videos(
 # AI 审核（EvoLink / Gemini）
 # ---------------------------------------------------------------------------
 
+async def _download_and_upload_video(video_url: str) -> str:
+    """通过 TikTok API 下载视频（video_url 为 TikTok 页面地址），上传到 CDN，返回 CDN URL。"""
+    import tempfile, os
+    from app.services import tiktok_api_client
+
+    # 用 tiktok_api_client 下载到临时文件（内部会调 tikwm/RapidAPI 获取真实直链）
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        await tiktok_api_client.download_video(video_url, tmp_path)
+        with open(tmp_path, "rb") as f:
+            video_bytes = f.read()
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    # 上传到 CDN（视频用 upload-video 接口）
+    upload_url = app_settings.video_upload_api_url
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            upload_url,
+            files={"file": ("video.mp4", video_bytes, "video/mp4")},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    # 递归查找 URL
+    def _find_url(obj: Any) -> str | None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in {"url", "image_url", "file_url", "src"} and isinstance(v, str) and v.startswith("http"):
+                    return v
+                found = _find_url(v)
+                if found:
+                    return found
+        if isinstance(obj, list):
+            for item in obj:
+                found = _find_url(item)
+                if found:
+                    return found
+        return None
+
+    cdn_url = _find_url(data)
+    if not cdn_url:
+        raise RuntimeError(f"视频 CDN 上传失败，响应: {data}")
+    logger.info("视频已上传 CDN: %s -> %s", video_url[:60], cdn_url)
+    return cdn_url
+
+
 async def _ai_review_single(
     video_url: str,
     prompt: str,
@@ -237,12 +287,15 @@ async def _ai_review_single(
     )
     final_prompt = prompt + json_instructions
 
+    # 下载视频并上传到 CDN，获取可供 Gemini 访问的 URL
+    cdn_url = await _download_and_upload_video(video_url)
+
     payload = {
         "contents": [
             {
                 "role": "user",
                 "parts": [
-                    {"fileData": {"mimeType": "video/mp4", "fileUri": video_url}},
+                    {"fileData": {"mimeType": "video/mp4", "fileUri": cdn_url}},
                     {"text": final_prompt},
                 ],
             }
@@ -502,6 +555,7 @@ async def _import_to_video_library(
     session: AsyncSession,
     keyword_id: uuid.UUID | None,
     owner_id: uuid.UUID | None,
+    single_candidate_id: uuid.UUID | None = None,
 ) -> None:
     """将候选视频导入视频库（video_sources），完全复用 parse → create → download → 生成模板 四步流程。"""
     from app.schemas.video_source import VideoSourceCreate
@@ -522,6 +576,8 @@ async def _import_to_video_library(
         q = q.where(CandidateVideo.keyword_id == keyword_id)
     if owner_id is not None:
         q = q.where(CandidateVideo.owner_id == owner_id)
+    if single_candidate_id is not None:
+        q = q.where(CandidateVideo.id == single_candidate_id)
 
     rows = list((await session.scalars(q)).all())
     if not rows:
@@ -722,8 +778,6 @@ async def run_candidate_search(
                 await session.execute(stmt)
 
             await session.commit()
-            await _ai_review_candidates(session, keyword_id, owner_id, cfg)
-            await _import_to_video_library(session, keyword_id, owner_id)
             final_type = "exclusive"
             logger.info("【候选库】搜索完成，结果=独享，视频数=%d", len(videos))
             return {"template_type": "exclusive", "video_count": len(videos)}
@@ -770,8 +824,6 @@ async def run_candidate_search(
     if cfg.shared_top_n > 0 and keyword_id is not None:
         await _trim_shared_top_n(session, keyword_id, owner_id, cfg.shared_top_n)
 
-    await _ai_review_candidates(session, keyword_id, owner_id, cfg)
-    await _import_to_video_library(session, keyword_id, owner_id)
     logger.info("【候选库】搜索完成，结果=共享，视频数=%d", total_shared)
     return {"template_type": "shared", "video_count": total_shared}
 
@@ -786,10 +838,12 @@ async def list_candidate_videos(
     *,
     keyword_id: uuid.UUID | None = None,
     template_type: str | None = None,
+    imported: bool | None = None,
+    status: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
-    """分页查询候选视频"""
+    """分页查询候选视频。imported=True 查已导入库；imported=False 查候选库（未导入）；None 查全部。"""
     q = select(CandidateVideo)
 
     if owner_id is not None:
@@ -798,6 +852,15 @@ async def list_candidate_videos(
         q = q.where(CandidateVideo.keyword_id == keyword_id)
     if template_type is not None:
         q = q.where(CandidateVideo.template_type == template_type)
+    if imported is True:
+        q = q.where(CandidateVideo.status == CandidateVideoStatus.imported)
+    elif imported is False:
+        q = q.where(CandidateVideo.status != CandidateVideoStatus.imported)
+    if status is not None:
+        try:
+            q = q.where(CandidateVideo.status == CandidateVideoStatus(status))
+        except ValueError:
+            pass  # 忽略非法 status 值
 
     # 总数
     from sqlalchemy import func
@@ -828,36 +891,360 @@ async def delete_candidate_video(
 
 
 async def recover_candidate_imports_on_startup() -> None:
-    """启动时恢复中断的候选视频导入：将 video_source_id IS NULL 的候选视频重新走导入流程。"""
+    """启动时恢复中断的候选视频导入：将 status=importing 的视频重新触发导入。"""
     from app.db.session import SessionLocal
 
     async with SessionLocal() as session:
-        q = select(CandidateVideo).where(
-            CandidateVideo.video_url.isnot(None),
-            CandidateVideo.video_source_id.is_(None),
-            CandidateVideo.import_attempts < 3,
+        result = await session.execute(
+            select(CandidateVideo.id).where(
+                CandidateVideo.status == CandidateVideoStatus.importing,
+            )
         )
-        rows = list((await session.scalars(q)).all())
+        ids = [row[0] for row in result.fetchall()]
 
-    if not rows:
-        logger.info("No stuck candidate imports found on startup")
+    if not ids:
+        logger.info("【导入恢复】无中断的导入任务")
         return
 
-    # 按 (owner_id, keyword_id) 分组，逐组调用 _import_to_video_library
-    groups: dict[tuple, list] = {}
-    for cv in rows:
-        key = (str(cv.owner_id) if cv.owner_id else None, str(cv.keyword_id) if cv.keyword_id else None)
-        groups.setdefault(key, []).append(cv)
+    logger.info("【导入恢复】发现 %d 条中断任务，重新入队", len(ids))
+    for cid in ids:
+        asyncio.create_task(_import_single_by_id(cid))
 
-    logger.info("Recovering %d stuck candidate imports (%d groups) on startup", len(rows), len(groups))
 
-    for (oid_str, kid_str), _ in groups.items():
-        owner_id = uuid.UUID(oid_str) if oid_str else None
-        keyword_id = uuid.UUID(kid_str) if kid_str else None
+async def _import_single_by_id(candidate_id: uuid.UUID) -> None:
+    """以独立 session 重新导入单条 status=importing 的候选视频。"""
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as session:
         try:
-            async with SessionLocal() as session:
-                await _import_to_video_library(session, keyword_id, owner_id)
-        except Exception:
-            logger.exception("Failed to recover candidate imports for owner=%s keyword=%s", oid_str, kid_str)
+            await _import_to_video_library(session, keyword_id=None, owner_id=None, single_candidate_id=candidate_id)
+        except Exception as exc:
+            logger.exception("【导入恢复】重新导入失败 candidate_id=%s: %s", candidate_id, exc)
 
-    logger.info("Candidate import recovery finished")
+
+# ---------------------------------------------------------------------------
+# 手动批量 AI 审核
+# ---------------------------------------------------------------------------
+
+async def ai_review_candidates_by_ids(
+    session: AsyncSession,
+    candidate_ids: list[str],
+    owner_id: str | None,
+) -> dict:
+    """手动触发批量 AI 审核。
+
+    只处理 status IN (pending, ai_failed) 的视频。
+    下载视频 → 上传 CDN → 调 Gemini → 更新状态。
+    返回 {"reviewed": N, "passed": N, "failed": N}
+    """
+    from app.services.system_settings_service import get_or_create_system_settings
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+    import uuid as _uuid
+
+    owner_uuid = _uuid.UUID(owner_id) if owner_id else None
+
+    # 读取配置
+    sys_settings = await get_or_create_system_settings(session)
+    # pipeline_settings 按 owner 读取；admin 无 owner 时用默认空 UUID 兜底
+    _cfg_owner = owner_uuid or _uuid.UUID(int=0)
+    pipeline_settings = await get_or_create_pipeline_settings(session, _cfg_owner)
+    cfg = _SearchConfig(pipeline_settings)
+
+    # 查询目标视频
+    logger.info("AI审核请求: candidate_ids=%s, owner_uuid=%s", candidate_ids, owner_uuid)
+    q = select(CandidateVideo).where(
+        CandidateVideo.id.in_([_uuid.UUID(i) for i in candidate_ids]),
+        CandidateVideo.status.in_([CandidateVideoStatus.pending, CandidateVideoStatus.ai_failed]),
+    )
+    if owner_uuid is not None:
+        q = q.where(CandidateVideo.owner_id == owner_uuid)
+    result = await session.execute(q)
+    rows = result.scalars().all()
+    logger.info("AI审核查到视频数: %d", len(rows))
+
+    reviewed = 0
+    passed = 0
+    failed = 0
+
+    for row in rows:
+        # 原子锁定（顺序执行，避免共享 session 并发冲突）
+        lock_result = await session.execute(
+            sa_update(CandidateVideo)
+            .where(
+                CandidateVideo.id == row.id,
+                CandidateVideo.status.in_([CandidateVideoStatus.pending, CandidateVideoStatus.ai_failed]),
+            )
+            .values(status=CandidateVideoStatus.ai_reviewing)
+            .returning(CandidateVideo.id)
+        )
+        if not lock_result.scalar():
+            continue  # 已被其他任务锁定，跳过
+        await session.commit()
+
+        try:
+            ok = await _ai_review_single(
+                video_url=row.video_url,
+                prompt=cfg.ai_review_prompt,
+                model=cfg.ai_review_model,
+                api_key=sys_settings.evolink_api_key or "",
+                api_base_url=sys_settings.evolink_api_base_url or "",
+                retry_delay=cfg.retry_delay,
+            )
+            if ok:
+                await session.execute(
+                    sa_update(CandidateVideo)
+                    .where(CandidateVideo.id == row.id)
+                    .values(status=CandidateVideoStatus.importing, ai_reviewed=True, ai_error=None)
+                )
+                await session.commit()
+                try:
+                    await _import_to_video_library(session, row.keyword_id, owner_uuid, single_candidate_id=row.id)
+                    await session.execute(
+                        sa_update(CandidateVideo)
+                        .where(CandidateVideo.id == row.id)
+                        .values(status=CandidateVideoStatus.imported)
+                    )
+                    await session.commit()
+                except Exception as imp_exc:
+                    logger.error("AI审核通过但导入失败 video_id=%s: %s", row.video_id, imp_exc)
+                    await session.rollback()
+                    await session.execute(
+                        sa_update(CandidateVideo)
+                        .where(CandidateVideo.id == row.id)
+                        .values(status=CandidateVideoStatus.import_failed, ai_error=str(imp_exc))
+                    )
+                    await session.commit()
+                passed += 1
+            else:
+                await session.execute(
+                    sa_update(CandidateVideo)
+                    .where(CandidateVideo.id == row.id)
+                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=None)
+                )
+                await session.commit()
+                failed += 1
+            reviewed += 1
+        except Exception as exc:
+            logger.error("AI审核失败 video_id=%s: %s", row.video_id, exc)
+            await session.rollback()
+            await session.execute(
+                sa_update(CandidateVideo)
+                .where(CandidateVideo.id == row.id)
+                .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=str(exc))
+            )
+            await session.commit()
+            reviewed += 1
+            failed += 1
+
+    return {"reviewed": reviewed, "passed": passed, "failed": failed}
+
+
+# ---------------------------------------------------------------------------
+# 手动批量导入
+# ---------------------------------------------------------------------------
+
+async def import_candidates_by_ids(
+    session: AsyncSession,
+    candidate_ids: list[str],
+    owner_id: str | None,
+) -> dict:
+    """手动触发批量导入 ai_passed 的视频到视频库。
+
+    返回 {"imported": N, "failed": N}
+    """
+    import uuid as _uuid
+
+    owner_uuid = _uuid.UUID(owner_id) if owner_id else None
+
+    # 查询目标视频（跳过 ai_failed / import_failed，其余状态均可导入）
+    _skip = [CandidateVideoStatus.ai_failed, CandidateVideoStatus.import_failed, CandidateVideoStatus.imported]
+    q = select(CandidateVideo).where(
+        CandidateVideo.id.in_([_uuid.UUID(i) for i in candidate_ids]),
+        CandidateVideo.status.not_in(_skip),
+    )
+    if owner_uuid is not None:
+        q = q.where(CandidateVideo.owner_id == owner_uuid)
+    result = await session.execute(q)
+    rows = result.scalars().all()
+
+    imported_count = 0
+    failed_count = 0
+
+    for row in rows:
+        # 锁定状态
+        lock_result = await session.execute(
+            sa_update(CandidateVideo)
+            .where(
+                CandidateVideo.id == row.id,
+                CandidateVideo.status.not_in(_skip),
+            )
+            .values(status=CandidateVideoStatus.importing)
+            .returning(CandidateVideo.id)
+        )
+        if not lock_result.scalar():
+            continue
+        await session.commit()
+
+        try:
+            # 调用已有的单条导入逻辑（按 keyword_id + video_id 过滤到单条）
+            await _import_to_video_library(session, row.keyword_id, owner_uuid, single_candidate_id=row.id)
+            await session.execute(
+                sa_update(CandidateVideo)
+                .where(CandidateVideo.id == row.id)
+                .values(status=CandidateVideoStatus.imported)
+            )
+            await session.commit()
+            imported_count += 1
+        except Exception as exc:
+            logger.error("导入失败 video_id=%s: %s", row.video_id, exc)
+            await session.rollback()
+            await session.execute(
+                sa_update(CandidateVideo)
+                .where(CandidateVideo.id == row.id)
+                .values(status=CandidateVideoStatus.import_failed, ai_error=str(exc))
+            )
+            await session.commit()
+            failed_count += 1
+
+    return {"imported": imported_count, "failed": failed_count}
+
+
+# ---------------------------------------------------------------------------
+# 全量 AI 审核（后台 worker，支持并发、重启恢复）
+# ---------------------------------------------------------------------------
+
+_BULK_REVIEW_SEM = asyncio.Semaphore(_CONCURRENCY_AI_REVIEW)  # 全局并发控制
+
+
+async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
+    """处理单条视频的 AI 审核 + 导入，使用独立 session。"""
+    from app.db.session import SessionLocal
+    from app.services.system_settings_service import get_or_create_system_settings
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+
+    async with _BULK_REVIEW_SEM:
+        async with SessionLocal() as session:
+            row = await session.get(CandidateVideo, candidate_id)
+            if not row or row.status != CandidateVideoStatus.ai_reviewing:
+                return  # 已被其他任务处理或状态已变
+
+            # 读取配置（用 row.owner_id 或兜底）
+            sys_settings = await get_or_create_system_settings(session)
+            cfg_owner = row.owner_id or uuid.UUID(int=0)
+            pipeline_settings = await get_or_create_pipeline_settings(session, cfg_owner)
+            cfg = _SearchConfig(pipeline_settings)
+
+            try:
+                ok = await _ai_review_single(
+                    video_url=row.video_url,
+                    prompt=cfg.ai_review_prompt,
+                    model=cfg.ai_review_model,
+                    api_key=sys_settings.evolink_api_key or "",
+                    api_base_url=sys_settings.evolink_api_base_url or "",
+                    retry_delay=cfg.retry_delay,
+                )
+            except Exception as exc:
+                logger.error("【全量审核】审核失败 candidate_id=%s: %s", candidate_id, exc)
+                await session.rollback()
+                await session.execute(
+                    sa_update(CandidateVideo)
+                    .where(CandidateVideo.id == candidate_id)
+                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=str(exc))
+                )
+                await session.commit()
+                return
+
+            if ok:
+                await session.execute(
+                    sa_update(CandidateVideo)
+                    .where(CandidateVideo.id == candidate_id)
+                    .values(status=CandidateVideoStatus.importing, ai_reviewed=True, ai_error=None)
+                )
+                await session.commit()
+                try:
+                    await _import_to_video_library(session, row.keyword_id, row.owner_id, single_candidate_id=candidate_id)
+                    await session.execute(
+                        sa_update(CandidateVideo)
+                        .where(CandidateVideo.id == candidate_id)
+                        .values(status=CandidateVideoStatus.imported)
+                    )
+                    await session.commit()
+                    logger.info("【全量审核】导入成功 candidate_id=%s", candidate_id)
+                except Exception as exc:
+                    logger.error("【全量审核】审核通过但导入失败 candidate_id=%s: %s", candidate_id, exc)
+                    await session.rollback()
+                    await session.execute(
+                        sa_update(CandidateVideo)
+                        .where(CandidateVideo.id == candidate_id)
+                        .values(status=CandidateVideoStatus.import_failed, ai_error=str(exc))
+                    )
+                    await session.commit()
+            else:
+                await session.execute(
+                    sa_update(CandidateVideo)
+                    .where(CandidateVideo.id == candidate_id)
+                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=None)
+                )
+                await session.commit()
+                logger.info("【全量审核】审核拒绝 candidate_id=%s", candidate_id)
+
+
+async def trigger_bulk_ai_review(
+    template_type: str | None = None,
+    owner_id: str | None = None,
+) -> dict:
+    """将所有 pending 的候选视频标记为 ai_reviewing 并启动后台并发处理。
+
+    重启恢复：重启时调用 recover_stuck_ai_review_on_startup() 重新捡起 ai_reviewing 的视频。
+    """
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as session:
+        owner_uuid = uuid.UUID(owner_id) if owner_id else None
+
+        # 批量原子锁定：pending → ai_reviewing（跳过 ai_failed）
+        stmt = (
+            sa_update(CandidateVideo)
+            .where(
+                CandidateVideo.status == CandidateVideoStatus.pending,
+                CandidateVideo.video_url.isnot(None),
+            )
+        )
+        if template_type:
+            stmt = stmt.where(CandidateVideo.template_type == template_type)
+        if owner_uuid:
+            stmt = stmt.where(CandidateVideo.owner_id == owner_uuid)
+
+        stmt = stmt.values(status=CandidateVideoStatus.ai_reviewing).returning(CandidateVideo.id)
+        result = await session.execute(stmt)
+        ids = [row[0] for row in result.fetchall()]
+        await session.commit()
+
+    logger.info("【全量审核】已标记 %d 条视频为 ai_reviewing，启动后台处理", len(ids))
+
+    for cid in ids:
+        asyncio.create_task(_process_one_ai_review(cid))
+
+    return {"queued": len(ids)}
+
+
+async def recover_stuck_ai_review_on_startup() -> None:
+    """启动时恢复：将 status=ai_reviewing 的视频重新投入后台处理队列。"""
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(CandidateVideo.id).where(
+                CandidateVideo.status == CandidateVideoStatus.ai_reviewing,
+                CandidateVideo.video_url.isnot(None),
+            )
+        )
+        ids = [row[0] for row in result.fetchall()]
+
+    if not ids:
+        logger.info("【全量审核】启动恢复：无中断的 AI 审核任务")
+        return
+
+    logger.info("【全量审核】启动恢复：发现 %d 条中断任务，重新入队", len(ids))
+    for cid in ids:
+        asyncio.create_task(_process_one_ai_review(cid))

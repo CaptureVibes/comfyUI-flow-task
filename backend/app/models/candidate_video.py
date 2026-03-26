@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -11,6 +12,16 @@ from app.db.base import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class CandidateVideoStatus(str, enum.Enum):
+    pending = "pending"
+    ai_reviewing = "ai_reviewing"
+    ai_passed = "ai_passed"
+    ai_failed = "ai_failed"
+    importing = "importing"
+    imported = "imported"
+    import_failed = "import_failed"
 
 
 class CandidateVideo(Base):
@@ -49,6 +60,16 @@ class CandidateVideo(Base):
         Uuid(as_uuid=True), ForeignKey("video_sources.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
+
+    # AI 审核状态
+    status: Mapped[CandidateVideoStatus] = mapped_column(
+        Enum(CandidateVideoStatus, name="candidatevideostatus"),
+        nullable=False,
+        default=CandidateVideoStatus.pending,
+        server_default="pending",
+    )
+    ai_reviewed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    ai_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 

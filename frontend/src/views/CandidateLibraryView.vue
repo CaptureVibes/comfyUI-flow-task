@@ -106,7 +106,7 @@
             :key="tab.key"
             class="cl-tab"
             :class="{ active: activeTab === tab.key }"
-            @click="activeTab = tab.key; page = 1; loadVideos()"
+            @click="activeTab = tab.key; page = 1; filterStatus = ''; selectedIds = new Set(); loadVideos(); loadTabCounts()"
           >
             {{ tab.label }}
             <span v-if="tabCounts[tab.key]" class="cl-tab-count">{{ tabCounts[tab.key] }}</span>
@@ -122,18 +122,74 @@
           </button>
         </div>
 
+        <!-- 状态筛选（仅候选库 tab 显示） -->
+        <div v-if="isCandidateTab" class="cl-status-filter">
+          <button
+            v-for="s in STATUS_FILTERS"
+            :key="s.value"
+            class="cl-status-chip"
+            :class="{ active: filterStatus === s.value }"
+            :style="filterStatus === s.value ? { color: s.color, borderColor: s.color, background: s.bg } : {}"
+            @click="filterStatus = filterStatus === s.value ? '' : s.value; page = 1; loadVideos()"
+          >{{ s.label }}</button>
+        </div>
+
+        <!-- 批量操作栏（仅候选库 tab 显示） -->
+        <div v-if="isCandidateTab" class="cl-batch-bar">
+          <label class="cl-check-all">
+            <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
+            全选
+          </label>
+          <template v-if="selectedIds.size > 0">
+            <span class="cl-selected-count">已选 {{ selectedIds.size }} 个</span>
+            <button class="cl-btn cl-btn-ai" @click="handleBatchAIReview">
+              AI审核
+            </button>
+            <button class="cl-btn cl-btn-import" :disabled="batchImporting" @click="handleBatchImport">
+              <span v-if="batchImporting" class="btn-spin"></span>
+              导入到库
+            </button>
+            <button class="cl-btn cl-btn-deselect" @click="selectedIds = new Set()">取消选择</button>
+          </template>
+          <div class="cl-batch-bar-spacer"></div>
+          <button class="cl-btn cl-btn-review-all" :disabled="pendingCount === 0" @click="handleBulkAIReviewAll">
+            全量AI审核 ({{ pendingCount }})
+          </button>
+          <button class="cl-btn cl-btn-import-all" :disabled="importingAll || importableCount === 0" @click="handleImportAll">
+            <span v-if="importingAll" class="btn-spin"></span>
+            一键导入全部 ({{ importableCount }})
+          </button>
+        </div>
+
         <!-- 视频列表 -->
         <div v-loading="loading" class="cl-grid">
-          <div v-for="video in videos" :key="video.id" class="cl-card">
+          <div
+            v-for="video in videos"
+            :key="video.id"
+            class="cl-card"
+            :class="{ selected: selectedIds.has(video.id) }"
+            @click="isCandidateTab && toggleSelect(video.id)"
+          >
+            <!-- 复选框（仅候选库 tab） -->
+            <label v-if="isCandidateTab" class="cl-card-checkbox" @click.stop>
+              <input type="checkbox" :checked="selectedIds.has(video.id)" @change="toggleSelect(video.id)" />
+            </label>
             <div class="cl-card-cover">
               <img v-if="video.cdn_cover_url || video.cover_url" :src="video.cdn_cover_url || video.cover_url" class="cl-cover-img" />
               <div v-else class="cl-cover-placeholder">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               </div>
-              <div class="cl-card-badge" :class="video.template_type === 'exclusive' ? 'badge-exclusive' : 'badge-shared'">
-                {{ video.template_type === 'exclusive' ? '独享' : '共享' }}
+              <!-- AI 状态徽章（仅候选库 tab） -->
+              <div
+                v-if="isCandidateTab"
+                class="cl-status-badge"
+                :class="{ 'cl-status-badge--error': video.status === 'ai_failed' && video.ai_error }"
+                :style="{ color: statusBadge(video.status).color, background: statusBadge(video.status).bg }"
+              >
+                {{ statusBadge(video.status).label }}
+                <span v-if="video.status === 'ai_failed' && video.ai_error" class="cl-error-tooltip">{{ video.ai_error }}</span>
               </div>
-              <a v-if="video.video_url" :href="video.video_url" target="_blank" class="cl-card-link" title="在 TikTok 打开">
+              <a v-if="video.video_url" :href="video.video_url" target="_blank" class="cl-card-link" title="在 TikTok 打开" @click.stop>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
               </a>
             </div>
@@ -152,7 +208,7 @@
               </div>
               <div class="cl-card-keyword">{{ video.keyword_text }}</div>
             </div>
-            <button class="cl-card-del" title="删除" @click="handleDelete(video)">
+            <button class="cl-card-del" title="删除" @click.stop="handleDelete(video)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
           </div>
@@ -256,17 +312,10 @@
         <h4 class="cf-section-title">AI 审核配置</h4>
 
         <div class="cf-row">
-          <label class="cf-label">
-            <el-switch v-model="configForm.candidate_ai_review_enabled" size="small" style="margin-right: 8px;" />
-            启用 AI 审核
-          </label>
-          <span class="cf-hint">入库后用 Gemini 审核每条视频，不通过的自动删除</span>
-        </div>
-        <div v-if="configForm.candidate_ai_review_enabled" class="cf-row">
           <label class="cf-label">审核模型</label>
           <el-input v-model="configForm.candidate_ai_review_model" placeholder="gemini-3.1-pro-preview" />
         </div>
-        <div v-if="configForm.candidate_ai_review_enabled" class="cf-row">
+        <div class="cf-row">
           <label class="cf-label">审核提示词</label>
           <el-input
             v-model="configForm.candidate_ai_review_prompt"
@@ -384,22 +433,35 @@
 <script setup>
 import { ref, computed, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchCandidateVideos, triggerCandidateSearch, deleteCandidateVideo } from '../api/candidates'
+import { fetchCandidateVideos, triggerCandidateSearch, deleteCandidateVideo, batchAIReview, batchImportCandidates, bulkAIReviewAll } from '../api/candidates'
 import { fetchAllKeywords } from '../api/topics'
 import { fetchCandidateConfig, updateCandidateConfig } from '../api/settings'
 
+// tab.key 格式: "candidate_shared" | "shared" | "candidate_exclusive" | "exclusive"
+// candidate_ 前缀表示候选库（未导入），无前缀表示已导入库
 const TABS = [
-  { key: 'shared', label: '共享模板' },
-  { key: 'exclusive', label: '独享模板' },
+  { key: 'candidate_shared',    label: '候选共享库' },
+  { key: 'shared',              label: '共享库' },
+  { key: 'candidate_exclusive', label: '候选独享库' },
+  { key: 'exclusive',           label: '独享库' },
 ]
 
-const activeTab = ref('shared')
+// 从 tab key 解析出 template_type 和 imported 参数
+function parseTabKey(key) {
+  if (key.startsWith('candidate_')) {
+    return { template_type: key.replace('candidate_', ''), imported: false }
+  }
+  return { template_type: key, imported: true }
+}
+
+const activeTab = ref('candidate_shared')
 const loading = ref(false)
 const videos = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const filterKeywordId = ref('')
+const filterStatus = ref('')
 const allKeywords = ref([])
 
 // 目录树面板折叠
@@ -496,7 +558,61 @@ function toggleTopic(id) {
 function toggleMk(id) {
   expandedMks[id] = !expandedMks[id]
 }
-const tabCounts = ref({ shared: 0, exclusive: 0 })
+const tabCounts = ref({ candidate_shared: 0, shared: 0, candidate_exclusive: 0, exclusive: 0 })
+
+// 多选状态
+const selectedIds = ref(new Set())
+
+const batchImporting = ref(false)
+const importingAll = ref(false)
+const pendingCount = ref(0)   // 全量AI审核按钮数量（仅 pending）
+const importableCount = ref(0) // 一键导入按钮数量（排除 ai_failed/import_failed/imported）
+
+// 当前 tab 是否是候选库（支持 AI 审核 + 导入操作）
+const isCandidateTab = computed(() => activeTab.value.startsWith('candidate_'))
+
+function toggleSelect(id) {
+  if (selectedIds.value.has(id)) {
+    selectedIds.value.delete(id)
+  } else {
+    selectedIds.value.add(id)
+  }
+  selectedIds.value = new Set(selectedIds.value) // trigger reactivity
+}
+
+function toggleSelectAll() {
+  if (selectedIds.value.size === videos.value.length) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(videos.value.map(v => v.id))
+  }
+}
+
+const allSelected = computed(() =>
+  videos.value.length > 0 && selectedIds.value.size === videos.value.length
+)
+
+// AI 状态筛选项
+const STATUS_FILTERS = [
+  { value: 'pending',       label: '待审核',   color: '#64748b', bg: '#f1f5f9' },
+  { value: 'ai_reviewing',  label: 'AI审核中',  color: '#2563eb', bg: '#eff6ff' },
+  { value: 'ai_failed',     label: 'AI拒绝',   color: '#dc2626', bg: '#fef2f2' },
+  { value: 'import_failed', label: '导入失败',  color: '#d97706', bg: '#fffbeb' },
+]
+
+// AI 状态徽章
+const STATUS_MAP = {
+  pending:       { label: '待审核',  color: '#64748b', bg: '#f1f5f9' },
+  ai_reviewing:  { label: 'AI审核中', color: '#2563eb', bg: '#eff6ff' },
+  ai_passed:     { label: 'AI通过',  color: '#16a34a', bg: '#f0fdf4' },
+  ai_failed:     { label: 'AI拒绝',  color: '#dc2626', bg: '#fef2f2' },
+  importing:     { label: '导入中',  color: '#7c3aed', bg: '#f5f3ff' },
+  imported:      { label: '已导入',  color: '#0891b2', bg: '#ecfeff' },
+  import_failed: { label: '导入失败', color: '#d97706', bg: '#fffbeb' },
+}
+function statusBadge(status) {
+  return STATUS_MAP[status] || STATUS_MAP.pending
+}
 const jumpPage = ref(1)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
@@ -551,7 +667,7 @@ const configForm = ref({
   candidate_publish_after_date: null,
   candidate_shared_top_n: 50,
   candidate_search_interval_minutes: 0,
-  candidate_ai_review_enabled: false,
+
   candidate_ai_review_model: 'gemini-3.1-pro-preview',
   candidate_ai_review_prompt: '',
 })
@@ -597,18 +713,22 @@ async function loadKeywords() {
 
 async function loadVideos() {
   loading.value = true
+  selectedIds.value = new Set()
   try {
+    const { template_type, imported } = parseTabKey(activeTab.value)
     const params = {
-      template_type: activeTab.value,
+      template_type,
+      imported,
       page: page.value,
       page_size: pageSize.value,
     }
     if (filterKeywordId.value) params.keyword_id = filterKeywordId.value
+    if (isCandidateTab.value && filterStatus.value) params.status = filterStatus.value
     const res = await fetchCandidateVideos(params)
     videos.value = res.items
     total.value = res.total
   } catch {
-    ElMessage.error('加载候选视频失败')
+    ElMessage.error('加载视频失败')
   } finally {
     loading.value = false
   }
@@ -616,12 +736,30 @@ async function loadVideos() {
 
 async function loadTabCounts() {
   try {
-    const [s, e] = await Promise.all([
-      fetchCandidateVideos({ template_type: 'shared', page: 1, page_size: 1 }),
-      fetchCandidateVideos({ template_type: 'exclusive', page: 1, page_size: 1 }),
+    const [cs, s, ce, e] = await Promise.all([
+      fetchCandidateVideos({ template_type: 'shared',    imported: false, page: 1, page_size: 1 }),
+      fetchCandidateVideos({ template_type: 'shared',    imported: true,  page: 1, page_size: 1 }),
+      fetchCandidateVideos({ template_type: 'exclusive', imported: false, page: 1, page_size: 1 }),
+      fetchCandidateVideos({ template_type: 'exclusive', imported: true,  page: 1, page_size: 1 }),
     ])
-    tabCounts.value = { shared: s.total, exclusive: e.total }
-  } catch { /* 静默 */ }
+    tabCounts.value = {
+      candidate_shared: cs.total,
+      shared: s.total,
+      candidate_exclusive: ce.total,
+      exclusive: e.total,
+    }
+  } catch (e) { console.error('loadTabCounts error', e) }
+
+  if (!isCandidateTab.value) return
+  try {
+    const { template_type } = parseTabKey(activeTab.value)
+    const [pending, importable] = await Promise.all([
+      fetchCandidateVideos({ template_type, imported: false, status: 'pending', page: 1, page_size: 1 }),
+      fetchCandidateVideos({ template_type, imported: false, page: 1, page_size: 1 }),
+    ])
+    pendingCount.value = pending.total
+    importableCount.value = importable.total
+  } catch (e) { console.error('loadButtonCounts error', e) }
 }
 
 async function loadConfig() {
@@ -692,6 +830,94 @@ async function handleDelete(video) {
     ElMessage.success('已删除')
     await Promise.all([loadVideos(), loadTabCounts()])
   } catch { /* cancelled */ }
+}
+
+async function handleBatchAIReview() {
+  if (selectedIds.value.size === 0) return
+  try {
+    const ids = Array.from(selectedIds.value)
+    await batchAIReview(ids)
+    ElMessage.success(`AI 审核已在后台启动，共 ${ids.length} 条视频，请稍后刷新查看结果`)
+    selectedIds.value = new Set()
+    // 立即刷新一次（状态会变为 ai_reviewing）
+    await loadVideos()
+  } catch {
+    ElMessage.error('启动 AI 审核失败，请稍后重试')
+  }
+}
+
+async function handleBatchImport() {
+  if (selectedIds.value.size === 0) return
+  batchImporting.value = true
+  try {
+    const ids = Array.from(selectedIds.value)
+    const res = await batchImportCandidates(ids)
+    ElMessage.success(`导入完成：成功 ${res.imported ?? 0} 个，失败 ${res.failed ?? 0} 个`)
+    selectedIds.value = new Set()
+    await Promise.all([loadVideos(), loadTabCounts()])
+  } catch {
+    ElMessage.error('导入失败，请稍后重试')
+  } finally {
+    batchImporting.value = false
+  }
+}
+
+async function handleImportAll() {
+  if (total.value === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定将当前候选库全部 ${total.value} 条视频（ai_passed 状态）导入到库？`,
+      '一键导入',
+      { confirmButtonText: '确认导入', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+
+  importingAll.value = true
+  try {
+    // 逐页收集所有 ai_passed 的 id（直接用 status 参数过滤，跳过 ai_failed）
+    const { template_type } = parseTabKey(activeTab.value)
+    let allIds = []
+    let p = 1
+    const PAGE = 100
+    while (true) {
+      const res = await fetchCandidateVideos({ template_type, imported: false, page: p, page_size: PAGE })
+      const skip = ['ai_failed', 'import_failed', 'imported']
+      allIds = allIds.concat(res.items.filter(v => !skip.includes(v.status)).map(v => v.id))
+      if (res.items.length < PAGE) break
+      p++
+    }
+    if (allIds.length === 0) {
+      ElMessage.warning('没有状态为 AI通过 的视频可以导入')
+      return
+    }
+    const res = await batchImportCandidates(allIds)
+    ElMessage.success(`一键导入完成：成功 ${res.imported ?? 0} 个，失败 ${res.failed ?? 0} 个`)
+    selectedIds.value = new Set()
+    await Promise.all([loadVideos(), loadTabCounts()])
+  } catch {
+    ElMessage.error('一键导入失败，请稍后重试')
+  } finally {
+    importingAll.value = false
+  }
+}
+
+async function handleBulkAIReviewAll() {
+  if (total.value === 0) return
+  const { template_type } = parseTabKey(activeTab.value)
+  try {
+    await ElMessageBox.confirm(
+      `确定将当前候选库全部 ${pendingCount.value} 条待审核视频加入AI审核队列？`,
+      '全量AI审核',
+      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch { return }
+
+  try {
+    const res = await bulkAIReviewAll(template_type)
+    ElMessage.success(res.message || '已加入AI审核队列，后台处理中')
+  } catch {
+    ElMessage.error('操作失败，请稍后重试')
+  }
 }
 
 // ── 定时抓取 ──────────────────────────────────────────────────────────────────
@@ -949,6 +1175,83 @@ function formatCount(n) {
 }
 .cl-card:hover .cl-card-del { opacity: 1; }
 .cl-card-del:hover { background: #fef2f2; color: #ef4444; }
+
+/* Card checkbox */
+.cl-card-checkbox {
+  position: absolute; top: 8px; left: 8px; z-index: 2; cursor: pointer;
+  width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .15s;
+}
+.cl-card:hover .cl-card-checkbox,
+.cl-card.selected .cl-card-checkbox { opacity: 1; }
+.cl-card-checkbox input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
+.cl-card.selected { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.2); }
+
+/* AI status badge */
+.cl-status-badge {
+  position: absolute; bottom: 8px; left: 8px; padding: 2px 7px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; pointer-events: none;
+}
+.cl-status-badge--error { pointer-events: auto; cursor: default; }
+.cl-error-tooltip {
+  display: none;
+  position: absolute; bottom: calc(100% + 6px); left: 0;
+  min-width: 180px; max-width: 260px;
+  background: #1e293b; color: #f1f5f9;
+  font-size: 10px; font-weight: 400; line-height: 1.4;
+  padding: 5px 8px; border-radius: 5px;
+  white-space: pre-wrap; word-break: break-all;
+  box-shadow: 0 4px 12px rgba(0,0,0,.25);
+  z-index: 10;
+}
+.cl-status-badge--error:hover .cl-error-tooltip { display: block; }
+
+/* Status filter chips */
+.cl-status-filter {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+}
+.cl-status-chip {
+  padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  border: 1px solid #e2e8f0; background: #fff; color: #64748b;
+  cursor: pointer; transition: all .15s;
+}
+.cl-status-chip:hover { border-color: #94a3b8; color: #334155; }
+.cl-status-chip.active { font-weight: 700; }
+
+/* Batch bar */
+.cl-batch-bar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 8px; min-height: 40px;
+}
+.cl-check-all {
+  display: flex; align-items: center; gap: 6px; font-size: 13px; color: #475569;
+  cursor: pointer; user-select: none;
+}
+.cl-check-all input { cursor: pointer; }
+.cl-selected-count { font-size: 13px; color: #6366f1; font-weight: 600; margin-left: 4px; }
+.cl-btn-ai { background: #4f46e5; color: #fff; }
+.cl-btn-ai:hover:not(:disabled) { background: #4338ca; }
+.cl-btn-ai:disabled { opacity: .5; cursor: not-allowed; }
+.cl-btn-import { background: #059669; color: #fff; }
+.cl-btn-import:hover:not(:disabled) { background: #047857; }
+.cl-btn-import:disabled { opacity: .5; cursor: not-allowed; }
+.cl-btn-deselect { background: #f1f5f9; color: #475569; }
+.cl-btn-deselect:hover { background: #e2e8f0; }
+.cl-batch-bar-spacer { flex: 1; }
+.cl-btn-review-all { background: #7c3aed; color: #fff; }
+.cl-btn-review-all:hover:not(:disabled) { background: #6d28d9; }
+.cl-btn-review-all:disabled { opacity: .5; cursor: not-allowed; }
+.cl-btn-import-all { background: #0f766e; color: #fff; }
+.cl-btn-import-all:hover:not(:disabled) { background: #0d9488; }
+.cl-btn-import-all:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Spinner */
+.btn-spin {
+  width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Footer */
 .cl-footer {

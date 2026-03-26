@@ -72,6 +72,9 @@ class CandidateVideoItem(BaseModel):
     play_count: int | None
     like_count: int | None
     video_source_id: str | None = None
+    status: str = "pending"
+    ai_reviewed: bool = False
+    ai_error: str | None = None
     created_at: datetime
 
 
@@ -117,3 +120,11 @@ class PipelineSettingsPayload(BaseModel):
     keyword_gen_prompt: str = ""
     keyword_gen_count: int = 50
     keyword_gen_temperature: float = 0.7
+
+
+class CandidateBatchAIReviewRequest(BaseModel):
+    ids: list[str]
+
+
+class CandidateBatchImportRequest(BaseModel):
+    ids: list[str]
