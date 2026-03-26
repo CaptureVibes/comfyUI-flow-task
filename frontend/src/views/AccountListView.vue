@@ -717,12 +717,21 @@ function formatDuration(seconds) {
 async function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
 
+  let templateLimit = 0
   try {
-    await ElMessageBox.confirm(
-      `将为全部 ${total.value} 个账号自动选择未用模板并创建生成任务，确定继续？`,
+    const { value } = await ElMessageBox.prompt(
+      `将为全部 ${total.value} 个账号自动选择未用模板并创建生成任务。\n请输入每个账号最多使用的模板数量（0 = 不限制）：`,
       '一键生成',
-      { confirmButtonText: '开始生成', cancelButtonText: '取消', type: 'warning' }
+      {
+        confirmButtonText: '开始生成',
+        cancelButtonText: '取消',
+        inputValue: '0',
+        inputPattern: /^\d+$/,
+        inputErrorMessage: '请输入非负整数',
+        type: 'warning',
+      }
     )
+    templateLimit = parseInt(value) || 0
   } catch { return }
 
   bulkVideoGenerating.value = true
@@ -776,7 +785,8 @@ async function handleBulkVideoGenerate() {
         accountsSkipped++
       }
 
-      for (const { tpl, accountId } of unusedItems) {
+      const itemsToUse = templateLimit > 0 ? unusedItems.slice(0, templateLimit) : unusedItems
+      for (const { tpl, accountId } of itemsToUse) {
         try {
           const duration = formatDuration(tpl.video_source?.duration)
           const shots = (tpl.extracted_shots || []).map(({ image_base64, ...rest }) => rest)
