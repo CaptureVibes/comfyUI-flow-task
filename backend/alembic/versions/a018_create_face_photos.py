@@ -38,10 +38,8 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_face_photos_tag_id", "face_photos", ["tag_id"])
-    op.create_index("ix_face_photos_owner_id", "face_photos", ["owner_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_face_photos_owner_id", table_name="face_photos")
     op.drop_index("ix_face_photos_tag_id", table_name="face_photos")
     op.drop_table("face_photos")
