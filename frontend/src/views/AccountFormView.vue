@@ -34,7 +34,30 @@
               <el-form-item label="账号名称" prop="account_name">
                 <el-input v-model="form.account_name" placeholder="请输入账号名称" clearable class="vtfd-beautiful-input" />
               </el-form-item>
-              
+
+              <el-form-item label="账号类型" prop="account_type">
+                <div class="ac-type-toggle">
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.account_type === 'persona' }"
+                    @click="form.account_type = 'persona'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                    人设号
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.account_type === 'traffic' }"
+                    @click="form.account_type = 'traffic'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    流量号
+                  </button>
+                </div>
+              </el-form-item>
+
               <el-form-item label="风格描述">
                 <el-input
                   v-model="form.style_description"
@@ -427,6 +450,7 @@ const channelPageState = reactive({
 
 const form = reactive({
   account_name: '',
+  account_type: 'traffic',
   style_description: '',
   model_appearance: '',
   avatar_url: '',
@@ -639,6 +663,7 @@ async function loadAccount() {
   try {
     const data = await fetchAccount(route.params.id)
     form.account_name = data.account_name || ''
+    form.account_type = data.account_type || 'traffic'
     form.style_description = data.style_description || ''
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
@@ -674,6 +699,7 @@ async function handleSave() {
       }))
       const payload = {
         account_name: form.account_name.trim(),
+        account_type: form.account_type,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
@@ -831,6 +857,7 @@ async function startAIGeneration() {
       aiStatusText.value = '正在创建账号...'
       const payload = {
         account_name: form.account_name.trim() || '新建账号（AI生成中）',
+        account_type: form.account_type,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
@@ -1580,5 +1607,46 @@ onUnmounted(() => {
   font-size: 13px;
   color: #94a3b8;
   font-weight: 500;
+}
+
+/* Account type toggle */
+.ac-type-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.ac-type-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  background: #fff;
+  color: #64748b;
+  transition: all .2s;
+}
+
+.ac-type-btn + .ac-type-btn {
+  border-left: 1px solid #e2e8f0;
+}
+
+.ac-type-btn:hover {
+  background: #f8fafc;
+}
+
+.ac-type-btn.active {
+  background: #6366f1;
+  color: #fff;
+}
+
+.ac-type-btn.active svg {
+  stroke: #fff;
 }
 </style>

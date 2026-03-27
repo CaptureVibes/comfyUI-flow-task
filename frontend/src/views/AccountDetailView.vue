@@ -38,7 +38,12 @@
         </div>
 
         <div class="ad-hero-info">
-          <div class="ad-hero-name">{{ account.account_name }}</div>
+          <div class="ad-hero-name">
+            {{ account.account_name }}
+            <span class="ad-type-badge" :class="`ad-type-${account.account_type || 'traffic'}`">
+              {{ account.account_type === 'persona' ? '人设号' : '流量号' }}
+            </span>
+          </div>
           <div v-if="account.style_description" class="ad-hero-style">{{ account.style_description }}</div>
           <div class="ad-hero-meta">
             <span class="ad-hero-stat"><strong>{{ tabCounts.published }}</strong> 已发布</span>
@@ -1281,7 +1286,7 @@ onUnmounted(() => {
 
 .ad-hero-info { flex: 1; }
 
-.ad-hero-name { font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 4px; }
+.ad-hero-name { font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 4px; display: flex; align-items: center; }
 .ad-hero-style { font-size: 13px; color: #64748b; margin-bottom: 10px; line-height: 1.5; }
 
 .ad-hero-meta { display: flex; gap: 20px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -1357,6 +1362,26 @@ onUnmounted(() => {
 .ad-platform-youtube  { background: #fef2f2; color: #dc2626; }
 .ad-platform-tiktok   { background: #f1f5f9; color: #0f172a; }
 .ad-platform-instagram { background: #fef3c7; color: #92400e; }
+
+.ad-type-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: .02em;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.ad-type-persona {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.ad-type-traffic {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
 .ad-tag-badge {
   display: inline-flex;
   align-items: center;

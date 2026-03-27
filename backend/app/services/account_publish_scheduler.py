@@ -242,7 +242,7 @@ async def _do_publish(account: Account) -> None:
     # 同一账号内按 queue_order 串行发布，保证顺序
     for sub in sub_tasks:
         try:
-            await _publish_sub_task(sub.id, channels, account.account_name, ai_config)
+            await _publish_sub_task(sub.id, channels, account.account_name, ai_config, account_type=account.account_type)
         except Exception:
             logger.exception(
                 "【定时发布】账号 %s（%s）发布子任务 %s 失败，继续下一个",
@@ -352,6 +352,8 @@ async def _publish_sub_task(
     channels: list[dict],
     account_name: str,
     ai_config: dict | None,
+    *,
+    account_type: str = "traffic",
 ) -> None:
     from app.services.video_publication_service import VideoPublicationService
     from app.schemas.video_publication import VideoPublicationCreate
@@ -376,10 +378,22 @@ async def _publish_sub_task(
         task = sub.task
         fallback_title = (task.prompt or "")[:100] or "视频"
 
+    original_video_url = sub.result_video_url
+
+    # ── 拼接 logo 视频（traffic / persona 各用不同 logo）────────────────────
+    try:
+        from app.services.video_logo_service import concat_video_with_logo
+        logger.info("【定时发布】子任务 %s（账号：%s, %s）开始拼接 logo", sub_task_id, account_name, account_type)
+        publish_video_url = await concat_video_with_logo(original_video_url, account_type=account_type)
+        logger.info("【定时发布】子任务 %s logo 拼接完成: %s", sub_task_id, publish_video_url[:100])
+    except Exception:
+        logger.exception("【定时发布】子任务 %s logo 拼接失败，使用原视频发布", sub_task_id)
+        publish_video_url = original_video_url
+
     # ── AI 生成 title/desc/hashtag（在 session 外执行，避免长时间持有连接）──
     if ai_config:
         title, description, hashtags = await _generate_publish_metadata(
-            video_url=sub.result_video_url,
+            video_url=original_video_url,
             ai_config=ai_config,
             fallback_title=fallback_title,
         )
@@ -402,7 +416,9 @@ async def _publish_sub_task(
         try:
             await service.create_publication(VideoPublicationCreate(
                 sub_task_id=sub.id,
-                video_url=sub.result_video_url,
+                video_url=publish_video_url,
+                original_video_url=original_video_url,
+                video_type=account_type,
                 title=title,
                 description=description or None,
                 tags=hashtags or None,

@@ -8,6 +8,8 @@ class VideoPublicationCreate(BaseModel):
     """创建发布任务请求"""
     sub_task_id: uuid.UUID
     video_url: str
+    original_video_url: str | None = None  # 拼接前的原始视频URL，为空时等于video_url
+    video_type: str | None = None  # "persona" | "traffic"
     title: str
     description: str | None = None
     tags: list[str] | None = None

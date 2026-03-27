@@ -274,7 +274,8 @@ class VideoPublicationService:
         callback_url = data.callback_url or settings.open_api_callback_url or None
         request_payload = {
             "video_url": data.video_url,
-            "original_video_url": data.video_url,
+            "original_video_url": data.original_video_url or data.video_url,
+            "video_type": data.video_type or "traffic",
             "title": data.title,
             "description": data.description,
             "tags": data.tags or [],

@@ -18,6 +18,7 @@ async def create_account(
     account = Account(
         owner_id=owner_id,
         account_name=payload.account_name,
+        account_type=payload.account_type,
         style_description=payload.style_description,
         model_appearance=payload.model_appearance,
         avatar_url=payload.avatar_url,
@@ -67,6 +68,8 @@ async def patch_account(
 ) -> Account:
     if payload.account_name is not None:
         account.account_name = payload.account_name
+    if payload.account_type is not None:
+        account.account_type = payload.account_type
     if payload.style_description is not None:
         account.style_description = payload.style_description
     if payload.model_appearance is not None:

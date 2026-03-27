@@ -283,6 +283,9 @@
         <div class="ac-body">
           <div class="ac-name-row">
             <div class="ac-name">{{ item.account_name }}</div>
+            <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'traffic'}`">
+              {{ item.account_type === 'persona' ? '人设号' : '流量号' }}
+            </span>
             <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
               {{ aiGenerationStatusLabel(item.ai_generation_status) }}
             </span>
@@ -1282,6 +1285,27 @@ onMounted(loadData)
 .ac-tag-youtube  { background: #fef2f2; color: #dc2626; }
 .ac-tag-tiktok   { background: #f1f5f9; color: #0f172a; }
 .ac-tag-instagram { background: #fef3c7; color: #92400e; }
+
+/* Account type badge */
+.ac-type-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: .02em;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.ac-type-persona {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.ac-type-traffic {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
 
 .ac-actions {
   display: flex;
