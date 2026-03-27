@@ -231,7 +231,7 @@ class VideoTaskService:
 
         normalized_shots = list(shots) if isinstance(shots, list) else []
         account = await self.db.get(Account, account_id)
-        account_photo_url = account.photo_url if account and account.photo_url else None
+        account_photo_url = (account.painting_url or account.photo_url) if account else None
         if account_photo_url:
             photo_shot = {
                 "image_url": account_photo_url,

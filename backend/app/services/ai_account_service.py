@@ -39,6 +39,7 @@ _RUNNING_STATUSES = {
     "video_analyzing",
     "name_generating",
     "photo_generating",
+    "painting_generating",
     "avatar_generating",
 }
 
@@ -47,6 +48,7 @@ _RESUMABLE_STAGES = {
     "video_analyzing",
     "name_generating",
     "photo_generating",
+    "painting_generating",
     "avatar_generating",
 }
 
@@ -96,6 +98,7 @@ def _new_state(account_id: str, status: str) -> dict[str, Any]:
         "selected_photo_candidate_id": None,
         "generated_avatar_url": "",
         "generated_photo_url": "",
+        "generated_painting_url": "",
         "completed_stages": [],
         "updated_at": _utcnow_iso(),
     }
@@ -186,6 +189,8 @@ async def _persist_states(account_ids: list[str]) -> None:
                 acc.avatar_url = state["generated_avatar_url"]
             if state.get("generated_photo_url"):
                 acc.photo_url = state["generated_photo_url"]
+            if state.get("generated_painting_url"):
+                acc.painting_url = state["generated_painting_url"]
         await session.commit()
 
 
@@ -751,6 +756,60 @@ async def _stage_photo_generation(
     await _save_state(account_id)
 
 
+async def _stage_painting_generation(
+    account_id: str,
+    selected_photo_url: str,
+    painting_prompt: str,
+    api_base_url: str,
+    api_key: str,
+    avatar_model: str,
+    avatar_size: str,
+    avatar_quality: str,
+) -> str:
+    """基于选中的照片候选生成彩绘图，结果写入 state['generated_painting_url']。"""
+    state = _ensure_state_shape(ai_account_states.get(account_id), account_id)
+    if "painting_generating" in state.get("completed_stages", []) and state.get("generated_painting_url"):
+        ai_account_states[account_id] = state
+        return state.get("generated_painting_url", "")
+
+    _set_status(account_id, "painting_generating")
+
+    prompt = painting_prompt or "请基于参考照片生成一张高质量彩绘风格人物图，保持人物面部特征一致。"
+
+    last_exc: Exception | None = None
+    result_url = ""
+    for attempt in range(1, 4):
+        try:
+            task_id = await _submit_nano2_avatar_job(
+                api_base_url=api_base_url,
+                api_key=api_key,
+                prompt=prompt,
+                model=avatar_model,
+                size=avatar_size,
+                quality=avatar_quality,
+                image_urls=[selected_photo_url],
+            )
+            result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("[%s] painting_generating attempt %d/3 failed: %s", account_id, attempt, exc)
+            if not _should_retry_image_submit(exc):
+                break
+
+    if last_exc is not None:
+        raise last_exc
+
+    cdn_url = await _upload_remote_image_to_cdn(result_url, "painting.png")
+    state = ai_account_states[account_id]
+    state["generated_painting_url"] = cdn_url
+    _mark_stage_completed(state, "painting_generating")
+    ai_account_states[account_id] = state
+    await _save_state(account_id)
+    return cdn_url
+
+
 async def _stage_avatar_generation(
     account_id: str,
     combined_description: str,
@@ -849,6 +908,7 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                     name_prompt = pipeline_cfg.ai_account_name_prompt or ""
                     avatar_prompt = pipeline_cfg.ai_account_avatar_prompt or ""
                     photo_image_prompt = pipeline_cfg.ai_account_photo_image_prompt or ""
+                    painting_prompt = pipeline_cfg.ai_account_painting_prompt or ""
                     name_model = pipeline_cfg.ai_account_name_model or "gemini-3.1-pro-preview"
                     avatar_model = pipeline_cfg.ai_account_avatar_model or "gemini-3.1-flash-image-preview"
                     avatar_size = pipeline_cfg.ai_account_avatar_size or "1:1"
@@ -860,6 +920,7 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                     name_prompt = ""
                     avatar_prompt = ""
                     photo_image_prompt = ""
+                    painting_prompt = ""
                     name_model = "gemini-3.1-pro-preview"
                     avatar_model = "gemini-3.1-flash-image-preview"
                     avatar_size = "1:1"
@@ -950,10 +1011,21 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
             if not selected_photo_url:
                 raise ValueError("已选择的照片候选不存在，无法继续生成头像")
 
+            painting_url = await _stage_painting_generation(
+                account_id=account_id,
+                selected_photo_url=selected_photo_url,
+                painting_prompt=painting_prompt,
+                api_base_url=api_base_url,
+                api_key=api_key,
+                avatar_model=avatar_model,
+                avatar_size=avatar_size,
+                avatar_quality=avatar_quality,
+            )
+
             await _stage_avatar_generation(
                 account_id=account_id,
                 combined_description=combined_description,
-                reference_photo_url=selected_photo_url,
+                reference_photo_url=painting_url or selected_photo_url,
                 api_base_url=api_base_url,
                 api_key=api_key,
                 avatar_model=avatar_model,
@@ -1018,6 +1090,7 @@ async def enqueue_ai_account_generation(account_id: str, tag_ids: list[str]) -> 
     state["selected_photo_candidate_id"] = None
     state["generated_avatar_url"] = ""
     state["generated_photo_url"] = ""
+    state["generated_painting_url"] = ""
     state["completed_stages"] = []
     state["updated_at"] = _utcnow_iso()
     ai_account_states[account_id] = state
@@ -1074,6 +1147,7 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         state["photo_candidates"] = []
         state["selected_photo_candidate_id"] = None
         state["generated_photo_url"] = ""
+        state["generated_painting_url"] = ""
         state["generated_avatar_url"] = ""
         state["completed_stages"] = []
         clear_flags["photo"] = True
@@ -1084,6 +1158,7 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         state["photo_candidates"] = []
         state["selected_photo_candidate_id"] = None
         state["generated_photo_url"] = ""
+        state["generated_painting_url"] = ""
         state["generated_avatar_url"] = ""
         state["completed_stages"] = [stage for stage in state.get("completed_stages", []) if stage == "video_analyzing"]
         clear_flags["photo"] = True
@@ -1093,6 +1168,7 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         state["photo_candidates"] = []
         state["selected_photo_candidate_id"] = None
         state["generated_photo_url"] = ""
+        state["generated_painting_url"] = ""
         state["generated_avatar_url"] = ""
         state["completed_stages"] = [
             stage for stage in state.get("completed_stages", [])
@@ -1100,11 +1176,19 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         ]
         clear_flags["photo"] = True
         clear_flags["avatar"] = True
-    elif from_stage == "avatar_generating":
+    elif from_stage == "painting_generating":
+        state["generated_painting_url"] = ""
         state["generated_avatar_url"] = ""
         state["completed_stages"] = [
             stage for stage in state.get("completed_stages", [])
             if stage in {"video_analyzing", "name_generating", "photo_generating"}
+        ]
+        clear_flags["avatar"] = True
+    elif from_stage == "avatar_generating":
+        state["generated_avatar_url"] = ""
+        state["completed_stages"] = [
+            stage for stage in state.get("completed_stages", [])
+            if stage in {"video_analyzing", "name_generating", "photo_generating", "painting_generating"}
         ]
         clear_flags["avatar"] = True
 

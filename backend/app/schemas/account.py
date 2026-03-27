@@ -85,7 +85,7 @@ class SelectPhotoCandidateBody(BaseModel):
     candidate_id: str
 
 
-AIResumeStage = Literal["current", "video_analyzing", "name_generating", "photo_generating", "avatar_generating"]
+AIResumeStage = Literal["current", "video_analyzing", "name_generating", "photo_generating", "painting_generating", "avatar_generating"]
 
 
 class ResumeAIGenerationBody(BaseModel):
@@ -119,6 +119,7 @@ class AIGenerateStatusResponse(BaseModel):
     generated_name: str = ""
     generated_avatar_url: str = ""
     generated_photo_url: str = ""
+    generated_painting_url: str = ""
     photo_candidate_count: int = 0
     photo_candidates: list[AIGenerationPhotoCandidate] = Field(default_factory=list)
     selected_photo_candidate_id: str | None = None
@@ -164,6 +165,7 @@ class AccountRead(BaseModel):
     model_appearance: str | None
     avatar_url: str | None
     photo_url: str | None = None
+    painting_url: str | None = None
     social_bindings: list | None
     tiktok_bloggers: list[BoundBloggerRead] = []
     bound_tags: list[BoundTagRead] = []

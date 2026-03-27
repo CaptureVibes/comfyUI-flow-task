@@ -88,6 +88,7 @@ def _ai_generation_response(account_id: uuid.UUID, state: dict, account) -> AIGe
         generated_name=state.get("generated_name", ""),
         generated_avatar_url=state.get("generated_avatar_url", account.avatar_url or ""),
         generated_photo_url=state.get("generated_photo_url", account.photo_url or ""),
+        generated_painting_url=state.get("generated_painting_url", account.painting_url or ""),
         photo_candidate_count=state.get("photo_candidate_count", 0),
         photo_candidates=state.get("photo_candidates", []) or [],
         selected_photo_candidate_id=state.get("selected_photo_candidate_id"),

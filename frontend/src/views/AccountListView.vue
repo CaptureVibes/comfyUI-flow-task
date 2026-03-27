@@ -104,6 +104,17 @@
           </el-form-item>
         </div>
 
+        <!-- 阶段三·五：彩绘图生成 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">阶段三·五：彩绘图生成</span>
+            <span class="ai-cfg-desc">基于选中的照片候选，用 Nano2 生成彩绘风格图，作为视频第一帧参考图</span>
+          </div>
+          <el-form-item label="彩绘图提示词">
+            <el-input v-model="aiSettingsForm.ai_account_painting_prompt" type="textarea" :rows="3" placeholder="请输入彩绘图生成提示词，留空则使用默认提示词..." />
+          </el-form-item>
+        </div>
+
         <!-- 阶段四：头像生成 -->
         <div class="ai-cfg-section">
           <div class="ai-cfg-section-header">
@@ -159,6 +170,7 @@
             <el-option label="从视频理解开始" value="video_analyzing" />
             <el-option label="从名称生成开始" value="name_generating" />
             <el-option label="从照片生成开始" value="photo_generating" />
+            <el-option label="从彩绘图生成开始" value="painting_generating" />
             <el-option label="从头像生成开始" value="avatar_generating" />
           </el-select>
         </el-form-item>
@@ -166,8 +178,11 @@
           <template v-if="bulkResumeStage === 'photo_generating'">
             会清空已有照片候选、已选照片和头像，并重新生成照片与头像。
           </template>
+          <template v-else-if="bulkResumeStage === 'painting_generating'">
+            会保留照片候选和已选照片，重新生成彩绘图和头像。
+          </template>
           <template v-else-if="bulkResumeStage === 'avatar_generating'">
-            会保留当前照片结果，只重新生成头像。
+            会保留彩绘图结果，只重新生成头像。
           </template>
           <template v-else-if="bulkResumeStage === 'name_generating'">
             会保留视频理解结果，重新生成名称、照片和头像。
@@ -482,6 +497,7 @@ const aiSettingsForm = ref({
   ai_account_avatar_size: '1:1',
   ai_account_avatar_quality: '1K',
   ai_account_photo_image_prompt: '',
+  ai_account_painting_prompt: '',
 })
 
 async function openAISettings() {
@@ -500,6 +516,7 @@ async function openAISettings() {
     aiSettingsForm.value.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'
     aiSettingsForm.value.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
     aiSettingsForm.value.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
+    aiSettingsForm.value.ai_account_painting_prompt = data.ai_account_painting_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -524,6 +541,7 @@ async function saveAISettings() {
       ai_account_avatar_size: aiSettingsForm.value.ai_account_avatar_size,
       ai_account_avatar_quality: aiSettingsForm.value.ai_account_avatar_quality,
       ai_account_photo_image_prompt: aiSettingsForm.value.ai_account_photo_image_prompt,
+      ai_account_painting_prompt: aiSettingsForm.value.ai_account_painting_prompt,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')
