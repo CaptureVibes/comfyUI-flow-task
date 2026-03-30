@@ -78,6 +78,16 @@
           一键继续AI打分
         </button>
         <button
+          class="vt-btn vt-btn-secondary"
+          :class="{ 'is-loading': batchReanalyzing }"
+          :disabled="batchReanalyzing"
+          @click="handleBatchReanalyze"
+        >
+          <svg v-if="!batchReanalyzing" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          一键重新分析
+        </button>
+        <button
           class="vt-btn vt-btn-primary"
           :class="{ 'is-loading': uploading }"
           :disabled="uploading"
@@ -358,8 +368,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, resumeVideoTaskScoring } from '../api/video_tasks.js'
+import { batchReanalyzeTemplates } from '../api/video_ai_templates.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -405,6 +416,7 @@ const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
 const continuingScoring = ref(false)
+const batchReanalyzing = ref(false)
 const taskStats = ref({})
 
 // Blogger searchable dropdown state
@@ -595,6 +607,26 @@ async function handleResumeScoring() {
     ElMessage.error(e?.response?.data?.detail || '继续 AI 打分失败')
   } finally {
     continuingScoring.value = false
+  }
+}
+
+async function handleBatchReanalyze() {
+  if (!targetDate.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定对 ${targetDate.value} 当天所有任务关联的模板重新执行AI视频分析？将覆盖现有分析内容。`,
+      '一键重新分析',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  batchReanalyzing.value = true
+  try {
+    await batchReanalyzeTemplates(targetDate.value)
+    ElMessage.success('已触发当天模板的重新分析，后台处理中')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '触发批量重新分析失败')
+  } finally {
+    batchReanalyzing.value = false
   }
 }
 

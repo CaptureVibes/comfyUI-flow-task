@@ -72,8 +72,9 @@ export async function reanalyzeVideoAITemplate(id) {
   return data
 }
 
-export async function batchReanalyzeTemplates() {
-  const { data } = await http.post('/video-ai-templates/batch-reanalyze')
+export async function batchReanalyzeTemplates(targetDate) {
+  const body = targetDate ? { target_date: targetDate } : {}
+  const { data } = await http.post('/video-ai-templates/batch-reanalyze', body)
   return data
 }
 

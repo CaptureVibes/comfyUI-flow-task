@@ -109,6 +109,7 @@ async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITempla
 async def create_template(
     payload: VideoAITemplateCreate,
     creator_id: uuid.UUID = Depends(_get_creator_id),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoAITemplateRead:
     from datetime import datetime, timezone
@@ -123,7 +124,7 @@ async def create_template(
             tiktok_blogger_id = getattr(vs, "tiktok_blogger_id", None)
 
     tpl = VideoAITemplate(
-        owner_id=creator_id,
+        owner_id=owner_id if owner_id is not None else creator_id,
         title=payload.title,
         description=payload.description,
         video_source_id=payload.video_source_id,
@@ -308,7 +309,7 @@ async def _do_batch_create_and_start(creator_id: uuid.UUID, owner_id: uuid.UUID 
                     continue
                 vs = vs_map[vsid]
                 tpl = VideoAITemplate(
-                    owner_id=creator_id,
+                    owner_id=owner_id if owner_id is not None else creator_id,
                     title=vs.video_title or vs.blogger_name or "新模板",
                     description="",
                     video_source_id=vsid,
@@ -366,13 +367,34 @@ async def batch_create_and_start(
     return {"status": "accepted"}
 
 
+class BatchReanalyzeBody(BaseModel):
+    target_date: str | None = None  # YYYY-MM-DD，有则只分析当天任务关联的模板
+
+
 @router.post("/batch-reanalyze", status_code=status.HTTP_202_ACCEPTED)
 async def batch_reanalyze(
+    body: BatchReanalyzeBody = BatchReanalyzeBody(),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """批量重新分析所有 success 模板的视频理解内容，后台异步执行。"""
+    """批量重新分析视频理解内容，后台异步执行。
+    传入 target_date 则只分析当天任务关联的模板；否则分析该 owner 所有 success 模板。"""
+    template_ids: list[str] | None = None
+    if body.target_date:
+        from datetime import date as _date
+        from app.core.security import TokenData
+        parsed_date = _date.fromisoformat(body.target_date)
+        stmt = select(VideoTask.template_id).where(
+            VideoTask.target_date == parsed_date,
+            VideoTask.template_id.is_not(None),
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+        rows = (await session.execute(stmt)).scalars().all()
+        template_ids = list({str(tid) for tid in rows})
     asyncio.create_task(batch_reanalyze_templates(
         owner_id=str(owner_id) if owner_id else None,
+        template_ids=template_ids,
     ))
     return {"status": "accepted"}
 

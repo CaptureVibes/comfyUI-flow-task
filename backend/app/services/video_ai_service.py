@@ -1182,10 +1182,15 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     logger.info("[%s] reanalyze completed, prompt_description=%d chars", template_id, len(prompt_description))
 
 
-async def batch_reanalyze_templates(owner_id: str | None = None, concurrency: int = 5) -> dict:
+async def batch_reanalyze_templates(
+    owner_id: str | None = None,
+    concurrency: int = 5,
+    template_ids: list[str] | None = None,
+) -> dict:
     """
     后台批量重新分析所有 success 状态的模板。
     使用 Semaphore 控制并发，每个模板内部自带重试。
+    如果传入 template_ids，则只分析指定的模板（仍过滤 success 状态）。
 
     Returns:
         {"total": N, "success": N, "fail": N, "errors": {template_id: error_msg}}
@@ -1193,13 +1198,15 @@ async def batch_reanalyze_templates(owner_id: str | None = None, concurrency: in
     from sqlalchemy import select as sa_select
     from uuid import UUID
 
-    # 1. 查询所有 success 模板
+    # 1. 查询目标模板
     async with SessionLocal() as session:
         stmt = sa_select(VideoAITemplate.id).where(
             VideoAITemplate.process_status == VideoAIProcessStatus.success
         )
         if owner_id is not None:
             stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
+        if template_ids is not None:
+            stmt = stmt.where(VideoAITemplate.id.in_([UUID(tid) for tid in template_ids]))
         rows = (await session.execute(stmt)).scalars().all()
 
     template_ids = [str(tid) for tid in rows]
