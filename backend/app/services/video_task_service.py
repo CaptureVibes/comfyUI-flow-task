@@ -253,6 +253,11 @@ class VideoTaskService:
         self.db.add(task)
         await self.db.flush()  # get task.id before creating sub-tasks
 
+        # 标记模板为已使用
+        tpl = await self.db.get(VideoAITemplate, template_id)
+        if tpl and not tpl.is_used:
+            tpl.is_used = True
+
         for i in range(1, 4):
             sub = VideoSubTask(
                 task_id=task.id,
