@@ -271,13 +271,12 @@ async def _ai_review_single(
     retry_delay: float = 5.0,
 ) -> bool:
     """
-    调用 EvoLink Gemini API 审核单条视频。
+    调用 Gemini API 审核单条视频（自动选择 Google 官方或 EvoLink）。
     返回 True 表示通过，False 表示不通过。
-    遇到限流或网络错误时无限重试。
+    遇到网络错误时无限重试。
     """
     import json as _json
-
-    url = f"{api_base_url.rstrip('/')}/v1beta/models/{model}:generateContent"
+    from app.services.ai_api import call_gemini_api
 
     json_instructions = (
         "\n\n请必须以JSON格式输出审核结果，只需包含一个字段：\n"
@@ -290,35 +289,16 @@ async def _ai_review_single(
     # 下载视频并上传到 CDN，获取可供 Gemini 访问的 URL
     cdn_url = await _download_and_upload_video(video_url)
 
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"fileData": {"mimeType": "video/mp4", "fileUri": cdn_url}},
-                    {"text": final_prompt},
-                ],
-            }
-        ]
-    }
-
     while True:
         try:
-            logger.info("【候选库AI审核】请求 URL: %s", url)
-            logger.info("【候选库AI审核】请求 payload: %s", _json.dumps(payload, ensure_ascii=False)[:1000])
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
-                    url, json=payload,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                if resp.status_code == 429:
-                    logger.warning("【候选库AI审核】被限流(429)，%.0fs后重试", retry_delay)
-                    await asyncio.sleep(retry_delay)
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            logger.info("【候选库AI审核】model=%s video=%s", model, cdn_url[:80])
+            text = await call_gemini_api(
+                api_key=api_key,
+                api_base_url=api_base_url,
+                model_name=model,
+                video_url=cdn_url,
+                prompt=final_prompt,
+            )
             logger.info("【候选库AI审核】原始响应: %s", text[:200])
 
             # 解析 JSON

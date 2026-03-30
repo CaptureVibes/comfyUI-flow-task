@@ -12,7 +12,7 @@ from uuid import UUID
 
 import httpx
 
-from app.services.evolink_api import call_evolink_gemini_api
+from app.services.ai_api import call_gemini_api
 from app.db.session import SessionLocal
 from app.models.enums import VideoAIProcessStatus
 from app.models.video_ai_template import VideoAITemplate
@@ -355,9 +355,14 @@ async def _run_imagegen_stage(
     quality: str,
 ) -> list[dict]:
     """
-    第二阶段完整流程：抽帧 → 上传 CDN → 将所有帧一口气提交给 Nano2 生成一张图 → 轮询结果。
+    第二阶段完整流程：抽帧 → 上传 CDN → 调用图片生成 API → 上传结果到 CDN。
     返回 extracted_shots 列表，每项格式：{"image_url": str, "description": ""}
+
+    Google SDK：直接返回图片 bytes，无需轮询。
+    EvoLink 兜底：提交 Nano2 job，轮询结果。
     """
+    from app.services.ai_api import generate_image
+
     # 1. 抽帧
     frame_data_urls = await _extract_frames(video_url, template_id)
     if not frame_data_urls:
@@ -378,36 +383,28 @@ async def _run_imagegen_stage(
 
     if not frame_cdn_urls:
         raise ValueError("所有帧上传 CDN 失败")
-    logger.info("[%s] %d frames uploaded to CDN, submitting single Nano2 job", template_id, len(frame_cdn_urls))
+    logger.info("[%s] %d frames uploaded to CDN, calling image gen API", template_id, len(frame_cdn_urls))
 
-    # 3. 将所有帧一口气提交给 Nano2，生成一张图
-    task_id = await _submit_nano2_job(
-        api_base_url=api_base_url,
-        api_key=api_key,
-        image_urls=frame_cdn_urls,
+    # 3. 生成图片（自动选择 Google SDK 或 EvoLink）
+    img_bytes = await generate_image(
+        model_name=model,
         prompt=prompt,
-        model=model,
+        image_urls=frame_cdn_urls,
+        aspect_ratio=size,
+        image_size=quality,
+        api_key=api_key,
+        api_base_url=api_base_url,
         size=size,
         quality=quality,
     )
-    logger.info("[%s] Nano2 task submitted: %s, polling…", template_id, task_id)
+    logger.info("[%s] Image gen returned %d bytes, uploading to CDN", template_id, len(img_bytes))
 
-    # 4. 轮询结果
-    result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
-
-    # 5. 下载 Nano2 结果图并上传到我们的 CDN（upload_image 内部自动重试 3 次）
+    # 4. 上传结果图到我们的 CDN
     from app.services.upload_service import UpstreamImageUploadService
-    cdn_url = result_url
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            dl = await client.get(result_url)
-            dl.raise_for_status()
-        svc = UpstreamImageUploadService()
-        upload_result = await svc.upload_image(dl.content, "image/png", "imagegen_result.png")
-        cdn_url = upload_result.url
-        logger.info("[%s] Imagegen result uploaded to CDN: %s", template_id, cdn_url[:80])
-    except Exception as exc:
-        logger.warning("[%s] Failed to re-upload imagegen result to CDN, using original URL: %s", template_id, exc)
+    svc = UpstreamImageUploadService()
+    upload_result = await svc.upload_image(img_bytes, "image/png", "imagegen_result.png")
+    cdn_url = upload_result.url
+    logger.info("[%s] Imagegen result uploaded to CDN: %s", template_id, cdn_url[:80])
 
     shots = [{"image_url": cdn_url, "description": ""}]
     logger.info("[%s] Imagegen stage done: 1 shot generated", template_id)
@@ -770,9 +767,9 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 _set_status(template_id, VideoAIProcessStatus.understanding)
                 logger.info("[%s] understanding started", template_id)
 
-                prompt_description = await call_evolink_gemini_api(
-                    api_base_url=api_base_url,
+                prompt_description = await call_gemini_api(
                     api_key=api_key,
+                    api_base_url=api_base_url,
                     model_name=understand_model,
                     video_url=video_url,
                     prompt=understand_prompt,
@@ -1110,7 +1107,7 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     from uuid import UUID
     from app.services.system_settings_service import get_or_create_system_settings
     from app.services.pipeline_settings_service import get_or_create_pipeline_settings
-    from app.services.evolink_api import call_evolink_gemini_api
+    from app.services.ai_api import call_gemini_api
     from app.models.video_source import VideoSource
 
     uuid_val = UUID(template_id)
@@ -1150,9 +1147,9 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     last_exc: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            prompt_description = await call_evolink_gemini_api(
-                api_base_url=api_base_url,
+            prompt_description = await call_gemini_api(
                 api_key=api_key,
+                api_base_url=api_base_url,
                 model_name=understand_model,
                 video_url=video_url,
                 prompt=understand_prompt,

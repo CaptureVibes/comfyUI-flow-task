@@ -15,7 +15,7 @@ from app.db.session import SessionLocal
 from app.models.pipeline_setting import PipelineSetting
 from app.models.system_setting import SystemSetting
 from app.models.topic import Keyword, MotherKeyword, Topic
-from app.services.evolink_api import call_evolink_gemini_api
+from app.services.ai_api import call_gemini_api
 
 logger = logging.getLogger("app.topics")
 
@@ -278,9 +278,9 @@ async def _generate_one(mk_id: uuid.UUID, owner_id: uuid.UUID) -> None:
                 prompt = prompt.replace("{count}", str(config["keyword_count"]))
                 prompt += _JSON_SUFFIX
 
-                text = await call_evolink_gemini_api(
-                    api_base_url=config["api_base_url"],
+                text = await call_gemini_api(
                     api_key=config["api_key"],
+                    api_base_url=config["api_base_url"],
                     model_name=config["model_name"],
                     prompt=prompt,
                     temperature=config["temperature"],

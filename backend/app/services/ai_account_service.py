@@ -75,6 +75,14 @@ async def _upload_remote_image_to_cdn(image_url: str, filename: str) -> str:
     return upload_result.url
 
 
+async def _upload_image_bytes_to_cdn(img_bytes: bytes, filename: str) -> str:
+    """Upload raw image bytes directly to our CDN, returning the CDN URL."""
+    from app.services.upload_service import UpstreamImageUploadService
+    svc = UpstreamImageUploadService()
+    upload_result = await svc.upload_image(img_bytes, "image/png", filename)
+    return upload_result.url
+
+
 # =============================================================================
 # 状态管理
 # =============================================================================
@@ -303,26 +311,14 @@ async def _call_evolink_text(
     prompt: str,
     temperature: float = 0.7,
 ) -> str:
-    url = f"{api_base_url.rstrip('/')}/v1beta/models/{model_name}:generateContent"
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": temperature},
-    }
-    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-    logger.info("EvoLink text API: model=%s, api_key=%s, prompt_len=%d", model_name, masked_key, len(prompt))
-
-    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-        resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
-        if not resp.is_success:
-            logger.error("EvoLink text API error: status=%d, body=%s", resp.status_code, resp.text[:1000])
-            raise ValueError(f"EvoLink text API HTTP {resp.status_code}: {resp.text[:500]}")
-        data = resp.json()
-
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return text.strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError(f"Unexpected EvoLink response format: {data}") from exc
+    from app.services.ai_api import call_gemini_api
+    return await call_gemini_api(
+        api_key=api_key,
+        api_base_url=api_base_url,
+        model_name=model_name,
+        prompt=prompt,
+        temperature=temperature,
+    )
 
 
 async def _call_evolink_video(
@@ -334,33 +330,15 @@ async def _call_evolink_video(
     prompt: str,
     temperature: float = 0.3,
 ) -> str:
-    url = f"{api_base_url.rstrip('/')}/v1beta/models/{model_name}:generateContent"
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"fileData": {"mimeType": "video/mp4", "fileUri": video_url}},
-                    {"text": prompt},
-                ],
-            }
-        ],
-        "generationConfig": {"temperature": temperature},
-    }
-    logger.info("EvoLink video API: model=%s, video_url=%s", model_name, video_url)
-
-    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-        resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
-        if not resp.is_success:
-            logger.error("EvoLink video API error: status=%d, body=%s", resp.status_code, resp.text[:1000])
-            raise ValueError(f"EvoLink video API HTTP {resp.status_code}: {resp.text[:500]}")
-        data = resp.json()
-
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return text.strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError(f"Unexpected EvoLink response format: {data}") from exc
+    from app.services.ai_api import call_gemini_api
+    return await call_gemini_api(
+        api_key=api_key,
+        api_base_url=api_base_url,
+        model_name=model_name,
+        video_url=video_url,
+        prompt=prompt,
+        temperature=temperature,
+    )
 
 
 # =============================================================================
@@ -368,7 +346,7 @@ async def _call_evolink_video(
 # =============================================================================
 
 
-async def _submit_nano2_avatar_job(
+async def _generate_avatar_image(
     *,
     api_base_url: str,
     api_key: str,
@@ -377,53 +355,23 @@ async def _submit_nano2_avatar_job(
     size: str,
     quality: str,
     image_urls: list[str] | None = None,
-) -> str:
-    url = f"{api_base_url.rstrip('/')}/v1/images/generations"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "size": size,
-        "quality": quality,
-    }
-    if image_urls:
-        payload["image_urls"] = image_urls
-    async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
-        resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
-        if not resp.is_success:
-            logger.error("Nano2 image submit error: status=%d, body=%s", resp.status_code, resp.text)
-        resp.raise_for_status()
-        data = resp.json()
-    task_id = data.get("id")
-    if not task_id:
-        raise ValueError(f"Nano2 image response missing task id: {data}")
-    logger.info("Nano2 image task submitted: task_id=%s", task_id)
-    return task_id
-
-
-async def _poll_nano2_task(
-    *,
-    api_base_url: str,
-    api_key: str,
-    task_id: str,
-) -> str:
-    url = f"{api_base_url.rstrip('/')}/v1/tasks/{task_id}"
-    deadline = asyncio.get_event_loop().time() + _IMAGEGEN_POLL_TIMEOUT
-    while True:
-        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
-            resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
-            resp.raise_for_status()
-            data = resp.json()
-        task_status = data.get("status")
-        if task_status == "completed":
-            results = data.get("results", [])
-            if not results:
-                raise ValueError(f"Nano2 task {task_id} completed but no results")
-            return results[0]
-        if task_status == "failed":
-            raise ValueError(f"Nano2 task {task_id} failed")
-        if asyncio.get_event_loop().time() >= deadline:
-            raise TimeoutError(f"Nano2 task {task_id} timed out after {_IMAGEGEN_POLL_TIMEOUT}s")
-        await asyncio.sleep(_IMAGEGEN_POLL_INTERVAL)
+) -> bytes:
+    """
+    生成头像图片，返回图片 bytes。
+    Google SDK：直接返回，无需轮询。EvoLink：提交 Nano2 job 并轮询。
+    """
+    from app.services.ai_api import generate_image
+    return await generate_image(
+        model_name=model,
+        prompt=prompt,
+        image_urls=image_urls or [],
+        aspect_ratio=size,
+        image_size=quality,
+        api_key=api_key,
+        api_base_url=api_base_url,
+        size=size,
+        quality=quality,
+    )
 
 
 # =============================================================================
@@ -583,10 +531,11 @@ async def _run_photo_candidate(
 
     limited_description = _limit_image_prompt_context(description)
     image_prompt = f"{photo_image_prompt}\n\n人物描述：{limited_description}" if photo_image_prompt else limited_description
-    result_url = ""
+    img_bytes: bytes = b""
+    last_exc: Exception | None = None
     for attempt in range(1, 4):
         try:
-            task_id = await _submit_nano2_avatar_job(
+            img_bytes = await _generate_avatar_image(
                 api_base_url=api_base_url,
                 api_key=api_key,
                 prompt=image_prompt,
@@ -594,12 +543,11 @@ async def _run_photo_candidate(
                 size=avatar_size,
                 quality=avatar_quality,
             )
-            result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
             last_exc = None
             break
         except Exception as exc:
             last_exc = exc
-            logger.warning("[%s] photo candidate Nano2 attempt %d/3 failed: %s", account_id, attempt, exc)
+            logger.warning("[%s] photo candidate image gen attempt %d/3 failed: %s", account_id, attempt, exc)
             if not _should_retry_image_submit(exc):
                 break
 
@@ -612,7 +560,7 @@ async def _run_photo_candidate(
         await _save_state(account_id)
         return
 
-    cdn_url = await _upload_remote_image_to_cdn(result_url, f"photo_candidate_{candidate_index + 1}.png")
+    cdn_url = await _upload_image_bytes_to_cdn(img_bytes, f"photo_candidate_{candidate_index + 1}.png")
     candidate["generated_photo_url"] = cdn_url
     candidate["status"] = "completed"
     candidate["finished_at"] = _utcnow_iso()
@@ -704,10 +652,10 @@ async def _stage_photo_generation(
 
         image_prompt = photo_image_prompt or "请基于提供的人脸参考照片生成一张高质量写实人物照片。"
         last_exc: Exception | None = None
-        result_url = ""
+        img_bytes: bytes = b""
         for attempt in range(1, 4):
             try:
-                task_id = await _submit_nano2_avatar_job(
+                img_bytes = await _generate_avatar_image(
                     api_base_url=api_base_url,
                     api_key=api_key,
                     prompt=image_prompt,
@@ -716,7 +664,6 @@ async def _stage_photo_generation(
                     quality=avatar_quality,
                     image_urls=face_image_urls,
                 )
-                result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
                 last_exc = None
                 break
             except Exception as exc:
@@ -735,7 +682,7 @@ async def _stage_photo_generation(
             await _save_state(account_id)
             return
 
-        cdn_url = await _upload_remote_image_to_cdn(result_url, f"photo_candidate_{candidate_index + 1}.png")
+        cdn_url = await _upload_image_bytes_to_cdn(img_bytes, f"photo_candidate_{candidate_index + 1}.png")
         candidate["generated_photo_url"] = cdn_url
         candidate["status"] = "completed"
         candidate["finished_at"] = _utcnow_iso()
@@ -777,10 +724,10 @@ async def _stage_painting_generation(
     prompt = painting_prompt or "请基于参考照片生成一张高质量彩绘风格人物图，保持人物面部特征一致。"
 
     last_exc: Exception | None = None
-    result_url = ""
+    img_bytes: bytes = b""
     for attempt in range(1, 4):
         try:
-            task_id = await _submit_nano2_avatar_job(
+            img_bytes = await _generate_avatar_image(
                 api_base_url=api_base_url,
                 api_key=api_key,
                 prompt=prompt,
@@ -789,7 +736,6 @@ async def _stage_painting_generation(
                 quality=avatar_quality,
                 image_urls=[selected_photo_url],
             )
-            result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
             last_exc = None
             break
         except Exception as exc:
@@ -801,7 +747,7 @@ async def _stage_painting_generation(
     if last_exc is not None:
         raise last_exc
 
-    cdn_url = await _upload_remote_image_to_cdn(result_url, "painting.png")
+    cdn_url = await _upload_image_bytes_to_cdn(img_bytes, "painting.png")
     state = ai_account_states[account_id]
     state["generated_painting_url"] = cdn_url
     _mark_stage_completed(state, "painting_generating")
@@ -836,10 +782,10 @@ async def _stage_avatar_generation(
     full_prompt = "\n\n".join(prompt_parts)
 
     last_exc: Exception | None = None
-    result_url = ""
+    img_bytes: bytes = b""
     for attempt in range(1, 4):
         try:
-            task_id = await _submit_nano2_avatar_job(
+            img_bytes = await _generate_avatar_image(
                 api_base_url=api_base_url,
                 api_key=api_key,
                 prompt=full_prompt,
@@ -848,7 +794,6 @@ async def _stage_avatar_generation(
                 quality=avatar_quality,
                 image_urls=[reference_photo_url] if reference_photo_url else None,
             )
-            result_url = await _poll_nano2_task(api_base_url=api_base_url, api_key=api_key, task_id=task_id)
             last_exc = None
             break
         except Exception as exc:
@@ -859,7 +804,7 @@ async def _stage_avatar_generation(
     if last_exc is not None:
         raise last_exc
 
-    cdn_url = await _upload_remote_image_to_cdn(result_url, "avatar.png")
+    cdn_url = await _upload_image_bytes_to_cdn(img_bytes, "avatar.png")
     state = ai_account_states[account_id]
     state["generated_avatar_url"] = cdn_url
     _mark_stage_completed(state, "avatar_generating")

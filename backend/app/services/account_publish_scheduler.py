@@ -296,7 +296,7 @@ async def _generate_publish_metadata(
     """
     import json as _json
     import re
-    from app.services.evolink_api import call_evolink_gemini_api
+    from app.services.ai_api import call_gemini_api
 
     user_prompt = ai_config["prompt"].strip()
     prompt = f"""{user_prompt}
@@ -310,9 +310,9 @@ async def _generate_publish_metadata(
 }}
 其中 hashtag 为字符串数组，每个元素不含 # 号。只输出 JSON，不要任何解释。"""
     try:
-        raw = await call_evolink_gemini_api(
-            api_base_url=ai_config["api_base_url"],
+        raw = await call_gemini_api(
             api_key=ai_config["api_key"],
+            api_base_url=ai_config["api_base_url"],
             model_name=ai_config["model"],
             video_url=video_url,
             prompt=prompt,

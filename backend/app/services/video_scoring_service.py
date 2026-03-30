@@ -155,21 +155,12 @@ async def _score_single_round(
     """
     Perform a single round of AI scoring with retry logic.
 
-    Args:
-        video_url: CDN URL of the video
-        scoring_prompt: The scoring criteria prompt
-        model: Model name (e.g., gemini-3.1-pro-preview)
-        api_key: EvoLink API key
-        api_base_url: EvoLink API base URL
-        round_num: Round number (1 or 2) for logging
-        max_retries: Maximum number of retry attempts
-
     Returns:
         Tuple of (Score as float, reason as str) on success
         Tuple of (None, error_message) if all retries failed
     """
-    url = f"{api_base_url.rstrip('/')}/v1beta/models/{model}:generateContent"
-    
+    from app.services.ai_api import call_gemini_api
+
     # Enforce JSON output format
     json_instructions = (
         "\n\n请必须以JSON格式输出你的评分和理由，必须包含两个字段：\n"
@@ -183,18 +174,6 @@ async def _score_single_round(
     )
     final_prompt = scoring_prompt + json_instructions
 
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"fileData": {"mimeType": "video/mp4", "fileUri": video_url}},
-                    {"text": final_prompt},
-                ],
-            }
-        ]
-    }
-
     masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
     logger.info("=" * 80)
     logger.info("Round %d AI scoring started", round_num)
@@ -206,28 +185,16 @@ async def _score_single_round(
 
     for attempt in range(max_retries):
         try:
-            logger.info("Round %d - Attempt %d/%d: Sending HTTP request to %s", round_num, attempt + 1, max_retries, url)
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                logger.info("Round %d - Attempt %d/%d: HTTP client created, posting request...", round_num, attempt + 1, max_retries)
-                resp = await client.post(
-                    url,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                logger.info("Round %d - Attempt %d/%d: HTTP response received - status %d", round_num, attempt + 1, max_retries, resp.status_code)
-                if not resp.is_success:
-                    logger.error("Round %d attempt %d: HTTP %d - %s", round_num, attempt + 1, resp.status_code, resp.text[:200])
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                        continue
-                resp.raise_for_status()
-                data = resp.json()
-
-            # Extract score from response
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            logger.info("Round %d - Attempt %d/%d", round_num, attempt + 1, max_retries)
+            text = await call_gemini_api(
+                api_key=api_key,
+                api_base_url=api_base_url,
+                model_name=model,
+                video_url=video_url,
+                prompt=final_prompt,
+            )
             logger.info("Round %d raw AI response: %s", round_num, text[:200])
 
-            # Parse numeric score and reason from response
             score, reason = _extract_score_and_reason(text)
             if score is not None:
                 logger.info("Round %d scoring succeeded: score=%.1f", round_num, score)
@@ -236,26 +203,13 @@ async def _score_single_round(
                 logger.warning("Round %d attempt %d: could not parse score from response: %s", round_num, attempt + 1, text[:200])
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
-                    continue
 
-        except httpx.HTTPStatusError as exc:
-            logger.error("Round %d attempt %d: HTTP error - %s", round_num, attempt + 1, exc)
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-                continue
-        except (KeyError, IndexError, TypeError) as exc:
-            logger.error("Round %d attempt %d: Invalid response format - %s", round_num, attempt + 1, exc)
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-                continue
         except Exception as exc:
-            logger.error("Round %d attempt %d: Unexpected error - %s", round_num, attempt + 1, exc)
+            logger.error("Round %d attempt %d: error - %s", round_num, attempt + 1, exc)
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
-                continue
 
     logger.error("Round %d scoring failed after %d attempts", round_num, max_retries)
-    # Return error message tuple
     return (None, f"第{round_num}轮 AI 评分失败：API 调用重试 {max_retries} 次后仍失败（可能是网络超时或 API 服务不可用）")
 
 

@@ -28,15 +28,24 @@ from app.services.video_ai_service import _extract_frames, _upload_frame_to_cdn
 logger = logging.getLogger("app.face_select")
 
 
-async def _get_system_settings(session: AsyncSession) -> tuple[str, str]:
-    """获取 evolink_api_key 和 evolink_api_base_url。"""
+async def _get_system_settings(session: AsyncSession) -> tuple[str, str, bool]:
+    """
+    返回 (api_key, api_base_url, use_google)。
+    use_google=True 表示使用 Google 官方 API（key 作为 query param），否则走 EvoLink（Authorization header）。
+    """
+    from app.core.config import settings
     from app.models.system_setting import SystemSetting
+
+    google_key = settings.google_api_key
+    if google_key:
+        return google_key, "https://generativelanguage.googleapis.com", True
+
     row = await session.scalar(select(SystemSetting).limit(1))
     if row is None:
         raise RuntimeError("系统设置未配置")
     if not row.evolink_api_key:
-        raise RuntimeError("EvoLink API Key 未配置")
-    return row.evolink_api_key, row.evolink_api_base_url or "https://api.evolink.ai"
+        raise RuntimeError("EvoLink API Key 未配置，也未设置 GOOGLE_API_KEY")
+    return row.evolink_api_key, row.evolink_api_base_url or "https://api.evolink.ai", False
 
 
 async def select_face_for_tag(
@@ -101,7 +110,7 @@ async def select_face_for_tag(
         model = "gemini-3.1-pro-preview"
         prompt = ""
 
-    api_key, api_base_url = await _get_system_settings(session)
+    api_key, api_base_url, use_google = await _get_system_settings(session)
 
     # 6. 构建多图 Gemini 请求
     json_instructions = (
@@ -125,6 +134,11 @@ async def select_face_for_tag(
     }
 
     url = f"{api_base_url.rstrip('/')}/v1beta/models/{model}:generateContent"
+    req_kwargs: dict = {"json": payload}
+    if use_google:
+        req_kwargs["params"] = {"key": api_key}
+    else:
+        req_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
 
     # 7. 调用 Gemini，带重试
     attempt = 0
@@ -132,11 +146,7 @@ async def select_face_for_tag(
         attempt += 1
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
-                    url,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
+                resp = await client.post(url, **req_kwargs)
                 if resp.status_code == 429:
                     logger.warning("[人脸选择] 限流(429)，10s后重试")
                     await asyncio.sleep(10)

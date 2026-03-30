@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     open_api_client_secret: str = ""
     open_api_callback_url: str | None = None  # 回调地址，由外部注入
 
+    # Google Gemini 官方 API（设置后优先使用，替代 EvoLink）
+    google_api_key: str = ""
+
     # TikTok 第三方 API 配置
     tikwm_api_key: str = ""       # tikwm.com API key（可选，不传也可访问）
     rapidapi_key: str = ""        # RapidAPI key，用于 tiktok-api23 fallback

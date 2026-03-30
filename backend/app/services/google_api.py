@@ -1,0 +1,164 @@
+"""Google Gemini SDK client (google-genai) — text generation + image generation."""
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+
+from google import genai
+from google.genai import types
+
+logger = logging.getLogger("app.google_api")
+
+
+def get_google_api_key() -> str:
+    """Return GOOGLE_API_KEY from settings (loaded from .env), or empty string if not set."""
+    from app.core.config import settings
+    return settings.google_api_key
+
+
+def _make_client(api_key: str) -> genai.Client:
+    return genai.Client(api_key=api_key)
+
+
+# =============================================================================
+# 文本生成（支持可选视频/图片 URL）
+# =============================================================================
+
+async def call_google_gemini_api(
+    *,
+    api_key: str,
+    model_name: str,
+    prompt: str,
+    temperature: float = 0.3,
+    video_url: str | None = None,
+    timeout: float = 120.0,
+) -> str:
+    """
+    Call Google Gemini SDK for text generation.
+
+    Supports text-only and video+text calls (via file URI).
+    Returns extracted text content. Retries indefinitely on transient errors.
+    """
+    client = _make_client(api_key)
+
+    parts: list[types.Part] = []
+    if video_url:
+        parts.append(types.Part.from_uri(file_uri=video_url, mime_type="video/mp4"))
+    parts.append(types.Part.from_text(text=prompt))
+
+    config = types.GenerateContentConfig(temperature=temperature)
+
+    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
+    logger.info(
+        "Google SDK text request: model=%s, api_key=%s, video=%s, prompt=%s",
+        model_name, masked_key, bool(video_url), prompt[:200],
+    )
+
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=[types.Content(role="user", parts=parts)],
+                config=config,
+            )
+            text = response.text
+            logger.info("Google SDK text response: %s", (text or "")[:500])
+            return text or ""
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # 4xx 不重试（配置错误）
+            exc_str = str(exc)
+            if any(code in exc_str for code in ["400", "401", "403", "404"]):
+                logger.error(
+                    "Google SDK 4xx error (不重试): model=%s video=%s prompt=%s\n%s",
+                    model_name, video_url, prompt[:300], exc,
+                )
+                raise
+            delay = min(attempt * 2, 30)
+            logger.warning("Google SDK text attempt %d failed (%ds后重试): %s", attempt, delay, exc)
+            await asyncio.sleep(delay)
+
+
+# =============================================================================
+# 图片生成（多参考图 → 生成一张图，返回 base64 bytes）
+# =============================================================================
+
+async def generate_image_google(
+    *,
+    api_key: str,
+    model_name: str,
+    prompt: str,
+    image_urls: list[str],
+    aspect_ratio: str = "9:16",
+    image_size: str = "1K",
+    temperature: float = 1.0,
+) -> bytes:
+    """
+    Generate an image using Google Gemini SDK with reference images.
+
+    Passes all reference images + prompt to the model with response_modalities=['IMAGE'].
+    Returns raw image bytes (PNG/JPEG).
+    """
+    client = _make_client(api_key)
+
+    parts: list[types.Part] = []
+    for i, url in enumerate(image_urls):
+        parts.append(types.Part.from_text(text=f"参考图{i + 1}"))
+        parts.append(types.Part.from_uri(file_uri=url, mime_type="image/jpeg"))
+    parts.append(types.Part.from_text(text=prompt))
+
+    config = types.GenerateContentConfig(
+        temperature=temperature,
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+        ),
+    )
+
+    logger.info(
+        "Google SDK image gen: model=%s, images=%d, aspect_ratio=%s, image_size=%s, prompt=%s",
+        model_name, len(image_urls), aspect_ratio, image_size, prompt[:200],
+    )
+
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=[types.Content(role="user", parts=parts)],
+                config=config,
+            )
+
+            # 从响应中提取图片 bytes
+            for candidate in response.candidates or []:
+                for part in (candidate.content.parts or []):
+                    if part.inline_data and part.inline_data.data:
+                        data = part.inline_data.data
+                        # SDK 可能返回 bytes 或 base64 字符串
+                        if isinstance(data, (bytes, bytearray)):
+                            logger.info("Google SDK image gen success: %d bytes", len(data))
+                            return bytes(data)
+                        else:
+                            raw = base64.b64decode(data)
+                            logger.info("Google SDK image gen success (b64): %d bytes", len(raw))
+                            return raw
+
+            raise ValueError(f"Google SDK image gen: no image in response — {response}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            exc_str = str(exc)
+            if any(code in exc_str for code in ["400", "401", "403", "404"]):
+                logger.error("Google SDK image gen 4xx (不重试): %s", exc)
+                raise
+            delay = min(attempt * 2, 30)
+            logger.warning("Google SDK image gen attempt %d failed (%ds后重试): %s", attempt, delay, exc)
+            await asyncio.sleep(delay)
