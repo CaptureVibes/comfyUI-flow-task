@@ -1169,10 +1169,21 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
 
     # 更新数据库
     async with SessionLocal() as session:
+        from sqlalchemy import select as sa_select, update as sa_update
+        from app.models.video_task import VideoTask
+
         tpl = await session.get(VideoAITemplate, uuid_val)
         if tpl:
             tpl.prompt_description = prompt_description
             await session.commit()
+
+        # 将新 prompt 回写到关联的 video_tasks，并标记 is_prompt_updated=True
+        await session.execute(
+            sa_update(VideoTask)
+            .where(VideoTask.template_id == uuid_val)
+            .values(prompt=prompt_description, is_prompt_updated=True)
+        )
+        await session.commit()
 
     # 同步更新内存状态（如果存在的话）
     if template_id in video_ai_states:

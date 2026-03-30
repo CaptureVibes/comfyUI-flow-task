@@ -293,7 +293,10 @@
                   {{ tag.name }}
                 </span>
               </div>
-              <div class="vt-prompt-label">生成 Prompt</div>
+              <div class="vt-prompt-label">
+                生成 Prompt
+                <span v-if="task.is_prompt_updated" class="vt-prompt-updated-badge">已更新提示词</span>
+              </div>
               <div class="vt-prompt-text">{{ task.prompt }}</div>
             </div>
           </div>
@@ -958,6 +961,21 @@ onMounted(async () => {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vt-prompt-updated-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #16a34a;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.6;
 }
 
 .vt-prompt-text {

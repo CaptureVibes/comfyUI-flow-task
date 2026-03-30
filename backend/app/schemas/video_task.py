@@ -51,6 +51,7 @@ class VideoTaskRead(BaseModel):
     target_date: date
     status: str
     prompt: str
+    is_prompt_updated: bool = False
     duration: str
     shots: list | None = None
     created_at: datetime | None = None

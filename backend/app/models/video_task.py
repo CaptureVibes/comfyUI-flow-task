@@ -24,6 +24,7 @@ class VideoTask(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
 
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    is_prompt_updated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     duration: Mapped[str] = mapped_column(String(50), nullable=False)
     shots: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
