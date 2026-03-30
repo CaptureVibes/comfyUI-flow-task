@@ -1281,7 +1281,6 @@ async def recover_stuck_templates_on_startup() -> None:
 
     _RUNNING_STATUSES = [
         VideoAIProcessStatus.paused,       # 重启时被取消导致的暂停，自动恢复
-        VideoAIProcessStatus.fail,         # 失败的模板，重启后自动重试
         VideoAIProcessStatus.understanding,
         VideoAIProcessStatus.imagegen,
         VideoAIProcessStatus.splitting,
