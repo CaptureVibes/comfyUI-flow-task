@@ -296,7 +296,9 @@ class VideoTaskService:
             base_q = base_q.where(VideoTask.owner_id == owner_id)
         if account_id is not None:
             base_q = base_q.where(VideoTask.account_id == account_id)
-        if status_filter:
+        if status_filter == "prompt_updated":
+            base_q = base_q.where(VideoTask.is_prompt_updated == True)  # noqa: E712
+        elif status_filter:
             base_q = base_q.where(VideoTask.status == status_filter)
         if tiktok_blogger_id is not None:
             base_q = base_q.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)

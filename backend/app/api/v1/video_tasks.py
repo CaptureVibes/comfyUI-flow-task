@@ -155,7 +155,21 @@ async def get_video_task_stats(
         stmt = stmt.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)
         stmt = stmt.where(VideoAITemplate.tiktok_blogger_id == tiktok_blogger_id)
     rows = (await session.execute(stmt)).all()
-    return {str(row[0]): row[1] for row in rows}
+    result = {str(row[0]): row[1] for row in rows}
+
+    # Extra virtual counter: tasks with updated prompt
+    from sqlalchemy import func as _func
+    prompt_stmt = select(_func.count(VideoTask.id)).where(VideoTask.is_prompt_updated == True)  # noqa: E712
+    if owner_id is not None:
+        prompt_stmt = prompt_stmt.where(VideoTask.owner_id == owner_id)
+    if target_date is not None:
+        prompt_stmt = prompt_stmt.where(VideoTask.target_date == target_date)
+    if tiktok_blogger_id is not None:
+        prompt_stmt = prompt_stmt.join(VideoAITemplate, VideoTask.template_id == VideoAITemplate.id)
+        prompt_stmt = prompt_stmt.where(VideoAITemplate.tiktok_blogger_id == tiktok_blogger_id)
+    result["prompt_updated"] = (await session.execute(prompt_stmt)).scalar_one()
+
+    return result
 
 
 @router.get("/{task_id}", response_model=VideoTaskDetailRead)

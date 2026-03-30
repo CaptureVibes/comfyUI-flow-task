@@ -1227,7 +1227,7 @@ async def batch_reanalyze_templates(
     logger.info("batch_reanalyze started: %d templates, concurrency=%d", len(template_ids), concurrency)
 
     # 2. 并发执行，Semaphore 限流
-    sem = asyncio.Semaphore(concurrency)
+    sem = asyncio.Semaphore(_CONCURRENCY)
     results: dict[str, str | None] = {}  # template_id -> error_msg or None
 
     async def _worker(tid: str) -> None:

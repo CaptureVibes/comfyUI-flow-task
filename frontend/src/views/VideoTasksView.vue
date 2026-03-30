@@ -206,6 +206,19 @@
         <div class="vt-stat-value">{{ taskStats.abandoned || 0 }}</div>
         <div class="vt-stat-sub">abandoned</div>
       </div>
+      <div
+        class="vt-stat-card"
+        :class="{ 'vt-stat-active': activeFilter === 'prompt_updated' }"
+        style="--stat-color: #16a34a; --stat-bg: #dcfce7;"
+        @click="toggleFilter('prompt_updated')"
+      >
+        <div class="vt-stat-top">
+          <span class="vt-stat-label">已更新提示词</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </div>
+        <div class="vt-stat-value">{{ taskStats.prompt_updated || 0 }}</div>
+        <div class="vt-stat-sub">prompt_updated</div>
+      </div>
     </div>
 
     <div v-loading="loading" class="vt-content">
@@ -400,6 +413,7 @@ const STATUS_LABELS = {
   published: '已发布',
   publish_failed: '发布失败',
   abandoned: '已废弃',
+  prompt_updated: '已更新提示词',
 }
 
 const route = useRoute()
