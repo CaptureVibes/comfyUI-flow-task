@@ -258,7 +258,7 @@ class VideoTaskService:
         if tpl and not tpl.is_used:
             tpl.is_used = True
 
-        for i in range(1, 4):
+        for i in range(1, 2):
             sub = VideoSubTask(
                 task_id=task.id,
                 sub_index=i,
