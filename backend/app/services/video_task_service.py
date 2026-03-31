@@ -416,6 +416,7 @@ class VideoTaskService:
                 .join(Account, Account.id == VideoTask.account_id)
                 .where(Account.created_at > account.created_at)
                 .where(VideoTask.status == NAV_STATUS)
+                .where(VideoTask.target_date == date.today())
                 .order_by(Account.created_at.asc(), VideoTask.created_at.asc())
                 .limit(1)
             )
