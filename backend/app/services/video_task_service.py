@@ -355,7 +355,10 @@ class VideoTaskService:
         NAV_STATUS = "reviewing"
 
         def _base_task_q():
-            q = select(VideoTask).where(VideoTask.status == NAV_STATUS)
+            q = select(VideoTask).where(
+                VideoTask.status == NAV_STATUS,
+                VideoTask.target_date == date.today(),
+            )
             if owner_id is not None:
                 q = q.where(VideoTask.owner_id == owner_id)
             return q
