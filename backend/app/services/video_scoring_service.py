@@ -8,6 +8,7 @@ import re
 import httpx
 
 from app.models.video_task_config import VideoTaskConfig
+from app.services.ai_api import call_gemini_api
 
 logger = logging.getLogger("app.video_scoring")
 
@@ -29,9 +30,6 @@ async def score_video_with_ai(
         Tuple of (None, None, error_message) on failure
         Scores are 0-100 integers
     """
-    from app.services.ai_api import call_gemini_api
-
-    # Check if at least one round has a prompt
     has_round1 = config.round1_enabled and config.round1_prompt.strip()
     has_round2 = config.round2_enabled and config.round2_prompt.strip()
 
