@@ -728,7 +728,7 @@ async function loadVideos() {
     videos.value = res.items
     total.value = res.total
   } catch {
-    ElMessage.error('加载视频失败')
+    ElMessage.warning('请稍后再试')
   } finally {
     loading.value = false
   }

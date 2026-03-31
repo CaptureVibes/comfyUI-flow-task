@@ -12,7 +12,32 @@
       "Bash(ffmpeg -i video.mp4 -af \"volumedetect\" -f null /dev/null)",
       "Bash(ffmpeg -i app/logo_traffic.mp4 -af \"volumedetect\" -f null /dev/null)",
       "Bash(ffmpeg -i output_with_logo.mp4 -af \"volumedetect\" -f null /dev/null)",
-      "Bash(uv add:*)"
+      "Bash(uv add:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/api/v1/router.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/models/__init__.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/models/system_setting.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/services/system_settings_service.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/schemas/settings.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/api/v1/settings.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/main.py:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/frontend/src/views/SettingsView.vue:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/frontend/src/api/settings.js:*)",
+      "Bash(/Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/app/core/config.py:*)",
+      "Bash(\\\\\\(system.evolink_settings_service.py)",
+      "Bash(ls -t /Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/alembic/versions/*.py)",
+      "Bash(python -c \"from app.services.ai_api import call_gemini_api, generate_image; print\\(''''OK''''\\)\")",
+      "Bash(python -c \"from app.services.ai_account_service import _call_gemini_text, _call_gemini_video, _generate_avatar_image; print\\(''''OK''''\\)\")",
+      "Bash(python -c \"from app.services.video_ai_service import _run_imagegen_stage; print\\(''''OK''''\\)\")",
+      "Bash(python -c \"from app.services.video_ai_service import _run_imagegen_stage; print\\(''OK''\\)\")",
+      "Bash(python -c \"from app.services.face_select_service import _get_api_key; print\\(''OK''\\)\")",
+      "Bash(python -c \"from app.services.topic_service import _load_gen_config; print\\(''OK''\\)\")",
+      "Bash(python -c \"from app.api.v1.settings import router; print\\(''OK''\\)\")",
+      "Bash(grep -rn \"evolink\\\\|\\\\.ai_api_key\\\\|\\\\.ai_api_base_url\" app/ --include=*.py)",
+      "Bash(ls alembic/versions/a02*.py)",
+      "Bash(ls /Users/guyin/Desktop/Echooo/repo/confyUI-flow-back/backend/alembic/versions/a023*)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
   }
 }

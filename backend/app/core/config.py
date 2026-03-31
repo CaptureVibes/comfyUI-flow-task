@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:5173/comfyui-flow"
     auto_create_tables: bool = True
 
-    comfyui_api_base_url: str = "http://34.59.208.230:8189"
     video_image_upload_api_url: str = "http://api.hot-products.echooo.link/api/v1/video/upload-image"
     splitting_api_base_url: str = "http://34.21.127.95:8080"
 
@@ -35,7 +34,7 @@ class Settings(BaseSettings):
     open_api_client_secret: str = ""
     open_api_callback_url: str | None = None  # 回调地址，由外部注入
 
-    # Google Gemini 官方 API（设置后优先使用，替代 EvoLink）
+    # Google Gemini 官方 API（设置后优先使用，替代 REST API fallback）
     google_api_key: str = ""
 
     # TikTok 第三方 API 配置
@@ -53,15 +52,6 @@ class Settings(BaseSettings):
     @property
     def video_upload_api_url(self) -> str:
         return f"{self.upload_api_base_url.rstrip('/')}/api/v1/video/upload-video"
-
-    @property
-    def comfyui_api_url(self) -> str:
-        return f"{self.comfyui_api_base_url.rstrip('/')}/api/prompt"
-
-    @property
-    def comfyui_ws_url(self) -> str:
-        base = self.comfyui_api_base_url.replace("http://", "ws://").replace("https://", "wss://")
-        return f"{base.rstrip('/')}/ws"
 
     @property
     def cors_origins_list(self) -> list[str]:

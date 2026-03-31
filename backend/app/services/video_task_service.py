@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.video_ai_template import VideoAITemplate
 from app.models.account import Account
-from app.models.system_setting import SystemSetting
+
 from app.models.video_task import VideoSubTask, VideoTask
 from app.models.video_task_config import VideoTaskConfig
 from app.services.video_scoring_service import score_video_with_ai
@@ -953,7 +953,6 @@ class VideoTaskService:
             return {"status": "skipped", "reason": "no_scoring_subtasks"}
 
         config = await self.db.get(VideoTaskConfig, task.owner_id)
-        sys_cfg = await self.db.get(SystemSetting, "default")
 
         task.status = _compute_parent_status(task.sub_tasks)
         await self.db.commit()
@@ -970,7 +969,7 @@ class VideoTaskService:
             await self.db.commit()
 
             try:
-                result = await self._score_video(sub, sub.result_video_url, config=config, sys_cfg=sys_cfg)
+                result = await self._score_video(sub, sub.result_video_url, config=config)
             except Exception as exc:
                 logger.exception("AI scoring crashed for sub-task %s", sub.id)
                 sub.scoring_error = str(exc)[:1000]
@@ -1048,7 +1047,7 @@ class VideoTaskService:
         return True
 
     async def _score_video(
-        self, sub: VideoSubTask, video_url: str, config: VideoTaskConfig | None = None, sys_cfg: SystemSetting | None = None
+        self, sub: VideoSubTask, video_url: str, config: VideoTaskConfig | None = None
     ) -> tuple[float, float, float, str, str] | tuple[None, None, str] | None:
         """
         Score a video using AI two-round scoring.
@@ -1057,16 +1056,15 @@ class VideoTaskService:
             sub: VideoSubTask to score
             video_url: CDN URL of the video
             config: Optional pre-fetched VideoTaskConfig
-            sys_cfg: Optional pre-fetched SystemSetting
 
         Returns:
             Tuple of (final_score, round1_score, round2_score, round1_reason, round2_reason) on success
             Tuple of (None, None, error_message) on scoring failure
-            None if config or system settings not found
+            None if config not found
         """
         from app.services.video_scoring_service import score_video_with_ai
 
-        # Get config and system settings if not provided
+        # Get config if not provided
         if config is None:
             config = await self.db.get(VideoTaskConfig, sub.task.owner_id)
         if not config:
@@ -1076,20 +1074,11 @@ class VideoTaskService:
         logger.info("_score_video: Config found - round1_enabled=%s, round1_prompt_len=%d, round2_enabled=%s, round2_prompt_len=%d",
                     config.round1_enabled, len(config.round1_prompt), config.round2_enabled, len(config.round2_prompt))
 
-        if sys_cfg is None:
-            sys_cfg = await self.db.get(SystemSetting, "default")
-        if not sys_cfg:
-            logger.warning("No system settings found, cannot perform AI scoring")
-            return None
-
-        logger.info("_score_video: System settings found - has_api_key=%s", bool(sys_cfg.evolink_api_key))
-
         # Perform AI scoring
         logger.info("_score_video: Calling score_video_with_ai...")
         result = await score_video_with_ai(
             video_url=video_url,
             config=config,
-            system_settings=sys_cfg,
         )
         logger.info("_score_video: score_video_with_ai returned %s", result)
         return result

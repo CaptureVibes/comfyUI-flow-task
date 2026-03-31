@@ -274,81 +274,10 @@ async def _upload_frame_to_cdn(data_url: str) -> str:
     return result.url
 
 
-async def _submit_nano2_job(
-    *,
-    api_base_url: str,
-    api_key: str,
-    image_urls: list[str],
-    prompt: str,
-    model: str,
-    size: str,
-    quality: str,
-) -> str:
-    """
-    提交 Nano2 生图任务，将所有帧图片一口气传入 image_urls，生成一张图，返回 task_id。
-    """
-    url = f"{api_base_url.rstrip('/')}/v1/images/generations"
-    payload: dict = {
-        "model": model,
-        "prompt": prompt,
-        "size": size,
-        "quality": quality,
-        "image_urls": image_urls,
-    }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        if not resp.is_success:
-            logger.error("Nano2 submit error: status=%d, body=%s", resp.status_code, resp.text)
-        resp.raise_for_status()
-        data = resp.json()
-    task_id = data.get("id")
-    if not task_id:
-        raise ValueError(f"Nano2 response missing task id: {data}")
-    logger.info("Nano2 task submitted: task_id=%s, image_count=%d", task_id, len(image_urls))
-    return task_id
-
-
-async def _poll_nano2_task(
-    *,
-    api_base_url: str,
-    api_key: str,
-    task_id: str,
-) -> str:
-    """
-    轮询 Nano2 任务直到完成，返回结果图片 URL。
-    """
-    url = f"{api_base_url.rstrip('/')}/v1/tasks/{task_id}"
-    deadline = asyncio.get_event_loop().time() + _IMAGEGEN_POLL_TIMEOUT
-    while True:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
-            resp.raise_for_status()
-            data = resp.json()
-        task_status = data.get("status")
-        progress = data.get("progress", 0)
-        logger.debug("Nano2 task %s: status=%s progress=%d", task_id, task_status, progress)
-        if task_status == "completed":
-            results = data.get("results", [])
-            if not results:
-                raise ValueError(f"Nano2 task {task_id} completed but no results")
-            return results[0]
-        if task_status == "failed":
-            raise ValueError(f"Nano2 task {task_id} failed")
-        if asyncio.get_event_loop().time() >= deadline:
-            raise TimeoutError(f"Nano2 task {task_id} timed out after {_IMAGEGEN_POLL_TIMEOUT}s")
-        await asyncio.sleep(_IMAGEGEN_POLL_INTERVAL)
-
-
 async def _run_imagegen_stage(
     *,
     template_id: str,
     video_url: str,
-    api_base_url: str,
-    api_key: str,
     model: str,
     prompt: str,
     size: str,
@@ -357,9 +286,6 @@ async def _run_imagegen_stage(
     """
     第二阶段完整流程：抽帧 → 上传 CDN → 调用图片生成 API → 上传结果到 CDN。
     返回 extracted_shots 列表，每项格式：{"image_url": str, "description": ""}
-
-    Google SDK：直接返回图片 bytes，无需轮询。
-    EvoLink 兜底：提交 Nano2 job，轮询结果。
     """
     from app.services.ai_api import generate_image
 
@@ -385,17 +311,13 @@ async def _run_imagegen_stage(
         raise ValueError("所有帧上传 CDN 失败")
     logger.info("[%s] %d frames uploaded to CDN, calling image gen API", template_id, len(frame_cdn_urls))
 
-    # 3. 生成图片（自动选择 Google SDK 或 EvoLink）
+    # 3. 生成图片（通过 Google SDK）
     img_bytes = await generate_image(
         model_name=model,
         prompt=prompt,
         image_urls=frame_cdn_urls,
         aspect_ratio=size,
         image_size=quality,
-        api_key=api_key,
-        api_base_url=api_base_url,
-        size=size,
-        quality=quality,
     )
     logger.info("[%s] Image gen returned %d bytes, uploading to CDN", template_id, len(img_bytes))
 
@@ -715,12 +637,8 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     await _persist_states([template_id])
                     return
 
-                # 加载系统配置（api_key/url）和用户流程配置（understand_*）
-                from app.services.system_settings_service import get_or_create_system_settings
+                # 加载用户流程配置（understand_*）
                 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
-                sys_cfg = await get_or_create_system_settings(session)
-                api_key = sys_cfg.evolink_api_key
-                api_base_url = sys_cfg.evolink_api_base_url
                 # 步骤一：视频整体理解（如模板无 owner_id 则使用默认配置）
                 if tpl.owner_id is not None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
@@ -755,9 +673,6 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
             completed_stages: list[str] = state.get("completed_stages") or []
 
-            if not api_key:
-                raise ValueError("系统未配置 EvoLink API Key，请前往【系统设置】进行配置。")
-
             # ========== 步骤 1: 视频整体理解（最多重试 3 次）==========
             if "understanding" in completed_stages:
                 prompt_description = state.get("prompt_description") or ""
@@ -768,8 +683,6 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 logger.info("[%s] understanding started", template_id)
 
                 prompt_description = await call_gemini_api(
-                    api_key=api_key,
-                    api_base_url=api_base_url,
                     model_name=understand_model,
                     video_url=video_url,
                     prompt=understand_prompt,
@@ -804,8 +717,6 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         shots = await _run_imagegen_stage(
                             template_id=template_id,
                             video_url=video_url,
-                            api_base_url=api_base_url,
-                            api_key=api_key,
                             model=imagegen_model,
                             prompt=imagegen_prompt,
                             size=imagegen_size,
@@ -1105,7 +1016,6 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     失败自动重试最多 max_retries 次。
     """
     from uuid import UUID
-    from app.services.system_settings_service import get_or_create_system_settings
     from app.services.pipeline_settings_service import get_or_create_pipeline_settings
     from app.services.ai_api import call_gemini_api
     from app.models.video_source import VideoSource
@@ -1127,12 +1037,6 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
             raise ValueError("视频地址不可用")
 
         # 加载配置
-        sys_cfg = await get_or_create_system_settings(session)
-        api_key = sys_cfg.evolink_api_key
-        api_base_url = sys_cfg.evolink_api_base_url
-        if not api_key:
-            raise ValueError("系统未配置 EvoLink API Key")
-
         if tpl.owner_id is not None:
             pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
             understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
@@ -1148,8 +1052,6 @@ async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     for attempt in range(1, max_retries + 1):
         try:
             prompt_description = await call_gemini_api(
-                api_key=api_key,
-                api_base_url=api_base_url,
                 model_name=understand_model,
                 video_url=video_url,
                 prompt=understand_prompt,

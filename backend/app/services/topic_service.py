@@ -13,9 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import SessionLocal
 from app.models.pipeline_setting import PipelineSetting
-from app.models.system_setting import SystemSetting
 from app.models.topic import Keyword, MotherKeyword, Topic
-from app.services.ai_api import call_gemini_api
 
 logger = logging.getLogger("app.topics")
 
@@ -221,11 +219,7 @@ _semaphore = asyncio.Semaphore(_CONCURRENCY)
 
 
 async def _load_gen_config(session: AsyncSession, owner_id: uuid.UUID) -> dict:
-    """Load EvoLink + pipeline config needed for keyword generation."""
-    system_row = await session.scalar(select(SystemSetting).limit(1))
-    if not system_row or not system_row.evolink_api_key:
-        raise ValueError("EvoLink API key not configured")
-
+    """Load pipeline config needed for keyword generation. API key from .env."""
     pipeline_row = await session.scalar(
         select(PipelineSetting).where(PipelineSetting.owner_id == owner_id)
     )
@@ -233,8 +227,6 @@ async def _load_gen_config(session: AsyncSession, owner_id: uuid.UUID) -> dict:
         raise ValueError("Keyword generation prompt not configured")
 
     return {
-        "api_key": system_row.evolink_api_key,
-        "api_base_url": system_row.evolink_api_base_url,
         "model_name": pipeline_row.keyword_gen_model,
         "prompt_template": pipeline_row.keyword_gen_prompt,
         "keyword_count": pipeline_row.keyword_gen_count,
@@ -279,8 +271,6 @@ async def _generate_one(mk_id: uuid.UUID, owner_id: uuid.UUID) -> None:
                 prompt += _JSON_SUFFIX
 
                 text = await call_gemini_api(
-                    api_key=config["api_key"],
-                    api_base_url=config["api_base_url"],
                     model_name=config["model_name"],
                     prompt=prompt,
                     temperature=config["temperature"],

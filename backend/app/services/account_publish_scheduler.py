@@ -253,7 +253,7 @@ async def _do_publish(account: Account) -> None:
 async def _load_auto_publish_config(account: Account) -> dict | None:
     """加载账号 owner 的自动发布 AI 配置，若未启用返回 None"""
     from app.models.video_task_config import VideoTaskConfig
-    from app.services.system_settings_service import get_or_create_system_settings
+    from app.services.google_api import get_google_api_key
 
     # 查 owner_id：从账号的 owner_id 找到对应的 VideoTaskConfig
     owner_id = account.owner_id
@@ -269,19 +269,14 @@ async def _load_auto_publish_config(account: Account) -> dict | None:
             logger.warning("【定时发布】账号 %s（%s）已启用 AI 生成标题，但提示词为空，跳过 AI 生成", account.id, account.account_name)
             return None
 
-        sys_cfg = await get_or_create_system_settings(session)
-        api_key = getattr(sys_cfg, "evolink_api_key", "") or ""
-        api_base_url = getattr(sys_cfg, "evolink_api_base_url", "") or ""
-
-        if not api_key or not api_base_url:
-            logger.warning("【定时发布】账号 %s（%s）已启用 AI 生成标题，但 EvoLink 未配置 api_key 或 api_base_url，跳过 AI 生成", account.id, account.account_name)
+        api_key = get_google_api_key()
+        if not api_key:
+            logger.warning("【定时发布】账号 %s（%s）已启用 AI 生成标题，但 GOOGLE_API_KEY 未配置，跳过 AI 生成", account.id, account.account_name)
             return None
 
         return {
             "model": cfg.auto_publish_model or "gemini-3.1-pro-preview",
             "prompt": cfg.auto_publish_prompt,
-            "api_key": api_key,
-            "api_base_url": api_base_url,
         }
 
 
@@ -291,7 +286,7 @@ async def _generate_publish_metadata(
     fallback_title: str,
 ) -> tuple[str, str, list[str]]:
     """
-    调用 EvoLink AI 分析视频，生成 title/desc/hashtag。
+    调用 AI API 分析视频，生成 title/desc/hashtag。
     返回 (title, description, hashtags)。失败时返回 fallback。
     """
     import json as _json
@@ -311,8 +306,6 @@ async def _generate_publish_metadata(
 其中 hashtag 为字符串数组，每个元素不含 # 号。只输出 JSON，不要任何解释。"""
     try:
         raw = await call_gemini_api(
-            api_key=ai_config["api_key"],
-            api_base_url=ai_config["api_base_url"],
             model_name=ai_config["model"],
             video_url=video_url,
             prompt=prompt,

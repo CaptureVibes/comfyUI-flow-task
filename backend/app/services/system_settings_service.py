@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.system_setting import SystemSetting
-from app.schemas.settings import SystemSettingsPayload
 
 _DEFAULT_KEY = "default"
 
@@ -23,15 +22,4 @@ async def get_or_create_system_settings(session: AsyncSession) -> SystemSetting:
         session.add(row)
         await session.commit()
         await session.refresh(row)
-    return row
-
-
-async def update_system_settings(session: AsyncSession, payload: SystemSettingsPayload) -> SystemSetting:
-    row = await get_or_create_system_settings(session)
-    row.comfyui_server_ip = payload.comfyui_server_ip
-    row.comfyui_ports = payload.comfyui_ports
-    row.evolink_api_key = payload.evolink_api_key
-    row.evolink_api_base_url = payload.evolink_api_base_url
-    await session.commit()
-    await session.refresh(row)
     return row

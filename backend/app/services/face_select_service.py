@@ -5,7 +5,7 @@
 1. 找到 tag 关联的随机一个视频（通过 video_source_tags）
 2. 用 ffmpeg 抽取最多 10 帧（前 15s，每 1.5s 一帧）
 3. 将帧图片上传到 CDN（需要公网 URL 才能传给 Gemini）
-4. 调用 EvoLink Gemini API，传入 10 张帧图片，让 AI 选择最合适的一张人脸
+4. 调用 Gemini API，传入 10 张帧图片，让 AI 选择最合适的一张人脸
 5. 解析 {"selected": N} 响应，保存到 face_photos 表
 """
 from __future__ import annotations
@@ -28,24 +28,17 @@ from app.services.video_ai_service import _extract_frames, _upload_frame_to_cdn
 logger = logging.getLogger("app.face_select")
 
 
-async def _get_system_settings(session: AsyncSession) -> tuple[str, str, bool]:
+async def _get_api_key() -> tuple[str, str, bool]:
     """
     返回 (api_key, api_base_url, use_google)。
-    use_google=True 表示使用 Google 官方 API（key 作为 query param），否则走 EvoLink（Authorization header）。
+    API key 从 .env 的 GOOGLE_API_KEY 获取。
     """
     from app.core.config import settings
-    from app.models.system_setting import SystemSetting
 
     google_key = settings.google_api_key
-    if google_key:
-        return google_key, "https://generativelanguage.googleapis.com", True
-
-    row = await session.scalar(select(SystemSetting).limit(1))
-    if row is None:
-        raise RuntimeError("系统设置未配置")
-    if not row.evolink_api_key:
-        raise RuntimeError("EvoLink API Key 未配置，也未设置 GOOGLE_API_KEY")
-    return row.evolink_api_key, row.evolink_api_base_url or "https://api.evolink.ai", False
+    if not google_key:
+        raise RuntimeError("GOOGLE_API_KEY 未配置，请在 .env 中设置")
+    return google_key, "https://generativelanguage.googleapis.com", True
 
 
 async def select_face_for_tag(
@@ -94,7 +87,7 @@ async def select_face_for_tag(
 
     logger.info("[人脸选择] 抽帧完成，共 %d 帧", len(data_urls))
 
-    # 4. 上传帧图片到 CDN（EvoLink 只支持公网 URL）
+    # 4. 上传帧图片到 CDN（需要公网 URL）
     cdn_urls: list[str] = []
     for i, data_url in enumerate(data_urls):
         cdn_url = await _upload_frame_to_cdn(data_url)
@@ -110,7 +103,7 @@ async def select_face_for_tag(
         model = "gemini-3.1-pro-preview"
         prompt = ""
 
-    api_key, api_base_url, use_google = await _get_system_settings(session)
+    api_key, api_base_url, use_google = await _get_api_key()
 
     # 6. 构建多图 Gemini 请求
     json_instructions = (

@@ -6,7 +6,7 @@
         <div class="brand-icon">
           <svg width="28" height="28" viewBox="0 0 512 512" fill="none">
             <!-- White background -->
-            <rect x="0" y="0" width="512" height="512" rx="96" fill="#ffffff"/>
+            <rect x="0" y="0" width="512" height="512" rx="96" fill="#ffffff" />
             <!-- Lightbulb shape -->
             <path d="M -80 -140
                      C -140 -140, -140 -60, -80 -35
@@ -14,16 +14,22 @@
                      C -80 110, -35 135, 35 135
                      L 80 60
                      C 140 -60, 140 -140, 80 -140
-                     Z"
-                  fill="none" stroke="url(#brandGrad)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" transform="translate(256, 280) scale(1.15)"/>
+                     Z" fill="none" stroke="url(#brandGrad)" stroke-width="14" stroke-linecap="round"
+              stroke-linejoin="round" transform="translate(256, 280) scale(1.15)" />
             <!-- Filament -->
-            <line x1="-40" y1="-55" x2="-15" y2="55" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round" opacity="0.8" transform="translate(256, 280) scale(1.15)"/>
-            <line x1="15" y1="-55" x2="40" y2="55" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round" opacity="0.8" transform="translate(256, 280) scale(1.15)"/>
-            <line x1="-65" y1="25" x2="65" y2="25" stroke="url(#brandGrad)" stroke-width="7" stroke-linecap="round" opacity="0.5" transform="translate(256, 280) scale(1.15)"/>
+            <line x1="-40" y1="-55" x2="-15" y2="55" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round"
+              opacity="0.8" transform="translate(256, 280) scale(1.15)" />
+            <line x1="15" y1="-55" x2="40" y2="55" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round"
+              opacity="0.8" transform="translate(256, 280) scale(1.15)" />
+            <line x1="-65" y1="25" x2="65" y2="25" stroke="url(#brandGrad)" stroke-width="7" stroke-linecap="round"
+              opacity="0.5" transform="translate(256, 280) scale(1.15)" />
             <!-- Light rays -->
-            <line x1="0" y1="-210" x2="0" y2="-250" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round" opacity="0.7" transform="translate(256, 280) scale(1.15)"/>
-            <line x1="-200" y1="-120" x2="-230" y2="-140" stroke="url(#brandGrad)" stroke-width="8" stroke-linecap="round" opacity="0.7" transform="translate(256, 280) scale(1.15)"/>
-            <line x1="200" y1="-120" x2="230" y2="-140" stroke="url(#brandGrad)" stroke-width="8" stroke-linecap="round" opacity="0.7" transform="translate(256, 280) scale(1.15)"/>
+            <line x1="0" y1="-210" x2="0" y2="-250" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round"
+              opacity="0.7" transform="translate(256, 280) scale(1.15)" />
+            <line x1="-200" y1="-120" x2="-230" y2="-140" stroke="url(#brandGrad)" stroke-width="8"
+              stroke-linecap="round" opacity="0.7" transform="translate(256, 280) scale(1.15)" />
+            <line x1="200" y1="-120" x2="230" y2="-140" stroke="url(#brandGrad)" stroke-width="8" stroke-linecap="round"
+              opacity="0.7" transform="translate(256, 280) scale(1.15)" />
             <defs>
               <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stop-color="#f97316" />
@@ -40,25 +46,15 @@
 
     <!-- Navigation -->
     <nav class="sidebar-nav">
-      <a
-        v-for="item in menuItems"
-        :key="item.name"
-        class="nav-item"
-        :class="{ active: isActive(item.name) }"
-        @click.prevent="handleNavClick(item)"
-      >
+      <a v-for="item in menuItems" :key="item.name" class="nav-item" :class="{ active: isActive(item.name) }"
+        @click.prevent="handleNavClick(item)">
         <div class="nav-icon">
           <component :is="item.iconComponent" />
         </div>
         <transition name="sidebar-text">
           <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
         </transition>
-        <el-tooltip
-          v-if="collapsed"
-          :content="item.label"
-          placement="right"
-          :show-after="100"
-        >
+        <el-tooltip v-if="collapsed" :content="item.label" placement="right" :show-after="100">
           <span class="nav-tooltip-trigger" />
         </el-tooltip>
       </a>
@@ -67,18 +63,8 @@
     <!-- Collapse toggle -->
     <div class="sidebar-footer">
       <button class="collapse-btn" @click="$emit('toggle')">
-        <svg
-          class="collapse-icon"
-          :class="{ rotated: collapsed }"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
+        <svg class="collapse-icon" :class="{ rotated: collapsed }" width="18" height="18" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 18 9 12 15 6" />
         </svg>
         <transition name="sidebar-text">
@@ -105,28 +91,6 @@ const router = useRouter()
 const { isAdmin } = useAuth()
 
 /* ── SVG Icon components ── */
-const IconList = () => h('svg', {
-  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
-  stroke: 'currentColor', 'stroke-width': 1.75,
-  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
-}, [
-  h('rect', { x: 3, y: 3, width: 7, height: 7, rx: 1.5 }),
-  h('rect', { x: 14, y: 3, width: 7, height: 7, rx: 1.5 }),
-  h('rect', { x: 3, y: 14, width: 7, height: 7, rx: 1.5 }),
-  h('rect', { x: 14, y: 14, width: 7, height: 7, rx: 1.5 })
-])
-
-const IconFlow = () => h('svg', {
-  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
-  stroke: 'currentColor', 'stroke-width': 1.75,
-  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
-}, [
-  h('circle', { cx: 5, cy: 6, r: 2.5 }),
-  h('circle', { cx: 19, cy: 6, r: 2.5 }),
-  h('circle', { cx: 12, cy: 18, r: 2.5 }),
-  h('path', { d: 'M7 7.5L10.5 16' }),
-  h('path', { d: 'M17 7.5L13.5 16' })
-])
 
 const IconSetting = () => h('svg', {
   width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
@@ -135,19 +99,6 @@ const IconSetting = () => h('svg', {
 }, [
   h('circle', { cx: 12, cy: 12, r: 3 }),
   h('path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' })
-])
-
-const IconComfyUI = () => h('svg', {
-  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
-  stroke: 'currentColor', 'stroke-width': 1.75,
-  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
-}, [
-  h('rect', { x: 2, y: 3, width: 5, height: 5, rx: 1 }),
-  h('rect', { x: 17, y: 3, width: 5, height: 5, rx: 1 }),
-  h('rect', { x: 9.5, y: 16, width: 5, height: 5, rx: 1 }),
-  h('path', { d: 'M7 5.5h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H7' }),
-  h('path', { d: 'M17 5.5h-4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h4' }),
-  h('line', { x1: 12, y1: 11.5, x2: 12, y2: 16 })
 ])
 
 const IconUsers = () => h('svg', {
@@ -159,16 +110,6 @@ const IconUsers = () => h('svg', {
   h('circle', { cx: 9, cy: 7, r: 4 }),
   h('path', { d: 'M23 21v-2a4 4 0 0 0-3-3.87' }),
   h('path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' })
-])
-
-// 个人资料图标 (单人轮廓)
-const IconProfile = () => h('svg', {
-  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
-  stroke: 'currentColor', 'stroke-width': 1.75,
-  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
-}, [
-  h('path', { d: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2' }),
-  h('circle', { cx: 12, cy: 7, r: 4 })
 ])
 
 // 视频库图标 (film/play)
@@ -224,7 +165,7 @@ const IconTopic = () => h('svg', {
   'stroke-linecap': 'round', 'stroke-linejoin': 'round'
 }, [
   h('line', { x1: 4, y1: 9, x2: 20, y2: 9 }),
-  h('line', { x1: 4, y1: 15, x2: 20, y2: 15 }),
+  h('line', { x1: 4, y1: 15, x2: 20, y1: 15 }),
   h('line', { x1: 10, y1: 3, x2: 8, y2: 21 }),
   h('line', { x1: 16, y1: 3, x2: 14, y2: 21 })
 ])
@@ -269,17 +210,14 @@ const IconFaceLibrary = () => h('svg', {
 ])
 
 const baseMenuItems = [
-  { path: '/dashboard', name: 'tasks', label: '任务列表', iconComponent: IconList },
-  { path: '/dashboard/templates', name: 'templates', label: '工作流模板', iconComponent: IconFlow },
-  { path: '/dashboard/comfyui', name: 'comfyui', label: 'ComfyUI 编辑器', iconComponent: IconComfyUI },
-  { path: '/dashboard/video-library', name: 'video-library', label: '视频库', iconComponent: IconVideoLibrary },
-  { path: '/dashboard/tiktok-bloggers', name: 'tiktok-bloggers', label: 'TK博主', iconComponent: IconTiktokBlogger },
   { path: '/dashboard/topics', name: 'topics', label: '主题词', iconComponent: IconTopic },
   { path: '/dashboard/candidate-library', name: 'candidate-library', label: '候选库', iconComponent: IconCandidateLibrary },
-  { path: '/dashboard/face-library', name: 'face-library', label: '人脸库', iconComponent: IconFaceLibrary },
+  { path: '/dashboard/video-library', name: 'video-library', label: '视频库', iconComponent: IconVideoLibrary },
   { path: '/dashboard/video-ai-templates', name: 'video-ai-templates', label: 'AI模板', iconComponent: IconVideoAI },
+  { path: '/dashboard/face-library', name: 'face-library', label: '人脸库', iconComponent: IconFaceLibrary },
   { path: '/dashboard/accounts', name: 'accounts', label: 'AI博主', iconComponent: IconAccount },
-  { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: '任务管理', iconComponent: IconTaskMgmt },
+  { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: 'TASKS', iconComponent: IconTaskMgmt },
+  { path: '/dashboard/tiktok-bloggers', name: 'tiktok-bloggers', label: 'TK博主', iconComponent: IconTiktokBlogger },
   { path: '/dashboard/settings', name: 'settings', label: '设置', iconComponent: IconSetting }
 ]
 

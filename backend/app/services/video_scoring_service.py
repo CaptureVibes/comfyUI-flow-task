@@ -1,4 +1,4 @@
-"""AI video scoring service using EvoLink API."""
+"""AI video scoring service using Gemini API."""
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +7,6 @@ import re
 
 import httpx
 
-from app.models.system_setting import SystemSetting
 from app.models.video_task_config import VideoTaskConfig
 
 logger = logging.getLogger("app.video_scoring")
@@ -17,27 +16,24 @@ async def score_video_with_ai(
     *,
     video_url: str,
     config: VideoTaskConfig,
-    system_settings: SystemSetting,
 ) -> tuple[float, float, float, str, str] | tuple[None, None, str]:
     """
-    Perform two-round AI scoring on a video using EvoLink API.
+    Perform two-round AI scoring on a video using Gemini API.
 
     Args:
         video_url: CDN URL of the video to score
         config: VideoTaskConfig with round1/round2 settings
-        system_settings: SystemSetting with evolink_api_key and evolink_api_base_url
 
     Returns:
         Tuple of (final_score, round1_score, round2_score, round1_reason, round2_reason) on success
         Tuple of (None, None, error_message) on failure
         Scores are 0-100 integers
     """
-    api_key = system_settings.evolink_api_key
-    api_base_url = system_settings.evolink_api_base_url
+    from app.services.ai_api import call_gemini_api
 
-    if not api_key:
-        logger.warning("EvoLink API key not configured, skipping AI scoring")
-        return (None, None, "EvoLink API key 未配置")
+    # Check if at least one round has a prompt
+    has_round1 = config.round1_enabled and config.round1_prompt.strip()
+    has_round2 = config.round2_enabled and config.round2_prompt.strip()
 
     # Check if at least one round has a prompt
     has_round1 = config.round1_enabled and config.round1_prompt.strip()
@@ -69,8 +65,6 @@ async def score_video_with_ai(
                 video_url=video_url,
                 scoring_prompt=config.round1_prompt,
                 model=config.round1_model,
-                api_key=api_key,
-                api_base_url=api_base_url,
                 round_num=1,
             )
             # Check if result is an error tuple
@@ -104,8 +98,6 @@ async def score_video_with_ai(
                 video_url=video_url,
                 scoring_prompt=config.round2_prompt,
                 model=config.round2_model,
-                api_key=api_key,
-                api_base_url=api_base_url,
                 round_num=2,
             )
             # Check if result is an error tuple
@@ -147,8 +139,6 @@ async def _score_single_round(
     video_url: str,
     scoring_prompt: str,
     model: str,
-    api_key: str,
-    api_base_url: str,
     round_num: int,
     max_retries: int = 3,
 ) -> tuple[float, str] | tuple[None, str]:
@@ -159,8 +149,6 @@ async def _score_single_round(
         Tuple of (Score as float, reason as str) on success
         Tuple of (None, error_message) if all retries failed
     """
-    from app.services.ai_api import call_gemini_api
-
     # Enforce JSON output format
     json_instructions = (
         "\n\n请必须以JSON格式输出你的评分和理由，必须包含两个字段：\n"
@@ -174,11 +162,9 @@ async def _score_single_round(
     )
     final_prompt = scoring_prompt + json_instructions
 
-    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
     logger.info("=" * 80)
     logger.info("Round %d AI scoring started", round_num)
     logger.info("  Model: %s", model)
-    logger.info("  API Key: %s", masked_key)
     logger.info("  Video URL: %s", video_url[:100])
     logger.info("  Scoring Prompt: %s", scoring_prompt[:200])
     logger.info("=" * 80)
@@ -187,8 +173,6 @@ async def _score_single_round(
         try:
             logger.info("Round %d - Attempt %d/%d", round_num, attempt + 1, max_retries)
             text = await call_gemini_api(
-                api_key=api_key,
-                api_base_url=api_base_url,
                 model_name=model,
                 video_url=video_url,
                 prompt=final_prompt,

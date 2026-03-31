@@ -26,7 +26,6 @@ from app.services import rapid_api
 from app.core.config import settings as app_settings
 from app.services.image_upload_service import image_upload_service
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
-from app.services.system_settings_service import get_or_create_system_settings
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +209,7 @@ async def _search_blogger_videos(
 
 
 # ---------------------------------------------------------------------------
-# AI 审核（EvoLink / Gemini）
+# AI 审核（Gemini）
 # ---------------------------------------------------------------------------
 
 async def _download_and_upload_video(video_url: str) -> str:
@@ -266,12 +265,10 @@ async def _ai_review_single(
     video_url: str,
     prompt: str,
     model: str,
-    api_key: str,
-    api_base_url: str,
     retry_delay: float = 5.0,
 ) -> bool:
     """
-    调用 Gemini API 审核单条视频（自动选择 Google 官方或 EvoLink）。
+    调用 Gemini API 审核单条视频。
     返回 True 表示通过，False 表示不通过。
     遇到网络错误时无限重试。
     """
@@ -293,8 +290,6 @@ async def _ai_review_single(
         try:
             logger.info("【候选库AI审核】model=%s video=%s", model, cdn_url[:80])
             text = await call_gemini_api(
-                api_key=api_key,
-                api_base_url=api_base_url,
                 model_name=model,
                 video_url=cdn_url,
                 prompt=final_prompt,
@@ -332,11 +327,10 @@ async def _ai_review_candidates(
         logger.info("【候选库AI审核】未启用或提示词为空，跳过")
         return
 
-    sys_settings = await get_or_create_system_settings(session)
-    api_key = sys_settings.evolink_api_key
-    api_base_url = sys_settings.evolink_api_base_url
+    from app.services.google_api import get_google_api_key
+    api_key = get_google_api_key()
     if not api_key:
-        logger.warning("【候选库AI审核】EvoLink API key 未配置，跳过")
+        logger.warning("【候选库AI审核】GOOGLE_API_KEY 未配置，跳过")
         return
 
     # 查询待审核的视频（本次关键词入库的）
@@ -360,8 +354,6 @@ async def _ai_review_candidates(
                 video_url=row.video_url,
                 prompt=cfg.ai_review_prompt,
                 model=cfg.ai_review_model,
-                api_key=api_key,
-                api_base_url=api_base_url,
             )
             if not passed:
                 to_delete.append(row)
@@ -928,14 +920,12 @@ async def ai_review_candidates_by_ids(
     下载视频 → 上传 CDN → 调 Gemini → 更新状态。
     返回 {"reviewed": N, "passed": N, "failed": N}
     """
-    from app.services.system_settings_service import get_or_create_system_settings
     from app.services.pipeline_settings_service import get_or_create_pipeline_settings
     import uuid as _uuid
 
     owner_uuid = _uuid.UUID(owner_id) if owner_id else None
 
     # 读取配置
-    sys_settings = await get_or_create_system_settings(session)
     # pipeline_settings 按 owner 读取；admin 无 owner 时用默认空 UUID 兜底
     _cfg_owner = owner_uuid or _uuid.UUID(int=0)
     pipeline_settings = await get_or_create_pipeline_settings(session, _cfg_owner)
@@ -977,8 +967,6 @@ async def ai_review_candidates_by_ids(
                 video_url=row.video_url,
                 prompt=cfg.ai_review_prompt,
                 model=cfg.ai_review_model,
-                api_key=sys_settings.evolink_api_key or "",
-                api_base_url=sys_settings.evolink_api_base_url or "",
                 retry_delay=cfg.retry_delay,
             )
             if ok:
@@ -1110,7 +1098,6 @@ _BULK_REVIEW_SEM = asyncio.Semaphore(_CONCURRENCY_AI_REVIEW)  # 全局并发控�
 async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
     """处理单条视频的 AI 审核 + 导入，使用独立 session。"""
     from app.db.session import SessionLocal
-    from app.services.system_settings_service import get_or_create_system_settings
     from app.services.pipeline_settings_service import get_or_create_pipeline_settings
 
     async with _BULK_REVIEW_SEM:
@@ -1120,7 +1107,6 @@ async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
                 return  # 已被其他任务处理或状态已变
 
             # 读取配置（用 row.owner_id 或兜底）
-            sys_settings = await get_or_create_system_settings(session)
             cfg_owner = row.owner_id or uuid.UUID(int=0)
             pipeline_settings = await get_or_create_pipeline_settings(session, cfg_owner)
             cfg = _SearchConfig(pipeline_settings)
@@ -1130,8 +1116,6 @@ async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
                     video_url=row.video_url,
                     prompt=cfg.ai_review_prompt,
                     model=cfg.ai_review_model,
-                    api_key=sys_settings.evolink_api_key or "",
-                    api_base_url=sys_settings.evolink_api_base_url or "",
                     retry_delay=cfg.retry_delay,
                 )
             except Exception as exc:

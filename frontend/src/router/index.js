@@ -35,72 +35,6 @@ const routes = [
     component: DashboardLayout,
     children: [
       {
-        path: '',
-        name: 'tasks',
-        component: () => import('../views/TaskListView.vue'),
-        meta: { title: '任务列表' }
-      },
-      {
-        path: 'tasks/new',
-        name: 'task-create',
-        component: () => import('../views/TaskFormView.vue'),
-        meta: { title: '创建任务', parent: 'tasks' }
-      },
-      {
-        path: 'tasks/:id/edit',
-        name: 'task-edit',
-        component: () => import('../views/TaskFormView.vue'),
-        meta: { title: '编辑任务', parent: 'tasks' }
-      },
-      {
-        path: 'tasks/:id',
-        name: 'task-detail',
-        component: () => import('../views/TaskDetailView.vue'),
-        meta: { title: '任务详情', parent: 'tasks' }
-      },
-      {
-        path: 'templates',
-        name: 'templates',
-        component: () => import('../views/TaskTemplateListView.vue'),
-        meta: { title: '工作流模板' }
-      },
-      {
-        path: 'templates/new',
-        name: 'template-create',
-        component: () => import('../views/TaskTemplateFormView.vue'),
-        meta: { title: '新建工作流', parent: 'templates' }
-      },
-      {
-        path: 'templates/:id/edit',
-        name: 'template-edit',
-        component: () => import('../views/TaskTemplateFormView.vue'),
-        meta: { title: '编辑工作流', parent: 'templates' }
-      },
-      {
-        path: 'settings',
-        name: 'settings',
-        component: () => import('../views/SettingsView.vue'),
-        meta: { title: '设置' }
-      },
-      {
-        path: 'comfyui',
-        name: 'comfyui',
-        component: () => import('../views/ComfyUIView.vue'),
-        meta: { title: 'ComfyUI 编辑器' }
-      },
-      {
-        path: 'profile',
-        name: 'profile',
-        component: () => import('../views/ProfileView.vue'),
-        meta: { title: '个人资料' }
-      },
-      {
-        path: 'users',
-        name: 'users',
-        component: () => import('../views/UserManageView.vue'),
-        meta: { title: '用户管理' }
-      },
-      {
         path: 'video-library',
         name: 'video-library',
         component: () => import('../views/VideoLibraryView.vue'),
@@ -213,17 +147,29 @@ const routes = [
         name: 'video-task-detail',
         component: () => import('../views/VideoTaskDetailView.vue'),
         meta: { title: '任务详情', parent: 'daily-tasks' }
-      }
+      },
+      {
+        path: 'settings',
+        name: 'settings',
+        component: () => import('../views/SettingsView.vue'),
+        meta: { title: '设置' }
+      },
+      {
+        path: 'profile',
+        name: 'profile',
+        component: () => import('../views/ProfileView.vue'),
+        meta: { title: '个人资料' }
+      },
+      {
+        path: 'users',
+        name: 'users',
+        component: () => import('../views/UserManageView.vue'),
+        meta: { title: '用户管理' }
+      },
     ]
   },
 
   /* ── Backward-compatible redirects ── */
-  { path: '/tasks/new', redirect: '/dashboard/tasks/new' },
-  { path: '/tasks/:id/edit', redirect: to => `/dashboard/tasks/${to.params.id}/edit` },
-  { path: '/tasks/:id', redirect: to => `/dashboard/tasks/${to.params.id}` },
-  { path: '/templates', redirect: '/dashboard/templates' },
-  { path: '/templates/new', redirect: '/dashboard/templates/new' },
-  { path: '/templates/:id/edit', redirect: to => `/dashboard/templates/${to.params.id}/edit` },
   { path: '/settings', redirect: '/dashboard/settings' }
 ]
 

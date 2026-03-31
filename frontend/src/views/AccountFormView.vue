@@ -422,7 +422,7 @@ import {
 } from '../api/accounts'
 import { fetchTags, fetchTagsVideoCount } from '../api/tags'
 import { searchBloggers } from '../api/tiktok_bloggers'
-import { uploadImageByFile } from '../api/tasks'
+import { uploadImageByFile } from '../api/uploads'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchChannels } from '../api/video_publications'
 

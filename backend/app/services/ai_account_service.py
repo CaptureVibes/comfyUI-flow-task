@@ -33,7 +33,7 @@ _IMAGEGEN_POLL_TIMEOUT = 300.0
 _IMAGE_PROMPT_MAX_CHARS = 2200
 _PHOTO_CANDIDATE_COUNT = 5
 _DEFAULT_ANALYSIS_SAMPLE_SIZE = 5
-_EVOLINK_MAX_ATTEMPTS = 5
+_AI_API_MAX_ATTEMPTS = 5
 _RUNNING_STATUSES = {
     "pending",
     "video_analyzing",
@@ -299,32 +299,26 @@ def _selected_photo_url(state: dict[str, Any]) -> str:
 
 
 # =============================================================================
-# EvoLink API 调用（纯文本，无视频）
+# Gemini REST API 调用（纯文本，无视频）
 # =============================================================================
 
 
-async def _call_evolink_text(
+async def _call_gemini_text(
     *,
-    api_base_url: str,
-    api_key: str,
     model_name: str,
     prompt: str,
     temperature: float = 0.7,
 ) -> str:
     from app.services.ai_api import call_gemini_api
     return await call_gemini_api(
-        api_key=api_key,
-        api_base_url=api_base_url,
         model_name=model_name,
         prompt=prompt,
         temperature=temperature,
     )
 
 
-async def _call_evolink_video(
+async def _call_gemini_video(
     *,
-    api_base_url: str,
-    api_key: str,
     model_name: str,
     video_url: str,
     prompt: str,
@@ -332,8 +326,6 @@ async def _call_evolink_video(
 ) -> str:
     from app.services.ai_api import call_gemini_api
     return await call_gemini_api(
-        api_key=api_key,
-        api_base_url=api_base_url,
         model_name=model_name,
         video_url=video_url,
         prompt=prompt,
@@ -348,8 +340,6 @@ async def _call_evolink_video(
 
 async def _generate_avatar_image(
     *,
-    api_base_url: str,
-    api_key: str,
     prompt: str,
     model: str,
     size: str,
@@ -358,7 +348,6 @@ async def _generate_avatar_image(
 ) -> bytes:
     """
     生成头像图片，返回图片 bytes。
-    Google SDK：直接返回，无需轮询。EvoLink：提交 Nano2 job 并轮询。
     """
     from app.services.ai_api import generate_image
     return await generate_image(
@@ -367,10 +356,6 @@ async def _generate_avatar_image(
         image_urls=image_urls or [],
         aspect_ratio=size,
         image_size=quality,
-        api_key=api_key,
-        api_base_url=api_base_url,
-        size=size,
-        quality=quality,
     )
 
 
@@ -383,8 +368,6 @@ async def _stage_video_analysis(
     account_id: str,
     analysis_videos: list[dict[str, str]],
     sample_size: int,
-    api_base_url: str,
-    api_key: str,
     model_name: str,
     prompt: str,
 ) -> str:
@@ -420,9 +403,7 @@ async def _stage_video_analysis(
         description = ""
         for attempt in range(1, 4):
             try:
-                description = await _call_evolink_video(
-                    api_base_url=api_base_url,
-                    api_key=api_key,
+                description = await _call_gemini_video(
                     model_name=model_name,
                     video_url=video["video_url"],
                     prompt=prompt,
@@ -465,8 +446,6 @@ async def _stage_video_analysis(
 async def _stage_name_generation(
     account_id: str,
     combined_description: str,
-    api_base_url: str,
-    api_key: str,
     model_name: str,
     name_prompt: str,
 ) -> str:
@@ -486,9 +465,7 @@ async def _stage_name_generation(
     name = ""
     for attempt in range(1, 4):
         try:
-            name = await _call_evolink_text(
-                api_base_url=api_base_url,
-                api_key=api_key,
+            name = await _call_gemini_text(
                 model_name=model_name,
                 prompt=full_prompt,
                 temperature=0.9,
@@ -515,8 +492,6 @@ async def _run_photo_candidate(
     candidate_index: int,
     description: str,
     photo_image_prompt: str,
-    api_base_url: str,
-    api_key: str,
     avatar_model: str,
     avatar_size: str,
     avatar_quality: str,
@@ -536,8 +511,6 @@ async def _run_photo_candidate(
     for attempt in range(1, 4):
         try:
             img_bytes = await _generate_avatar_image(
-                api_base_url=api_base_url,
-                api_key=api_key,
                 prompt=image_prompt,
                 model=avatar_model,
                 size=avatar_size,
@@ -572,8 +545,6 @@ async def _stage_photo_generation(
     tag_ids: list[str],
     owner_id: UUID | None,
     photo_image_prompt: str,
-    api_base_url: str,
-    api_key: str,
     avatar_model: str,
     avatar_size: str,
     avatar_quality: str,
@@ -656,8 +627,6 @@ async def _stage_photo_generation(
         for attempt in range(1, 4):
             try:
                 img_bytes = await _generate_avatar_image(
-                    api_base_url=api_base_url,
-                    api_key=api_key,
                     prompt=image_prompt,
                     model=avatar_model,
                     size=avatar_size,
@@ -707,8 +676,6 @@ async def _stage_painting_generation(
     account_id: str,
     selected_photo_url: str,
     painting_prompt: str,
-    api_base_url: str,
-    api_key: str,
     avatar_model: str,
     avatar_size: str,
     avatar_quality: str,
@@ -728,8 +695,6 @@ async def _stage_painting_generation(
     for attempt in range(1, 4):
         try:
             img_bytes = await _generate_avatar_image(
-                api_base_url=api_base_url,
-                api_key=api_key,
                 prompt=prompt,
                 model=avatar_model,
                 size=avatar_size,
@@ -760,8 +725,6 @@ async def _stage_avatar_generation(
     account_id: str,
     combined_description: str,
     reference_photo_url: str,
-    api_base_url: str,
-    api_key: str,
     avatar_model: str,
     avatar_prompt: str,
     avatar_size: str,
@@ -786,8 +749,6 @@ async def _stage_avatar_generation(
     for attempt in range(1, 4):
         try:
             img_bytes = await _generate_avatar_image(
-                api_base_url=api_base_url,
-                api_key=api_key,
                 prompt=full_prompt,
                 model=avatar_model,
                 size=avatar_size,
@@ -828,7 +789,7 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
             from app.models.tag import VideoSourceTag
             from app.models.video_source import VideoSource
             from app.services.pipeline_settings_service import get_or_create_pipeline_settings
-            from app.services.system_settings_service import get_or_create_system_settings
+            from app.services.google_api import get_google_api_key
 
             async with SessionLocal() as session:
                 try:
@@ -840,11 +801,8 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                     logger.warning("[%s] Account not found", account_id)
                     return
 
-                sys_cfg = await get_or_create_system_settings(session)
-                api_key = sys_cfg.evolink_api_key
-                api_base_url = sys_cfg.evolink_api_base_url
-                if not api_key:
-                    raise ValueError("系统未配置 EvoLink API Key，请前往【系统设置】进行配置。")
+                if not get_google_api_key():
+                    raise ValueError("GOOGLE_API_KEY 未配置，请在 .env 中设置。")
 
                 if acc.owner_id is not None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=acc.owner_id)
@@ -920,8 +878,6 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 account_id=account_id,
                 analysis_videos=analysis_videos,
                 sample_size=max(1, int(state.get("analysis_sample_size") or _DEFAULT_ANALYSIS_SAMPLE_SIZE)),
-                api_base_url=api_base_url,
-                api_key=api_key,
                 model_name=video_model,
                 prompt=video_prompt,
             )
@@ -929,8 +885,6 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
             await _stage_name_generation(
                 account_id=account_id,
                 combined_description=combined_description,
-                api_base_url=api_base_url,
-                api_key=api_key,
                 model_name=name_model,
                 name_prompt=name_prompt,
             )
@@ -940,8 +894,6 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 tag_ids=tag_ids,
                 owner_id=acc.owner_id,
                 photo_image_prompt=photo_image_prompt,
-                api_base_url=api_base_url,
-                api_key=api_key,
                 avatar_model=avatar_model,
                 avatar_size=avatar_size,
                 avatar_quality=avatar_quality,
@@ -960,8 +912,6 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 account_id=account_id,
                 selected_photo_url=selected_photo_url,
                 painting_prompt=painting_prompt,
-                api_base_url=api_base_url,
-                api_key=api_key,
                 avatar_model=avatar_model,
                 avatar_size=avatar_size,
                 avatar_quality=avatar_quality,
@@ -971,8 +921,6 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 account_id=account_id,
                 combined_description=combined_description,
                 reference_photo_url=painting_url or selected_photo_url,
-                api_base_url=api_base_url,
-                api_key=api_key,
                 avatar_model=avatar_model,
                 avatar_prompt=avatar_prompt,
                 avatar_size=avatar_size,

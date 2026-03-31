@@ -1,74 +1,50 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, require_current_user
 from app.db.session import get_db
 from app.schemas.settings import (
     CandidateConfigPayload,
-    ComfyUIPortStatusItem,
-    ComfyUIPortsStatusResponse,
-    ComfyUISettingsPayload,
     PipelineSettingsPayload,
-    SystemSettingsPayload,
 )
 from app.schemas.topic import KeywordGenConfigPayload
-from app.services.comfyui_settings_service import (
-    fetch_ports_runtime_status,
-    get_or_create_comfyui_settings,
-    normalize_ports,
-    normalize_server_ip,
-    update_comfyui_settings,
-)
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings, update_pipeline_settings
-from app.services.system_settings_service import get_or_create_system_settings, update_system_settings
+from app.services.system_settings_service import get_or_create_system_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-async def _require_admin(
-    token: TokenData = Depends(require_current_user),
-) -> TokenData:
-    if not token.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
-    return token
-
-
 # ---------------------------------------------------------------------------
-# System settings (admin only)
+# System settings (global, single-row)
 # ---------------------------------------------------------------------------
+
+class SystemSettingsPayload(BaseModel):
+    use_seedance_api: bool = False
+
 
 @router.get("/system", response_model=SystemSettingsPayload)
 async def get_system_settings(
-    _: TokenData = Depends(_require_admin),
+    token: TokenData = Depends(require_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SystemSettingsPayload:
     row = await get_or_create_system_settings(session)
-    return SystemSettingsPayload(
-        comfyui_server_ip=row.comfyui_server_ip,
-        comfyui_ports=row.comfyui_ports or [],
-        evolink_api_key=row.evolink_api_key,
-        evolink_api_base_url=row.evolink_api_base_url,
-    )
+    return SystemSettingsPayload(use_seedance_api=row.use_seedance_api)
 
 
 @router.put("/system", response_model=SystemSettingsPayload)
 async def put_system_settings(
     payload: SystemSettingsPayload,
-    _: TokenData = Depends(_require_admin),
+    token: TokenData = Depends(require_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SystemSettingsPayload:
-    try:
-        row = await update_system_settings(session, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return SystemSettingsPayload(
-        comfyui_server_ip=row.comfyui_server_ip,
-        comfyui_ports=row.comfyui_ports or [],
-        evolink_api_key=row.evolink_api_key,
-        evolink_api_base_url=row.evolink_api_base_url,
-    )
+    row = await get_or_create_system_settings(session)
+    row.use_seedance_api = payload.use_seedance_api
+    await session.commit()
+    await session.refresh(row)
+    return SystemSettingsPayload(use_seedance_api=row.use_seedance_api)
 
 
 # ---------------------------------------------------------------------------
@@ -257,59 +233,4 @@ async def put_candidate_config(
         candidate_ai_review_prompt=row.candidate_ai_review_prompt,
         candidate_schedule_enabled=row.candidate_schedule_enabled,
         candidate_schedule_cron=row.candidate_schedule_cron,
-    )
-
-
-# ---------------------------------------------------------------------------
-# ComfyUI shortcuts (兼容旧前端调用，读写 system_settings 的 comfyui 字段)
-# ---------------------------------------------------------------------------
-
-@router.get("/comfyui", response_model=ComfyUISettingsPayload)
-async def get_comfyui_settings(session: AsyncSession = Depends(get_db)) -> ComfyUISettingsPayload:
-    config = await get_or_create_comfyui_settings(session)
-    return ComfyUISettingsPayload(
-        server_ip=normalize_server_ip(config.comfyui_server_ip),
-        ports=normalize_ports([int(item) for item in (config.comfyui_ports or [])]),
-    )
-
-
-@router.put("/comfyui", response_model=ComfyUISettingsPayload)
-async def put_comfyui_settings(
-    payload: ComfyUISettingsPayload,
-    _: TokenData = Depends(_require_admin),
-    session: AsyncSession = Depends(get_db),
-) -> ComfyUISettingsPayload:
-    try:
-        updated = await update_comfyui_settings(
-            session,
-            server_ip=payload.server_ip,
-            ports=payload.ports,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    return ComfyUISettingsPayload(
-        server_ip=normalize_server_ip(updated.comfyui_server_ip),
-        ports=normalize_ports([int(item) for item in (updated.comfyui_ports or [])]),
-    )
-
-
-@router.get("/comfyui/ports/status", response_model=ComfyUIPortsStatusResponse)
-async def get_comfyui_port_status(session: AsyncSession = Depends(get_db)) -> ComfyUIPortsStatusResponse:
-    server_ip, refreshed_at, items = await fetch_ports_runtime_status(session)
-    return ComfyUIPortsStatusResponse(
-        server_ip=server_ip,
-        refreshed_at=refreshed_at,
-        items=[
-            ComfyUIPortStatusItem(
-                port=item.port,
-                base_url=item.base_url,
-                reachable=item.reachable,
-                level=item.level,
-                running_count=item.running_count,
-                pending_count=item.pending_count,
-                error=item.error,
-            )
-            for item in items
-        ],
     )

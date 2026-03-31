@@ -17,9 +17,3 @@ class UploadImageResponse(BaseModel):
     object_key: str
     content_type: str
     size: int
-
-
-class WorkflowUploadResponse(BaseModel):
-    workflow_json: dict
-    node_count: int
-    filename: str
