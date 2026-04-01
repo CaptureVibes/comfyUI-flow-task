@@ -252,10 +252,10 @@
                 </div>
               </div>
               <!-- Weighted Total -->
-              <div v-if="sub.weighted_total_score != null" class="vtd-weighted-total">
+              <div v-if="computeWeightedScore(sub.id) != null" class="vtd-weighted-total">
                 综合得分：
-                <span class="vtd-weighted-value" :class="getWeightedScoreClass(sub.weighted_total_score)">
-                  {{ sub.weighted_total_score }}
+                <span class="vtd-weighted-value" :class="getWeightedScoreClass(computeWeightedScore(sub.id))">
+                  {{ computeWeightedScore(sub.id) }}
                 </span>
                 <span class="vtd-weighted-max">/ 100</span>
               </div>
@@ -654,9 +654,22 @@ function updateNgTimestamp(sub, idx, field, value) {
   ngTimestampsList.value[sub.id][idx][field] = value
 }
 
-async function setDimensionScore(sub, key, value) {
+function setDimensionScore(sub, key, value) {
   if (!dimensionScores.value[sub.id]) dimensionScores.value[sub.id] = {}
   dimensionScores.value[sub.id][key] = value
+}
+
+function computeWeightedScore(subId) {
+  const dims = dimensionScores.value[subId]
+  if (!dims || Object.keys(dims).length === 0) return null
+  let total = 0
+  for (const dim of DIMENSIONS) {
+    const score = dims[dim.key]
+    if (score != null) {
+      total += (score / 5) * dim.weight
+    }
+  }
+  return Math.round(total * 10) / 10
 }
 
 async function handleEnqueue(sub) {
