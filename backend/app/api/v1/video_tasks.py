@@ -85,7 +85,7 @@ async def create_video_task(
 
 
 def _resolve_owner_id(
-    owneupdate_sub_task_noter_id: uuid.UUID | None = Query(default=None, description="按所属用户筛选（外部API可传）"),
+    owner_id: uuid.UUID | None = Query(default=None, description="按所属用户筛选（外部API可传）"),
     current_user: TokenData | None = Depends(get_optional_user),
 ) -> uuid.UUID | None:
     """External API can pass owner_id; with token, non-admin overrides to own user_id."""
