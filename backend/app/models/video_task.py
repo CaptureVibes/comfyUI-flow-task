@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, JSON, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -20,7 +20,7 @@ class VideoTask(Base):
     template_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), index=True, nullable=True)
     target_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
 
-    # Status lifecycle: pending → generating → scoring → pending_publish → publishing → published/publish_failed
+    # Status lifecycle: pending → generating → reviewing → stashed/decision_rejected → queued → publishing → published/publish_failed
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
 
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
@@ -56,38 +56,30 @@ class VideoSubTask(Base):
     )
     sub_index: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Status lifecycle: pending → generating → scoring → pending_publish → publishing → published/publish_failed
-    # abandoned: user selected another sub-task, this one is discarded
-    # publish_failed: video was sent to publishing but the publication failed (can retry → pending_publish)
+    # Status lifecycle: pending → generating → reviewing → stashed/decision_rejected → queued → publishing → published/publish_failed
+    # stashed: user approved the video; score-based routing decides queued or abandoned
+    # decision_rejected: user explicitly rejected the video
+    # abandoned: system-abandoned (e.g. sibling selected, or score too low)
+    # publish_failed: video was sent to publishing but the publication failed (can retry → stashed)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
 
     # CDN URL written after fetch-results; sub-task UUID is used as video_id in GCS path
     result_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # AI scoring: two-round scoring with final weighted score
-    ai_score: Mapped[float | None] = mapped_column(Integer, nullable=True)  # Final score 0-100
-    round1_score: Mapped[float | None] = mapped_column(Integer, nullable=True)
-    round2_score: Mapped[float | None] = mapped_column(Integer, nullable=True)
-    round1_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    round2_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Error message when AI scoring fails
-    scoring_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Manual score and note written by the user, independent of AI scoring
-    manual_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Manual note written by the user
     manual_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    elsa_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Critical checks (all must be True to pass; any False → critical_fail=True)
-    temporal_consistency: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    character_integrity: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    audio_sync: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    critical_fail: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Operator: the reviewer who submitted the note/score (for aggregation)
+    operator: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+
+    # NG (穿帮) detection: simplified
+    has_ng: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # List of NG timestamps: [{"second": 10, "frame": 5}, ...]
+    ng_timestamps: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # Multi-dimension scoring: {"audio_visual": 3, "character_realism": 4, ...}
     dimension_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # Weighted total score 0-100
+    # Weighted total score 0-100 (computed from dimension_scores)
     weighted_total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # True when this sub-task's video was chosen by the user for publishing

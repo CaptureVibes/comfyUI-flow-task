@@ -8,13 +8,15 @@ from fastapi import APIRouter, Depends, Query, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import TokenData, get_current_user
+from app.core.security import TokenData, get_current_user, get_optional_user
 from app.db.session import get_db
 from app.models.video_ai_template import VideoAITemplate
 from app.models.tag import Tag, VideoSourceTag
 from app.models.video_source import VideoSource
 from app.schemas.video_ai_template import VideoSourceSummary
 from app.schemas.video_task import (
+    OperatorStatItem,
+    VideoSubTaskListPage,
     VideoSubTaskNoteUpdate,
     VideoSubTaskRead,
     VideoSubTaskStatusUpdate,
@@ -82,6 +84,13 @@ async def create_video_task(
     return task
 
 
+def _get_optional_owner_id(current_user: TokenData | None = Depends(get_optional_user)) -> uuid.UUID | None:
+    """No token → no owner filter (API access). Token present → filter by owner unless admin."""
+    if current_user is None:
+        return None
+    return None if current_user.is_admin else current_user.user_id
+
+
 @router.get("", response_model=VideoTaskListPage)
 async def list_video_tasks(
     target_date: date | None = Query(default=None),
@@ -90,7 +99,7 @@ async def list_video_tasks(
     tiktok_blogger_id: uuid.UUID | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    owner_id: uuid.UUID | None = Depends(_get_optional_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     svc = VideoTaskService(db=session)
@@ -337,22 +346,46 @@ async def fetch_video_task_results(
     }
 
 
-@router.post("/daily/{target_date}/resume-scoring", status_code=status.HTTP_200_OK)
-async def resume_video_task_scoring(
+# ── Sub-task endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/subtasks", response_model=VideoSubTaskListPage)
+async def list_reviewing_subtasks(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """获取待决策（reviewing）状态的子任务分页列表"""
+    svc = VideoTaskService(db=session)
+    items, total = await svc.list_reviewing_subtasks(owner_id, page=page, page_size=page_size)
+    return VideoSubTaskListPage(
+        items=[VideoSubTaskRead.model_validate(sub) for sub in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+@router.post("/daily/{target_date}/route-stashed", response_model=dict)
+async def batch_route_stashed(
     target_date: date,
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> Any:
+    """将指定日期所有暂存（stashed）的子任务按评分规则批量路由到队列或废弃"""
     svc = VideoTaskService(db=session)
-    result = await svc.resume_scoring_tasks(target_date, owner_id)
-    return {
-        "status": "success",
-        "message": f"已加入 {result['queued']} 个 AI 打分任务，跳过 {result['skipped']} 个已在队列中的任务",
-        **result,
-    }
+    return await svc.batch_route_stashed(target_date, owner_id)
 
 
-# ── Sub-task endpoints ─────────────────────────────────────────────────────────
+@router.get("/operator-stats", response_model=list[OperatorStatItem])
+async def get_operator_stats(
+    target_date: date | None = Query(default=None),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """返回各审核人的处理数量和对应子任务列表"""
+    svc = VideoTaskService(db=session)
+    return await svc.get_operator_stats(owner_id, target_date)
+
 
 @router.patch("/subtasks/{sub_task_id}/status", response_model=VideoSubTaskRead)
 async def patch_sub_task_status(
@@ -375,20 +408,27 @@ async def patch_sub_task_status(
 async def update_sub_task_note(
     sub_task_id: uuid.UUID,
     payload: VideoSubTaskNoteUpdate,
-    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    current_user: TokenData | None = Depends(get_optional_user),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
-    """保存用户手动填写的备注和评分，不影响子任务状态"""
+    """审核人填写备注、穿帮信息和多维度评分，原子地将状态从 reviewing → stashed。
+    有 token 时 operator 取登录用户名；无 token 时从请求体 operator 字段获取。
+    """
+    from fastapi import HTTPException as _HTTPException
+    operator = current_user.username if current_user else payload.operator
+    if not operator:
+        raise _HTTPException(status_code=422, detail="无 token 时 operator 字段为必填")
+
+    owner_id = None if current_user is None else (None if current_user.is_admin else current_user.user_id)
+
     svc = VideoTaskService(db=session)
     return await svc.update_sub_task_note(
         sub_task_id,
         owner_id,
+        operator=operator,
         manual_note=payload.manual_note,
-        manual_score=payload.manual_score,
-        elsa_score=payload.elsa_score,
-        temporal_consistency=payload.temporal_consistency,
-        character_integrity=payload.character_integrity,
-        audio_sync=payload.audio_sync,
+        has_ng=payload.has_ng,
+        ng_timestamps=payload.ng_timestamps,
         dimension_scores=payload.dimension_scores,
     )
 
@@ -420,7 +460,7 @@ async def enqueue_sub_task(
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
-    """将子任务从 pending_publish 状态移到 queued 状态，进入发布队列"""
+    """将子任务从 stashed 状态移到 queued 状态，进入发布队列"""
     svc = VideoTaskService(db=session)
     return await svc.enqueue_sub_task(sub_task_id, owner_id)
 
@@ -431,7 +471,7 @@ async def dequeue_sub_task(
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
-    """将子任务从 queued 状态移回 pending_publish 状态"""
+    """将子任务从 queued 状态移回 stashed 状态"""
     svc = VideoTaskService(db=session)
     return await svc.dequeue_sub_task(sub_task_id, owner_id)
 

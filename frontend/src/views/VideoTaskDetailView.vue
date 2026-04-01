@@ -65,35 +65,6 @@
               <div class="vtd-tl-content">
                 <div class="vtd-tl-title">{{ step.label }}</div>
                 <div v-if="step.desc" class="vtd-tl-desc">{{ step.desc }}</div>
-                <!-- AI Scores for scoring step -->
-                <div v-if="step.key === 'scoring' && hasReviewingScores()" class="vtd-tl-scores">
-                  <div
-                    v-for="sub in reviewingSubTasks()"
-                    :key="sub.id"
-                    class="vtd-tl-score-item"
-                    :class="{ 'vtd-tl-score-selected': sub.selected, 'vtd-tl-score-abandoned': sub.status === 'abandoned' }"
-                  >
-                    <span class="vtd-tl-score-index">#{{ sub.sub_index }}</span>
-                    <span
-                      v-if="sub.ai_score !== null && sub.ai_score !== undefined"
-                      class="vtd-tl-score-value"
-                      :class="getAiScoreClass(sub.ai_score)"
-                    >
-                      {{ sub.ai_score }}分
-                    </span>
-                    <span
-                      v-else-if="sub.round1_score !== null && sub.round1_score !== undefined"
-                      class="vtd-tl-score-value"
-                      :class="getAiScoreClass(sub.round1_score)"
-                    >
-                      R1 {{ sub.round1_score }}分
-                    </span>
-                    <span v-if="sub.round1_score !== null" class="vtd-tl-score-rounds">
-                      R1: {{ sub.round1_score }}
-                      <span v-if="sub.round2_score !== null"> | R2: {{ sub.round2_score }}</span>
-                    </span>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -175,11 +146,6 @@
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
               已选中
             </div>
-            <!-- AI Score Badge -->
-            <div v-if="sub.ai_score !== null && sub.ai_score !== undefined" class="vtd-ai-score" :class="getAiScoreClass(sub.ai_score)">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              {{ sub.ai_score }}分
-            </div>
           </div>
 
           <!-- Video Player -->
@@ -198,59 +164,6 @@
             </div>
           </div>
 
-          <!-- AI Score Details -->
-          <div v-if="hasAiScores(sub)" class="vtd-ai-details">
-            <div class="vtd-ai-details-header" @click="toggleAiReason(sub.id)">
-              <span class="vtd-ai-details-title">AI 评分详情</span>
-              <svg
-                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"
-                :style="{ transform: aiReasonExpanded[sub.id] ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }"
-              ><polyline points="6 9 12 15 18 9"/></svg>
-            </div>
-            <div class="vtd-ai-scores">
-              <div class="vtd-ai-score-item">
-                <span class="vtd-ai-round">第一轮</span>
-                <span class="vtd-ai-score-value" :class="getAiScoreClass(sub.round1_score)">
-                  {{ sub.round1_score }}分
-                </span>
-              </div>
-              <div v-if="sub.round2_score !== null" class="vtd-ai-score-item">
-                <span class="vtd-ai-round">第二轮</span>
-                <span class="vtd-ai-score-value" :class="getAiScoreClass(sub.round2_score)">
-                  {{ sub.round2_score }}分
-                </span>
-              </div>
-              <div v-if="sub.ai_score !== null && sub.ai_score !== undefined" class="vtd-ai-score-item vtd-ai-final">
-                <span class="vtd-ai-round">综合得分</span>
-                <span class="vtd-ai-score-value" :class="getAiScoreClass(sub.ai_score)">
-                  {{ sub.ai_score }}分
-                </span>
-              </div>
-            </div>
-
-            <!-- Collapsible reasons -->
-            <div v-if="aiReasonExpanded[sub.id]">
-              <div v-if="sub.round1_reason" class="vtd-ai-reason">
-                <div class="vtd-ai-reason-label">第一轮评分理由</div>
-                <div class="vtd-ai-reason-text">{{ sub.round1_reason }}</div>
-              </div>
-              <div v-if="sub.round2_reason" class="vtd-ai-reason">
-                <div class="vtd-ai-reason-label">第二轮评分理由</div>
-                <div class="vtd-ai-reason-text">{{ sub.round2_reason }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- AI Scoring Error -->
-          <div v-if="sub.scoring_error" class="vtd-scoring-error">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            <span class="vtd-error-text">{{ sub.scoring_error }}</span>
-          </div>
-
           <!-- Scoring Section -->
           <div class="vtd-manual-note">
             <div class="vtd-manual-note-label">
@@ -258,47 +171,60 @@
               人工评分
             </div>
 
-            <!-- Step 1: Critical Checks -->
-            <div class="vtd-critical-section">
-              <div class="vtd-critical-title">关键穿帮检测</div>
-              <div class="vtd-critical-checks">
-                <label
-                  v-for="ck in CRITICAL_CHECKS"
-                  :key="ck.key"
-                  class="vtd-critical-item"
-                  :class="{
-                    'vtd-critical-pass': criticalChecks[sub.id]?.[ck.key] === true,
-                    'vtd-critical-fail': criticalChecks[sub.id]?.[ck.key] === false,
-                  }"
+            <!-- NG Detection -->
+            <div class="vtd-ng-section">
+              <div class="vtd-ng-row">
+                <span class="vtd-ng-label">是否存在穿帮</span>
+                <div class="vtd-ng-btns">
+                  <button
+                    class="vtd-ck-btn vtd-ck-pass"
+                    :class="{ active: hasNgFlags[sub.id] === false }"
+                    @click="setHasNg(sub, false)"
+                  >无穿帮</button>
+                  <button
+                    class="vtd-ck-btn vtd-ck-fail"
+                    :class="{ active: hasNgFlags[sub.id] === true }"
+                    @click="setHasNg(sub, true)"
+                  >有穿帮</button>
+                </div>
+              </div>
+              <!-- NG Timestamps (shown when has_ng=true) -->
+              <div v-if="hasNgFlags[sub.id] === true" class="vtd-ng-timestamps">
+                <div class="vtd-ng-ts-header">
+                  <span class="vtd-ng-ts-label">穿帮时间点</span>
+                  <button class="vtd-ng-add-btn" @click="addNgTimestamp(sub)">+ 添加时间点</button>
+                </div>
+                <div
+                  v-for="(ts, tsIdx) in (ngTimestampsList[sub.id] || [])"
+                  :key="tsIdx"
+                  class="vtd-ng-ts-row"
                 >
-                  <span class="vtd-critical-label">{{ ck.label }}</span>
-                  <span class="vtd-critical-desc">{{ ck.desc }}</span>
-                  <div class="vtd-critical-btns">
-                    <button
-                      class="vtd-ck-btn vtd-ck-pass"
-                      :class="{ active: criticalChecks[sub.id]?.[ck.key] === true }"
-                      @click="setCriticalCheck(sub, ck.key, true)"
-                    >Pass</button>
-                    <button
-                      class="vtd-ck-btn vtd-ck-fail"
-                      :class="{ active: criticalChecks[sub.id]?.[ck.key] === false }"
-                      @click="setCriticalCheck(sub, ck.key, false)"
-                    >Fail</button>
-                  </div>
-                </label>
-              </div>
-              <div v-if="sub.critical_fail === true" class="vtd-critical-verdict vtd-verdict-fail">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                穿帮 FAIL — 无需打分
-              </div>
-              <div v-else-if="sub.critical_fail === false" class="vtd-critical-verdict vtd-verdict-pass">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                通过关键检测
+                  <input
+                    type="number"
+                    min="0"
+                    :value="ts.second"
+                    class="vtd-ng-ts-input"
+                    placeholder="秒"
+                    @change="e => updateNgTimestamp(sub, tsIdx, 'second', Number(e.target.value))"
+                  />
+                  <span class="vtd-ng-ts-sep">s</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="59"
+                    :value="ts.frame"
+                    class="vtd-ng-ts-input"
+                    placeholder="帧"
+                    @change="e => updateNgTimestamp(sub, tsIdx, 'frame', Number(e.target.value))"
+                  />
+                  <span class="vtd-ng-ts-sep">f</span>
+                  <button class="vtd-ng-del-btn" @click="removeNgTimestamp(sub, tsIdx)">×</button>
+                </div>
               </div>
             </div>
 
-            <!-- Step 2: Dimension Scoring (only if not critical_fail) -->
-            <div v-if="sub.critical_fail !== true" class="vtd-dimension-section">
+            <!-- Dimension Scoring -->
+            <div class="vtd-dimension-section">
               <div class="vtd-dimension-title">多维度评分</div>
               <div class="vtd-dimension-grid">
                 <div
@@ -335,22 +261,6 @@
               </div>
             </div>
 
-            <!-- Elsa Score -->
-            <div class="vtd-elsa-score-row" style="margin-top: 8px;">
-              <label class="vtd-note-col-label">Elsa锐评</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                :value="elsaScores[sub.id]"
-                class="vtd-elsa-input"
-                placeholder="0-100"
-                @input="e => elsaScores[sub.id] = e.target.value === '' ? null : Math.min(100, Math.max(0, Number(e.target.value)))"
-                @blur="handleSaveNote(sub)"
-              />
-              <span v-if="elsaScores[sub.id] != null" class="vtd-elsa-suffix">分</span>
-            </div>
-
             <!-- Note textarea -->
             <div class="vtd-note-reason-col" style="margin-top: 8px;">
               <div class="vtd-note-col-label">评分备注</div>
@@ -377,11 +287,22 @@
               @click="handleSelect(sub)"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>
-              选择此版本
+              通过
             </el-button>
 
             <el-button
-              v-if="sub.status === 'pending_publish' && sub.selected"
+              v-if="sub.status === 'reviewing'"
+              type="danger"
+              size="small"
+              plain
+              :loading="rejecting === sub.id"
+              @click="handleReject(sub)"
+            >
+              决策未通过
+            </el-button>
+
+            <el-button
+              v-if="sub.status === 'stashed' && sub.selected"
               type="success"
               size="small"
               :loading="enqueueing === sub.id"
@@ -495,9 +416,10 @@ import PublishVideoDialog from '../components/PublishVideoDialog.vue'
 const STATUS_LABELS = {
   pending: '待处理',
   generating: '生成中',
-  scoring: 'AI审核中',
   reviewing: '待决策',
-  pending_publish: '待发布',
+  stashed: '暂存',
+  decision_rejected: '决策未通过',
+  queued: '排队中',
   publishing: '发布中',
   publish_failed: '发布失败',
   published: '已发布',
@@ -506,21 +428,15 @@ const STATUS_LABELS = {
 
 // Timeline steps in order
 const TIMELINE_STEPS = [
-  { key: 'pending',         label: '任务创建',   desc: '任务已建立，等待上传' },
-  { key: 'generating',      label: '视频生成中', desc: '正在 AI 生成视频' },
-  { key: 'scoring',         label: 'AI审核中',   desc: '正在进行 AI 智能评分' },
-  { key: 'pending_publish', label: '待发布',     desc: 'AI 评分通过，请前往账号详情页发布' },
-  { key: 'publishing',      label: '发布中',     desc: '视频正在上传到平台' },
-  { key: 'published',       label: '已发布',     desc: '视频已成功发布' },
+  { key: 'pending',    label: '任务创建',   desc: '任务已建立，等待上传' },
+  { key: 'generating', label: '视频生成中', desc: '正在 AI 生成视频' },
+  { key: 'reviewing',  label: '待决策',     desc: '请对视频进行评分并作出决策' },
+  { key: 'stashed',    label: '暂存',       desc: '评分通过，等待进入发布队列' },
+  { key: 'publishing', label: '发布中',     desc: '视频正在上传到平台' },
+  { key: 'published',  label: '已发布',     desc: '视频已成功发布' },
 ]
 
-const STATUS_ORDER = ['pending', 'generating', 'scoring', 'pending_publish', 'publishing', 'published']
-
-const CRITICAL_CHECKS = [
-  { key: 'temporal_consistency', label: '时序一致性', desc: '是否存在明显跨帧跳变' },
-  { key: 'character_integrity', label: '人物结构完整性', desc: '是否存在严重人物结构错误' },
-  { key: 'audio_sync', label: '声画同步', desc: '是否存在严重声画不同步' },
-]
+const STATUS_ORDER = ['pending', 'generating', 'reviewing', 'stashed', 'publishing', 'published']
 
 const DIMENSIONS = [
   { key: 'audio_visual', label: '声画与听觉', weight: 20, desc: 'BGM、节奏卡点、人声自然度、口型同步' },
@@ -542,21 +458,21 @@ const selecting = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
-// Elsa锐评分数：{ [subId]: number|null }
-const elsaScores = ref({})
 // 手动备注：{ [subId]: draftText }
 const manualNotes = ref({})
-// 关键穿帮检测：{ [subId]: { temporal_consistency: bool, ... } }
-const criticalChecks = ref({})
+// 是否穿帮：{ [subId]: bool|null }
+const hasNgFlags = ref({})
+// 穿帮时间点：{ [subId]: [{second, frame}, ...] }
+const ngTimestampsList = ref({})
 // 多维度打分：{ [subId]: { audio_visual: 3, ... } }
 const dimensionScores = ref({})
-// AI评分理由展开状态：{ [subId]: boolean }
-const aiReasonExpanded = ref({})
 // 保存中状态：{ [subId]: boolean }
 const savingNote = ref({})
 
 // 加入队列
 const enqueueing = ref(null)
+// 决策未通过
+const rejecting = ref(null)
 
 // 发布对话框（保留，备用）
 const publishDialogVisible = ref(false)
@@ -603,55 +519,13 @@ const timeline = computed(() => {
 })
 
 function canRollback(sub) {
-  return ['generating', 'pending_publish'].includes(sub.status)
-}
-
-function getAiScoreClass(score) {
-  if (score >= 80) return 'vtd-ai-high'
-  if (score >= 60) return 'vtd-ai-medium'
-  return 'vtd-ai-low'
-}
-
-function hasAiScores(sub) {
-  return (
-    sub.ai_score !== null && sub.ai_score !== undefined ||
-    sub.round1_score !== null && sub.round1_score !== undefined ||
-    sub.round2_score !== null && sub.round2_score !== undefined ||
-    !!sub.round1_reason ||
-    !!sub.round2_reason
-  )
-}
-
-function hasReviewingScores() {
-  if (!task.value?.sub_tasks) return false
-  return task.value.sub_tasks.some(
-    sub => (
-      ['reviewing', 'pending_publish', 'published', 'abandoned'].includes(sub.status) &&
-      (
-        sub.ai_score !== null && sub.ai_score !== undefined ||
-        sub.round1_score !== null && sub.round1_score !== undefined ||
-        sub.round2_score !== null && sub.round2_score !== undefined
-      )
-    )
-  )
-}
-
-function reviewingSubTasks() {
-  if (!task.value?.sub_tasks) return []
-  return task.value.sub_tasks.filter(
-    sub => ['reviewing', 'pending_publish', 'published', 'abandoned'].includes(sub.status)
-  ).filter(sub =>
-    sub.ai_score !== null && sub.ai_score !== undefined ||
-    sub.round1_score !== null && sub.round1_score !== undefined ||
-    sub.round2_score !== null && sub.round2_score !== undefined
-  )
+  return ['generating', 'stashed'].includes(sub.status)
 }
 
 function shouldAutoRefresh() {
   if (!task.value) return false
-  // Auto-refresh if any sub-task is in 'scoring' or 'generating' status or parent task is 'scoring' or 'generating'
-  return ['generating', 'scoring'].includes(task.value.status) ||
-         (task.value.sub_tasks && task.value.sub_tasks.some(sub => ['generating', 'scoring'].includes(sub.status)))
+  return task.value.status === 'generating' ||
+         (task.value.sub_tasks && task.value.sub_tasks.some(sub => sub.status === 'generating'))
 }
 
 async function loadTask(polling = false) {
@@ -675,18 +549,14 @@ async function loadTask(polling = false) {
       // 初始化 draft 状态（首次加载时同步数据库已有值）
       if (task.value?.sub_tasks) {
         task.value.sub_tasks.forEach(sub => {
-          if (elsaScores.value[sub.id] === undefined) {
-            elsaScores.value[sub.id] = sub.elsa_score ?? null
-          }
           if (manualNotes.value[sub.id] === undefined) {
             manualNotes.value[sub.id] = sub.manual_note ?? ''
           }
-          if (criticalChecks.value[sub.id] === undefined) {
-            criticalChecks.value[sub.id] = {
-              temporal_consistency: sub.temporal_consistency ?? null,
-              character_integrity: sub.character_integrity ?? null,
-              audio_sync: sub.audio_sync ?? null,
-            }
+          if (hasNgFlags.value[sub.id] === undefined) {
+            hasNgFlags.value[sub.id] = sub.has_ng ?? null
+          }
+          if (ngTimestampsList.value[sub.id] === undefined) {
+            ngTimestampsList.value[sub.id] = sub.ng_timestamps ? [...sub.ng_timestamps] : []
           }
           if (dimensionScores.value[sub.id] === undefined) {
             dimensionScores.value[sub.id] = sub.dimension_scores ? { ...sub.dimension_scores } : {}
@@ -746,24 +616,18 @@ async function handleSaveNote(sub) {
   if (savingNote.value[sub.id]) return
   savingNote.value[sub.id] = true
   try {
-    const checks = criticalChecks.value[sub.id] || {}
     const dims = dimensionScores.value[sub.id] || {}
+    const timestamps = ngTimestampsList.value[sub.id] || []
     const payload = {
       manual_note: manualNotes.value[sub.id] || null,
-      elsa_score: elsaScores.value[sub.id] ?? null,
-      temporal_consistency: checks.temporal_consistency ?? null,
-      character_integrity: checks.character_integrity ?? null,
-      audio_sync: checks.audio_sync ?? null,
+      has_ng: hasNgFlags.value[sub.id] ?? null,
+      ng_timestamps: timestamps.length > 0 ? timestamps : null,
       dimension_scores: Object.keys(dims).length > 0 ? dims : null,
     }
     const updated = await saveSubTaskNote(sub.id, payload)
-    sub.manual_score = updated.manual_score
     sub.manual_note = updated.manual_note
-    sub.elsa_score = updated.elsa_score
-    sub.temporal_consistency = updated.temporal_consistency
-    sub.character_integrity = updated.character_integrity
-    sub.audio_sync = updated.audio_sync
-    sub.critical_fail = updated.critical_fail
+    sub.has_ng = updated.has_ng
+    sub.ng_timestamps = updated.ng_timestamps
     sub.dimension_scores = updated.dimension_scores
     sub.weighted_total_score = updated.weighted_total_score
   } catch (e) {
@@ -773,10 +637,28 @@ async function handleSaveNote(sub) {
   }
 }
 
-async function setCriticalCheck(sub, key, value) {
-  if (!criticalChecks.value[sub.id]) criticalChecks.value[sub.id] = {}
-  criticalChecks.value[sub.id][key] = value
+async function setHasNg(sub, value) {
+  hasNgFlags.value[sub.id] = value
+  if (value === false) {
+    ngTimestampsList.value[sub.id] = []
+  }
   await handleSaveNote(sub)
+}
+
+function addNgTimestamp(sub) {
+  if (!ngTimestampsList.value[sub.id]) ngTimestampsList.value[sub.id] = []
+  ngTimestampsList.value[sub.id].push({ second: 0, frame: 0 })
+}
+
+function removeNgTimestamp(sub, idx) {
+  ngTimestampsList.value[sub.id].splice(idx, 1)
+  handleSaveNote(sub)
+}
+
+function updateNgTimestamp(sub, idx, field, value) {
+  if (!ngTimestampsList.value[sub.id]?.[idx]) return
+  ngTimestampsList.value[sub.id][idx][field] = value
+  handleSaveNote(sub)
 }
 
 async function setDimensionScore(sub, key, value) {
@@ -811,27 +693,34 @@ function onPublishSuccess() {
 
 async function handleSelect(sub) {
   await ElMessageBox.confirm(
-    `确认选择子任务 #${sub.sub_index} 的视频作为发布版本？另外两个子任务将被废弃。`,
-    '选择发布版本',
-    { confirmButtonText: '确认选择', cancelButtonText: '取消', type: 'warning' }
+    `确认通过子任务 #${sub.sub_index} 的视频？系统将根据评分自动决定是否进入发布候选池。`,
+    '通过决策',
+    { confirmButtonText: '确认通过', cancelButtonText: '取消', type: 'warning' }
   )
   selecting.value = sub.id
   try {
-    await patchSubTaskStatus(sub.id, { status: 'pending_publish', selected: true })
-    ElMessage.success('已选定发布版本')
-    // 本地更新状态，不刷新页面避免滚动位置丢失
-    sub.status = 'pending_publish'
-    sub.selected = true
-    for (const sibling of task.value.sub_tasks) {
-      if (sibling.id !== sub.id && sibling.status !== 'published' && sibling.status !== 'abandoned') {
-        sibling.status = 'abandoned'
-      }
-    }
-    task.value.status = 'pending_publish'
+    const updated = await patchSubTaskStatus(sub.id, { status: 'stashed', selected: true })
+    ElMessage.success('已通过，系统正在根据评分路由')
+    // 刷新完整任务状态（因为后端会自动路由到queued或abandoned）
+    await loadTask()
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   } finally {
     selecting.value = null
+  }
+}
+
+async function handleReject(sub) {
+  rejecting.value = sub.id
+  try {
+    await patchSubTaskStatus(sub.id, { status: 'decision_rejected' })
+    ElMessage.success('已标记为决策未通过')
+    sub.status = 'decision_rejected'
+    task.value.status = 'decision_rejected'
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    rejecting.value = null
   }
 }
 
@@ -893,9 +782,9 @@ watch(() => route.params.id, async (newId, oldId) => {
     stopAutoRefresh()
     task.value = null
     account.value = null
-    elsaScores.value = {}
     manualNotes.value = {}
-    criticalChecks.value = {}
+    hasNgFlags.value = {}
+    ngTimestampsList.value = {}
     dimensionScores.value = {}
     navInfo.value = null
     await loadTask()
@@ -1625,65 +1514,30 @@ onUnmounted(() => {
   color: #a5b4fc;
 }
 
-/* Critical checks section */
-.vtd-critical-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.vtd-critical-title,
-.vtd-dimension-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #374151;
-  letter-spacing: 0.02em;
-}
-
-.vtd-critical-checks {
+/* NG Detection section */
+.vtd-ng-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-bottom: 12px;
 }
 
-.vtd-critical-item {
+.vtd-ng-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  transition: all 0.15s;
 }
 
-.vtd-critical-item.vtd-critical-pass {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-}
-
-.vtd-critical-item.vtd-critical-fail {
-  background: #fef2f2;
-  border-color: #fecaca;
-}
-
-.vtd-critical-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-  min-width: 100px;
-}
-
-.vtd-critical-desc {
+.vtd-ng-label {
   font-size: 12px;
-  color: #64748b;
-  flex: 1;
+  font-weight: 700;
+  color: #374151;
+  min-width: 90px;
 }
 
-.vtd-critical-btns {
+.vtd-ng-btns {
   display: flex;
-  gap: 4px;
-  margin-left: auto;
+  gap: 6px;
 }
 
 .vtd-ck-btn {
@@ -1713,26 +1567,77 @@ onUnmounted(() => {
   border-color: #94a3b8;
 }
 
-.vtd-critical-verdict {
+.vtd-ng-timestamps {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  padding: 8px 12px;
+  padding: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
   border-radius: 8px;
 }
 
-.vtd-verdict-fail {
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fecaca;
+.vtd-ng-ts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.vtd-verdict-pass {
-  background: #f0fdf4;
-  color: #16a34a;
-  border: 1px solid #bbf7d0;
+.vtd-ng-ts-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #dc2626;
+}
+
+.vtd-ng-add-btn {
+  font-size: 11px;
+  color: #6366f1;
+  background: none;
+  border: 1px solid #a5b4fc;
+  border-radius: 5px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.vtd-ng-add-btn:hover { background: #eef2ff; }
+
+.vtd-ng-ts-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vtd-ng-ts-input {
+  width: 64px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  background: #fff;
+  text-align: center;
+}
+
+.vtd-ng-ts-sep {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.vtd-ng-del-btn {
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.vtd-dimension-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  letter-spacing: 0.02em;
 }
 
 /* Dimension scoring */

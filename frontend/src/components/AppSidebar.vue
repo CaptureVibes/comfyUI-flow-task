@@ -147,6 +147,18 @@ const IconTaskMgmt = () => h('svg', {
   h('polyline', { points: '9 16 11 18 15 14' })
 ])
 
+// 审核人统计图标 (users)
+const IconOperatorStats = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('path', { d: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2' }),
+  h('circle', { cx: 9, cy: 7, r: 4 }),
+  h('path', { d: 'M23 21v-2a4 4 0 0 0-3-3.87' }),
+  h('path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' })
+])
+
 // AI博主图标 (id card)
 const IconAccount = () => h('svg', {
   width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
@@ -217,6 +229,7 @@ const baseMenuItems = [
   { path: '/dashboard/face-library', name: 'face-library', label: '人脸库', iconComponent: IconFaceLibrary },
   { path: '/dashboard/accounts', name: 'accounts', label: 'AI博主', iconComponent: IconAccount },
   { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: 'TASKS', iconComponent: IconTaskMgmt },
+  { path: '/dashboard/operator-stats', name: 'operator-stats', label: '审核统计', iconComponent: IconOperatorStats },
   { path: '/dashboard/tiktok-bloggers', name: 'tiktok-bloggers', label: 'TK博主', iconComponent: IconTiktokBlogger },
   { path: '/dashboard/settings', name: 'settings', label: '设置', iconComponent: IconSetting }
 ]

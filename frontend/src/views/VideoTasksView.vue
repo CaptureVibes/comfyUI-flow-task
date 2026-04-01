@@ -68,16 +68,6 @@
           获取生成结果
         </button>
         <button
-          class="vt-btn vt-btn-warning"
-          :class="{ 'is-loading': continuingScoring }"
-          :disabled="continuingScoring || !(taskStats.scoring > 0)"
-          @click="handleResumeScoring"
-        >
-          <svg v-if="!continuingScoring" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 4.36A9 9 0 0 0 20.49 15"/></svg>
-          <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-          一键继续AI打分
-        </button>
-        <button
           class="vt-btn vt-btn-secondary"
           :class="{ 'is-loading': batchReanalyzing }"
           :disabled="batchReanalyzing"
@@ -86,6 +76,16 @@
           <svg v-if="!batchReanalyzing" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
           <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
           一键重新分析
+        </button>
+        <button
+          class="vt-btn vt-btn-warning"
+          :class="{ 'is-loading': routingStashed }"
+          :disabled="routingStashed || !(taskStats.stashed > 0)"
+          @click="handleRouteStashed"
+        >
+          <svg v-if="!routingStashed" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          批量进入候选池
         </button>
         <button
           class="vt-btn vt-btn-primary"
@@ -130,16 +130,16 @@
       </div>
       <div
         class="vt-stat-card"
-        :class="{ 'vt-stat-active': activeFilter === 'scoring' }"
-        style="--stat-color: #9333ea; --stat-bg: #fdf4ff;"
-        @click="toggleFilter('scoring')"
+        :class="{ 'vt-stat-active': activeFilter === 'stashed' }"
+        style="--stat-color: #d97706; --stat-bg: #fef3c7;"
+        @click="toggleFilter('stashed')"
       >
         <div class="vt-stat-top">
-          <span class="vt-stat-label">AI打分中</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span class="vt-stat-label">暂存</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
-        <div class="vt-stat-value">{{ taskStats.scoring || 0 }}</div>
-        <div class="vt-stat-sub">scoring</div>
+        <div class="vt-stat-value">{{ taskStats.stashed || 0 }}</div>
+        <div class="vt-stat-sub">stashed</div>
       </div>
       <div
         class="vt-stat-card"
@@ -156,16 +156,16 @@
       </div>
       <div
         class="vt-stat-card"
-        :class="{ 'vt-stat-active': activeFilter === 'pending_publish' }"
-        style="--stat-color: #d97706; --stat-bg: #fef3c7;"
-        @click="toggleFilter('pending_publish')"
+        :class="{ 'vt-stat-active': activeFilter === 'decision_rejected' }"
+        style="--stat-color: #ef4444; --stat-bg: #fef2f2;"
+        @click="toggleFilter('decision_rejected')"
       >
         <div class="vt-stat-top">
-          <span class="vt-stat-label">待发布</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="vt-stat-label">决策未通过</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
         </div>
-        <div class="vt-stat-value">{{ taskStats.pending_publish || 0 }}</div>
-        <div class="vt-stat-sub">pending_publish</div>
+        <div class="vt-stat-value">{{ taskStats.decision_rejected || 0 }}</div>
+        <div class="vt-stat-sub">decision_rejected</div>
       </div>
       <div
         class="vt-stat-card"
@@ -255,7 +255,7 @@
             </div>
             <!-- Go to account to publish -->
             <button
-              v-if="task.status === 'pending_publish' && task.account_id"
+              v-if="task.status === 'queued' && task.account_id"
               class="vt-publish-btn"
               @click="router.push(`/dashboard/accounts/${task.account_id}`)"
             >
@@ -385,7 +385,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, resumeVideoTaskScoring } from '../api/video_tasks.js'
+import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed } from '../api/video_tasks.js'
 import { batchReanalyzeTemplates } from '../api/video_ai_templates.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
@@ -405,9 +405,9 @@ const vClickOutside = {
 const STATUS_LABELS = {
   pending: '待处理',
   generating: '生成中',
-  scoring: 'AI打分中',
   reviewing: '待决策',
-  pending_publish: '待发布',
+  stashed: '暂存',
+  decision_rejected: '决策未通过',
   queued: '队列中',
   publishing: '发布中',
   published: '已发布',
@@ -432,8 +432,8 @@ const total = ref(0)
 const loading = ref(false)
 const uploading = ref(false)
 const fetchingResults = ref(false)
-const continuingScoring = ref(false)
 const batchReanalyzing = ref(false)
+const routingStashed = ref(false)
 const taskStats = ref({})
 
 // Blogger searchable dropdown state
@@ -572,7 +572,7 @@ async function handleUpload() {
   try {
     const res = await uploadVideoTasks(targetDate.value)
     ElMessage.success(res.message || '后台上传任务已启动')
-    await pollUntilStatusChanges(['pending'], ['generating', 'scoring', 'pending_publish', 'published', 'abandoned'])
+    await pollUntilStatusChanges(['pending'], ['generating', 'reviewing', 'stashed', 'published', 'abandoned'])
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '上传失败')
   } finally {
@@ -608,22 +608,18 @@ async function handleFetchResults() {
   }
 }
 
-async function handleResumeScoring() {
+async function handleRouteStashed() {
   if (!targetDate.value) return
-  if (!(taskStats.value.scoring > 0)) {
-    ElMessage.warning('当前没有 AI 打分中的任务')
-    return
-  }
-  continuingScoring.value = true
+  routingStashed.value = true
   try {
-    const res = await resumeVideoTaskScoring(targetDate.value)
-    ElMessage.success(res.message || 'AI 打分继续任务已加入队列')
+    const res = await batchRouteStashed(targetDate.value)
+    ElMessage.success(`批量路由完成：${res.queued} 个进入候选池，${res.abandoned} 个废弃`)
     await loadTasks()
     await loadStats()
   } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '继续 AI 打分失败')
+    ElMessage.error(e?.response?.data?.detail || '批量路由失败')
   } finally {
-    continuingScoring.value = false
+    routingStashed.value = false
   }
 }
 
@@ -1118,15 +1114,15 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-.vt-status-pending         { background: #f1f5f9; color: #64748b; }
-.vt-status-generating      { background: #eff6ff; color: #3b82f6; }
-.vt-status-scoring         { background: #fdf4ff; color: #9333ea; }
-.vt-status-reviewing       { background: #fef9c3; color: #854d0e; }
-.vt-status-pending_publish { background: #fef3c7; color: #d97706; }
-.vt-status-queued          { background: #ede9fe; color: #8b5cf6; }
-.vt-status-publishing      { background: #ede9fe; color: #7c3aed; }
-.vt-status-published       { background: #dcfce7; color: #15803d; }
-.vt-status-abandoned       { background: #fee2e2; color: #b91c1c; }
+.vt-status-pending           { background: #f1f5f9; color: #64748b; }
+.vt-status-generating        { background: #eff6ff; color: #3b82f6; }
+.vt-status-reviewing         { background: #fef9c3; color: #854d0e; }
+.vt-status-stashed           { background: #fef3c7; color: #d97706; }
+.vt-status-decision_rejected { background: #fef2f2; color: #ef4444; }
+.vt-status-queued            { background: #ede9fe; color: #8b5cf6; }
+.vt-status-publishing        { background: #ede9fe; color: #7c3aed; }
+.vt-status-published         { background: #dcfce7; color: #15803d; }
+.vt-status-abandoned         { background: #fee2e2; color: #b91c1c; }
 
 .vt-publish-btn {
   display: flex;

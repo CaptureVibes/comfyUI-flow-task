@@ -149,6 +149,12 @@ const routes = [
         meta: { title: '任务详情', parent: 'daily-tasks' }
       },
       {
+        path: 'operator-stats',
+        name: 'operator-stats',
+        component: () => import('../views/OperatorStatsView.vue'),
+        meta: { title: '审核人统计' }
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('../views/SettingsView.vue'),

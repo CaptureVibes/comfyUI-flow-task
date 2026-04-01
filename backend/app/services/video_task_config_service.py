@@ -1,4 +1,4 @@
-"""Service for managing video task AI scoring configuration."""
+"""Service for managing video task pipeline and publish pool configuration."""
 from __future__ import annotations
 
 import uuid
@@ -25,35 +25,15 @@ class VideoTaskConfigService:
         config = await self.db.get(VideoTaskConfig, owner_id)
 
         if config is None:
-            # Create new with defaults merged with updates
             config = VideoTaskConfig(owner_id=owner_id)
             self.db.add(config)
 
-        # Apply non-None updates
-        if update.round1_enabled is not None:
-            config.round1_enabled = update.round1_enabled
-        if update.round1_prompt is not None:
-            config.round1_prompt = update.round1_prompt
-        if update.round1_model is not None:
-            config.round1_model = update.round1_model
-        if update.round1_threshold is not None:
-            config.round1_threshold = update.round1_threshold
-        if update.round1_weight is not None:
-            config.round1_weight = update.round1_weight
-
-        if update.round2_enabled is not None:
-            config.round2_enabled = update.round2_enabled
-        if update.round2_prompt is not None:
-            config.round2_prompt = update.round2_prompt
-        if update.round2_model is not None:
-            config.round2_model = update.round2_model
-        if update.round2_threshold is not None:
-            config.round2_threshold = update.round2_threshold
-        if update.round2_weight is not None:
-            config.round2_weight = update.round2_weight
-
-        if update.final_threshold is not None:
-            config.final_threshold = update.final_threshold
+        if update.score_threshold_high is not None:
+            config.score_threshold_high = update.score_threshold_high
+        if update.score_threshold_low is not None:
+            config.score_threshold_low = update.score_threshold_low
+        if update.pool_ratio is not None:
+            config.pool_ratio = update.pool_ratio
 
         if update.auto_publish_enabled is not None:
             config.auto_publish_enabled = update.auto_publish_enabled

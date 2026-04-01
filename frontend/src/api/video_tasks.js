@@ -118,3 +118,19 @@ export async function saveSubTaskNote(subTaskId, payload) {
   const { data } = await http.patch(`/video-tasks/subtasks/${subTaskId}/note`, payload)
   return data
 }
+
+export async function fetchReviewingSubtasks(page = 1, pageSize = 20) {
+  const { data } = await http.get('/video-tasks/subtasks', { params: { page, page_size: pageSize } })
+  return data
+}
+
+export async function batchRouteStashed(targetDate) {
+  const { data } = await http.post(`/video-tasks/daily/${targetDate}/route-stashed`)
+  return data
+}
+
+export async function fetchOperatorStats(targetDate = null) {
+  const params = targetDate ? { target_date: targetDate } : {}
+  const { data } = await http.get('/video-tasks/operator-stats', { params })
+  return data
+}

@@ -12,169 +12,77 @@
 
     <div v-loading="loading" class="tc-body">
 
-      <!-- ── 第一轮 AI 打分 ── -->
+      <!-- ── 发布候选池配置 ── -->
       <div class="tc-card">
         <div class="tc-card-header">
           <div class="tc-card-title-wrap">
             <span class="tc-card-icon tc-icon-blue">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
             </span>
-            <span class="tc-card-title">第一轮 AI 打分</span>
-          </div>
-          <el-switch v-model="config.round1_enabled" />
-        </div>
-        <div class="tc-card-body" :class="{ disabled: !config.round1_enabled }">
-          <div class="tc-field">
-            <label class="tc-label">提示词</label>
-            <textarea
-              v-model="config.round1_prompt"
-              class="tc-textarea"
-              rows="4"
-              placeholder="输入第一轮 AI 打分的提示词..."
-              :disabled="!config.round1_enabled"
-            />
-          </div>
-          <div class="tc-row">
-            <div class="tc-field tc-field-half">
-              <label class="tc-label">模型</label>
-              <input
-                v-model="config.round1_model"
-                class="tc-input"
-                placeholder="如: gemini-3.1-pro-preview"
-                :disabled="!config.round1_enabled"
-              />
-            </div>
-            <div class="tc-field tc-field-half">
-              <label class="tc-label">权重</label>
-              <div class="tc-number-wrap">
-                <button class="tc-num-btn" @click="adjustWeight('round1_weight', -0.05)" :disabled="!config.round1_enabled">−</button>
-                <input
-                  v-model.number="config.round1_weight"
-                  class="tc-input tc-input-center"
-                  type="number"
-                  :min="0" :max="1" :step="0.05"
-                  :disabled="!config.round1_enabled"
-                />
-                <button class="tc-num-btn" @click="adjustWeight('round1_weight', 0.05)" :disabled="!config.round1_enabled">+</button>
-              </div>
-              <p class="tc-hint">最终得分 = 第一轮 × {{ config.round1_weight.toFixed(2) }} + 第二轮 × {{ config.round2_weight.toFixed(2) }}</p>
-            </div>
-          </div>
-          <div class="tc-field">
-            <label class="tc-label">
-              通过阈值
-              <span class="tc-threshold-val">{{ config.round1_threshold }}</span>
-            </label>
-            <div class="tc-slider-wrap">
-              <input
-                v-model.number="config.round1_threshold"
-                type="range" :min="0" :max="100" :step="1"
-                class="tc-slider"
-                :style="sliderStyle(config.round1_threshold)"
-                :disabled="!config.round1_enabled"
-              />
-              <div class="tc-slider-marks">
-                <span>0</span><span>分数达到此阈值可进入第二轮</span><span>100</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── 第二轮 AI 打分 ── -->
-      <div class="tc-card">
-        <div class="tc-card-header">
-          <div class="tc-card-title-wrap">
-            <span class="tc-card-icon tc-icon-purple">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-            </span>
-            <span class="tc-card-title">第二轮 AI 打分</span>
-          </div>
-          <el-switch v-model="config.round2_enabled" />
-        </div>
-        <div class="tc-card-body" :class="{ disabled: !config.round2_enabled }">
-          <div class="tc-field">
-            <label class="tc-label">提示词</label>
-            <textarea
-              v-model="config.round2_prompt"
-              class="tc-textarea"
-              rows="4"
-              placeholder="输入第二轮 AI 打分的提示词..."
-              :disabled="!config.round2_enabled"
-            />
-          </div>
-          <div class="tc-row">
-            <div class="tc-field tc-field-half">
-              <label class="tc-label">模型</label>
-              <input
-                v-model="config.round2_model"
-                class="tc-input"
-                placeholder="如: gemini-3.1-pro-preview"
-                :disabled="!config.round2_enabled"
-              />
-            </div>
-            <div class="tc-field tc-field-half">
-              <label class="tc-label">权重</label>
-              <div class="tc-number-wrap">
-                <button class="tc-num-btn" @click="adjustWeight('round2_weight', -0.05)" :disabled="!config.round2_enabled">−</button>
-                <input
-                  v-model.number="config.round2_weight"
-                  class="tc-input tc-input-center"
-                  type="number"
-                  :min="0" :max="1" :step="0.05"
-                  :disabled="!config.round2_enabled"
-                />
-                <button class="tc-num-btn" @click="adjustWeight('round2_weight', 0.05)" :disabled="!config.round2_enabled">+</button>
-              </div>
-              <p class="tc-hint">最终得分 = 第一轮 × {{ config.round1_weight.toFixed(2) }} + 第二轮 × {{ config.round2_weight.toFixed(2) }}</p>
-            </div>
-          </div>
-          <div class="tc-field">
-            <label class="tc-label">
-              通过阈值
-              <span class="tc-threshold-val">{{ config.round2_threshold }}</span>
-            </label>
-            <div class="tc-slider-wrap">
-              <input
-                v-model.number="config.round2_threshold"
-                type="range" :min="0" :max="100" :step="1"
-                class="tc-slider"
-                :style="sliderStyle(config.round2_threshold)"
-                :disabled="!config.round2_enabled"
-              />
-              <div class="tc-slider-marks">
-                <span>0</span><span>第二轮的通过阈值（仅用于标记）</span><span>100</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── 最终阈值 ── -->
-      <div class="tc-card">
-        <div class="tc-card-header">
-          <div class="tc-card-title-wrap">
-            <span class="tc-card-icon tc-icon-green">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </span>
-            <span class="tc-card-title">最终阈值</span>
+            <span class="tc-card-title">发布候选池配置</span>
           </div>
         </div>
         <div class="tc-card-body">
+          <div class="tc-info-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <p>
+              有穿帮（has_ng=true）→ 直接废弃；<br>
+              AI 感 ≥ 进入候选池分数线 → 进入发布队列；<br>
+              AI 感 &lt; 丢弃分数线 → 废弃；<br>
+              中间区间 → 按比例随机进入候选池。
+            </p>
+          </div>
+
           <div class="tc-field">
             <label class="tc-label">
-              通过阈值
-              <span class="tc-threshold-val">{{ config.final_threshold }}</span>
+              AI 感进入候选池分数线
+              <span class="tc-threshold-val">{{ config.score_threshold_high }}</span>
             </label>
             <div class="tc-slider-wrap">
               <input
-                v-model.number="config.final_threshold"
+                v-model.number="config.score_threshold_high"
                 type="range" :min="0" :max="100" :step="1"
                 class="tc-slider"
-                :style="sliderStyle(config.final_threshold)"
+                :style="sliderStyle(config.score_threshold_high)"
               />
               <div class="tc-slider-marks">
-                <span>0</span><span>加权平均分达到此阈值才能进入「待审核」状态</span><span>100</span>
+                <span>0</span><span>多维度加权总分达到此值进入候选池</span><span>100</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tc-field">
+            <label class="tc-label">
+              AI 感丢弃分数线
+              <span class="tc-threshold-val">{{ config.score_threshold_low }}</span>
+            </label>
+            <div class="tc-slider-wrap">
+              <input
+                v-model.number="config.score_threshold_low"
+                type="range" :min="0" :max="100" :step="1"
+                class="tc-slider"
+                :style="sliderStyle(config.score_threshold_low)"
+              />
+              <div class="tc-slider-marks">
+                <span>0</span><span>低于此分数直接废弃</span><span>100</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tc-field">
+            <label class="tc-label">
+              中间区间进入候选池比例
+              <span class="tc-threshold-val">{{ Math.round(config.pool_ratio * 100) }}%</span>
+            </label>
+            <div class="tc-slider-wrap">
+              <input
+                v-model.number="config.pool_ratio"
+                type="range" :min="0" :max="1" :step="0.01"
+                class="tc-slider"
+                :style="sliderStyle(config.pool_ratio * 100)"
+              />
+              <div class="tc-slider-marks">
+                <span>0%</span><span>中间区间内随机进入候选池的概率</span><span>100%</span>
               </div>
             </div>
           </div>
@@ -221,10 +129,6 @@
 
       <!-- ── Save ── -->
       <div class="tc-actions">
-        <div v-if="weightError" class="tc-weight-error">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          权重之和应为 1.0，当前为 {{ (config.round1_weight + config.round2_weight).toFixed(2) }}
-        </div>
         <button class="tc-save-btn" :class="{ loading: saving }" :disabled="saving" @click="saveConfig">
           <span v-if="saving" class="tc-btn-spin"></span>
           <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="margin-right:6px"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -237,7 +141,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchTaskConfig, updateTaskConfig } from '../api/video_task_config'
@@ -247,25 +151,12 @@ const loading = ref(false)
 const saving = ref(false)
 
 const config = reactive({
-  round1_enabled: true,
-  round1_prompt: '',
-  round1_model: 'gemini-3.1-pro-preview',
-  round1_threshold: 60,
-  round1_weight: 0.7,
-  round2_enabled: true,
-  round2_prompt: '',
-  round2_model: 'gemini-3.1-pro-preview',
-  round2_threshold: 70,
-  round2_weight: 0.3,
-  final_threshold: 65,
+  score_threshold_high: 60,
+  score_threshold_low: 20,
+  pool_ratio: 0.75,
   auto_publish_enabled: false,
   auto_publish_model: 'gemini-3.1-pro-preview',
   auto_publish_prompt: '',
-})
-
-const weightError = computed(() => {
-  const sum = config.round1_weight + config.round2_weight
-  return Math.abs(sum - 1) > 0.01
 })
 
 function sliderStyle(val) {
@@ -273,11 +164,6 @@ function sliderStyle(val) {
   return {
     background: `linear-gradient(to right, #6366f1 ${pct}, #e2e8f0 ${pct})`,
   }
-}
-
-function adjustWeight(key, delta) {
-  const val = Math.round((config[key] + delta) * 100) / 100
-  config[key] = Math.min(1, Math.max(0, val))
 }
 
 async function loadConfig() {
@@ -293,10 +179,6 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
-  if (weightError.value) {
-    ElMessage.warning(`权重之和应为 1.0，当前为 ${(config.round1_weight + config.round2_weight).toFixed(2)}`)
-    return
-  }
   saving.value = true
   try {
     await updateTaskConfig(config)
@@ -413,8 +295,6 @@ onMounted(loadConfig)
 }
 
 .tc-icon-blue   { background: #eff6ff; color: #3b82f6; }
-.tc-icon-purple { background: #f5f3ff; color: #8b5cf6; }
-.tc-icon-green  { background: #f0fdf4; color: #10b981; }
 .tc-icon-orange { background: #fff7ed; color: #f59e0b; }
 
 .tc-card-title {
@@ -428,28 +308,13 @@ onMounted(loadConfig)
   display: flex;
   flex-direction: column;
   gap: 20px;
-  transition: opacity 0.2s;
-}
-
-.tc-card-body.disabled {
-  opacity: 0.45;
-  pointer-events: none;
 }
 
 /* ── Form fields ── */
-.tc-row {
-  display: flex;
-  gap: 16px;
-}
-
 .tc-field {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
-}
-
-.tc-field-half {
   flex: 1;
 }
 
@@ -495,10 +360,6 @@ onMounted(loadConfig)
   box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
 }
 
-.tc-input:disabled { background: #f8fafc; color: #94a3b8; }
-
-.tc-input-center { text-align: center; }
-
 .tc-textarea {
   padding: 10px 12px;
   border: 1.5px solid #e2e8f0;
@@ -518,53 +379,6 @@ onMounted(loadConfig)
 .tc-textarea:focus {
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-}
-
-.tc-textarea:disabled { background: #f8fafc; color: #94a3b8; }
-
-/* ── Number input ── */
-.tc-number-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.tc-number-wrap .tc-input {
-  border-radius: 0;
-  border-left: none;
-  border-right: none;
-  text-align: center;
-}
-
-.tc-num-btn {
-  width: 40px;
-  height: 40px;
-  border: 1.5px solid #e2e8f0;
-  background: #f8fafc;
-  color: #475569;
-  font-size: 18px;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.15s;
-  line-height: 1;
-}
-
-.tc-num-btn:first-child { border-radius: 10px 0 0 10px; }
-.tc-num-btn:last-child  { border-radius: 0 10px 10px 0; }
-
-.tc-num-btn:hover:not(:disabled) {
-  background: #eef2ff;
-  border-color: #6366f1;
-  color: #6366f1;
-}
-
-.tc-num-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.tc-hint {
-  font-size: 12px;
-  color: #94a3b8;
-  margin: 0;
-  line-height: 1.5;
 }
 
 /* ── Slider ── */
@@ -597,11 +411,6 @@ onMounted(loadConfig)
 
 .tc-slider::-webkit-slider-thumb:hover {
   box-shadow: 0 2px 10px rgba(99,102,241,0.5);
-}
-
-.tc-slider:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .tc-slider-marks {
@@ -644,14 +453,6 @@ onMounted(loadConfig)
   justify-content: flex-end;
   gap: 14px;
   padding: 8px 0 16px;
-}
-
-.tc-weight-error {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #ef4444;
 }
 
 .tc-save-btn {

@@ -105,6 +105,21 @@ def get_current_user(
     return verify_access_token(credentials.credentials)
 
 
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> TokenData | None:
+    """
+    Like get_current_user but returns None instead of raising 401 when no/invalid token.
+    Use for endpoints that are accessible without login but behave differently when logged in.
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return None
+    try:
+        return verify_access_token(credentials.credentials)
+    except HTTPException:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Back-compat alias — remove once all callers are migrated
 # ---------------------------------------------------------------------------

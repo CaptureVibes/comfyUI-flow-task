@@ -21,19 +21,10 @@ class VideoSubTaskRead(BaseModel):
     status: str
     result_video_url: str | None = None
     selected: bool
-    ai_score: int | None = None  # Final AI score 0-100
-    round1_score: int | None = None
-    round2_score: int | None = None
-    round1_reason: str | None = None
-    round2_reason: str | None = None
-    scoring_error: str | None = None  # Error message when AI scoring fails
-    manual_score: int | None = None  # User-written score (0-100)
-    manual_note: str | None = None   # User-written note, independent of AI scoring
-    elsa_score: int | None = None    # Elsa review score (0-100)
-    temporal_consistency: bool | None = None
-    character_integrity: bool | None = None
-    audio_sync: bool | None = None
-    critical_fail: bool | None = None
+    manual_note: str | None = None
+    operator: str | None = None
+    has_ng: bool | None = None
+    ng_timestamps: list | None = None   # [{"second": 10, "frame": 5}, ...]
     dimension_scores: dict | None = None
     weighted_total_score: float | None = None
     queue_order: int | None = None
@@ -80,21 +71,25 @@ class VideoTaskListPage(BaseModel):
     page_size: int
 
 
+class VideoSubTaskListPage(BaseModel):
+    items: list[VideoSubTaskRead]
+    total: int
+    page: int
+    page_size: int
+
+
 class VideoSubTaskStatusUpdate(BaseModel):
     status: str
     result_video_url: str | None = None
-    # When selecting a video for publishing: set selected=True to trigger
-    # pending_publish transition and abandon the other two sub-tasks
+    # When selecting a video: set selected=True to trigger stashed transition and abandon siblings
     selected: bool | None = None
 
 
 class VideoSubTaskNoteUpdate(BaseModel):
-    manual_score: int | None = None
+    operator: str | None = None  # 无 token 时必须传；有 token 时忽略（取登录用户名）
     manual_note: str | None = None
-    elsa_score: int | None = None
-    temporal_consistency: bool | None = None
-    character_integrity: bool | None = None
-    audio_sync: bool | None = None
+    has_ng: bool | None = None
+    ng_timestamps: list | None = None   # [{"second": 10, "frame": 5}, ...]
     dimension_scores: dict | None = None
 
 
@@ -102,12 +97,6 @@ class VideoSubTaskStateRead(BaseModel):
     id: uuid.UUID
     status: str
     result_video_url: str | None = None
-    ai_score: int | None = None
-    round1_score: int | None = None
-    round2_score: int | None = None
-    round1_reason: str | None = None
-    round2_reason: str | None = None
-    scoring_error: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -120,6 +109,25 @@ class VideoTaskStateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OperatorSubTaskItem(BaseModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    sub_index: int
+    status: str
+    result_video_url: str | None = None
+    has_ng: bool | None = None
+    weighted_total_score: float | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OperatorStatItem(BaseModel):
+    operator: str
+    count: int
+    sub_tasks: list[OperatorSubTaskItem]
+
+
 class TaskNavItem(BaseModel):
     id: uuid.UUID
     status: str
@@ -130,7 +138,7 @@ class TaskNavItem(BaseModel):
 class VideoTaskNavRead(BaseModel):
     position: int        # 0-based index in account task list (DESC by created_at)
     total: int           # total tasks for this account
-    selected_count: int  # tasks with pending_publish/queued/publishing/published status
+    selected_count: int  # tasks with stashed/queued/publishing/published status
     prev_task: TaskNavItem | None = None
     next_task: TaskNavItem | None = None
     prev_blogger_task: TaskNavItem | None = None
