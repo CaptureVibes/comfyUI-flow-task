@@ -269,7 +269,7 @@
                 class="vtd-note-textarea"
                 placeholder="输入评分理由或备注..."
                 rows="3"
-                @blur="handleSaveNote(sub)"
+                @blur=""
               />
             </div>
 
@@ -283,8 +283,8 @@
               v-if="sub.status === 'reviewing'"
               type="primary"
               size="small"
-              :loading="selecting === sub.id"
-              @click="handleSelect(sub)"
+              :loading="savingNote[sub.id]"
+              @click="handleSaveNote(sub)"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>
               通过
@@ -454,7 +454,6 @@ const router = useRouter()
 const task = ref(null)
 const account = ref(null)
 const loading = ref(false)
-const selecting = ref(null)
 const rollbacking = ref(null)
 const promptExpanded = ref(false)
 
@@ -625,13 +624,10 @@ async function handleSaveNote(sub) {
       dimension_scores: Object.keys(dims).length > 0 ? dims : null,
     }
     const updated = await saveSubTaskNote(sub.id, payload)
-    sub.manual_note = updated.manual_note
-    sub.has_ng = updated.has_ng
-    sub.ng_timestamps = updated.ng_timestamps
-    sub.dimension_scores = updated.dimension_scores
-    sub.weighted_total_score = updated.weighted_total_score
+    ElMessage.success('审核已提交，视频已进入暂存')
+    await loadTask()
   } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || '提交失败')
   } finally {
     savingNote.value[sub.id] = false
   }
@@ -642,7 +638,6 @@ async function setHasNg(sub, value) {
   if (value === false) {
     ngTimestampsList.value[sub.id] = []
   }
-  await handleSaveNote(sub)
 }
 
 function addNgTimestamp(sub) {
@@ -652,19 +647,16 @@ function addNgTimestamp(sub) {
 
 function removeNgTimestamp(sub, idx) {
   ngTimestampsList.value[sub.id].splice(idx, 1)
-  handleSaveNote(sub)
 }
 
 function updateNgTimestamp(sub, idx, field, value) {
   if (!ngTimestampsList.value[sub.id]?.[idx]) return
   ngTimestampsList.value[sub.id][idx][field] = value
-  handleSaveNote(sub)
 }
 
 async function setDimensionScore(sub, key, value) {
   if (!dimensionScores.value[sub.id]) dimensionScores.value[sub.id] = {}
   dimensionScores.value[sub.id][key] = value
-  await handleSaveNote(sub)
 }
 
 async function handleEnqueue(sub) {
@@ -689,25 +681,6 @@ function openPublishDialog(sub) {
 function onPublishSuccess() {
   publishDialogVisible.value = false
   loadTask()
-}
-
-async function handleSelect(sub) {
-  await ElMessageBox.confirm(
-    `确认通过子任务 #${sub.sub_index} 的视频？系统将根据评分自动决定是否进入发布候选池。`,
-    '通过决策',
-    { confirmButtonText: '确认通过', cancelButtonText: '取消', type: 'warning' }
-  )
-  selecting.value = sub.id
-  try {
-    const updated = await patchSubTaskStatus(sub.id, { status: 'stashed', selected: true })
-    ElMessage.success('已通过，系统正在根据评分路由')
-    // 刷新完整任务状态（因为后端会自动路由到queued或abandoned）
-    await loadTask()
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '操作失败')
-  } finally {
-    selecting.value = null
-  }
 }
 
 async function handleReject(sub) {
