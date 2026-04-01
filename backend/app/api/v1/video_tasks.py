@@ -281,15 +281,22 @@ async def list_reviewing_subtasks(
         page_size=page_size,
     )
 
-@router.post("/daily/{target_date}/route-stashed", response_model=dict)
+@router.post("/daily/{target_date}/route-stashed", status_code=202)
 async def batch_route_stashed(
     target_date: date,
+    background_tasks: BackgroundTasks,
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
-    session: AsyncSession = Depends(get_db),
 ) -> Any:
-    """将指定日期所有暂存（stashed）的子任务按评分规则批量路由到队列或废弃"""
-    svc = VideoTaskService(db=session)
-    return await svc.batch_route_stashed(target_date, owner_id)
+    """将指定日期所有暂存（stashed）的父任务按评分规则批量路由到队列或废弃（后台异步执行）"""
+    from app.db.session import SessionLocal
+
+    async def _run() -> None:
+        async with SessionLocal() as bg_session:
+            svc = VideoTaskService(db=bg_session)
+            await svc.batch_route_stashed(target_date, owner_id)
+
+    background_tasks.add_task(_run)
+    return {"status": "accepted"}
 
 
 @router.get("/operator-stats", response_model=list[OperatorStatItem])

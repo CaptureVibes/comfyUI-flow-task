@@ -612,13 +612,15 @@ async function handleRouteStashed() {
   if (!targetDate.value) return
   routingStashed.value = true
   try {
-    const res = await batchRouteStashed(targetDate.value)
-    ElMessage.success(`批量路由完成：${res.queued} 个进入候选池，${res.abandoned} 个废弃`)
-    await loadTasks()
-    await loadStats()
+    await batchRouteStashed(targetDate.value)
+    ElMessage.success('已提交，正在后台处理，稍后自动刷新')
+    setTimeout(async () => {
+      await loadTasks()
+      await loadStats()
+      routingStashed.value = false
+    }, 3000)
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '批量路由失败')
-  } finally {
     routingStashed.value = false
   }
 }

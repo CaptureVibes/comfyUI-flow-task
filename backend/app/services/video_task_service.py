@@ -52,7 +52,8 @@ PREV_STATUS: dict[str, str] = {
 def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
     if any(st.selected and st.status == "published" for st in sub_tasks):
         return "published"
-    statuses = {st.status for st in sub_tasks if st.status not in ("abandoned", "decision_rejected")}
+    active = [st for st in sub_tasks if st.status not in ("abandoned", "decision_rejected")]
+    statuses = {st.status for st in active}
     if not statuses:
         return "abandoned"
     if "publishing" in statuses:
@@ -61,7 +62,8 @@ def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
         return "publish_failed"
     if "queued" in statuses:
         return "queued"
-    if "stashed" in statuses:
+    # Only return "stashed" when ALL active sub-tasks are stashed
+    if "stashed" in statuses and all(st.status == "stashed" for st in active):
         return "stashed"
     if "reviewing" in statuses:
         return "reviewing"
@@ -883,8 +885,9 @@ class VideoTaskService:
         owner_id: uuid.UUID | None,
     ) -> dict:
         """
-        Route all stashed sub-tasks for a given date:
-        - has_ng=True → abandoned
+        For each parent task in "stashed" status on the target date, pick the highest-scoring
+        stashed sub-task and route it into the queue. Other stashed sub-tasks are abandoned.
+        - has_ng=True → abandoned (not eligible for queuing)
         - weighted_total_score >= high → queued
         - weighted_total_score < low → abandoned
         - middle range → probabilistic queued/abandoned
@@ -892,24 +895,24 @@ class VideoTaskService:
         """
         import random
         from sqlalchemy import func
+        from collections import defaultdict
 
-        # Load all stashed sub-tasks for tasks on the target date
-        q = (
-            select(VideoSubTask)
-            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
-            .where(VideoSubTask.status == "stashed")
+        # Load parent tasks in "stashed" status for the target date, with all their sub-tasks
+        task_q = (
+            select(VideoTask)
+            .where(VideoTask.status == "stashed")
             .where(VideoTask.target_date == target_date)
-            .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+            .options(selectinload(VideoTask.sub_tasks))
         )
         if owner_id is not None:
-            q = q.where(VideoTask.owner_id == owner_id)
+            task_q = task_q.where(VideoTask.owner_id == owner_id)
 
-        subs = list((await self.db.execute(q)).scalars().all())
-        if not subs:
+        tasks = list((await self.db.execute(task_q)).scalars().all())
+        if not tasks:
             return {"queued": 0, "abandoned": 0, "total": 0}
 
-        # Fetch config once (all sub-tasks share same owner)
-        sample_owner_id = subs[0].task.owner_id
+        # Fetch config once (all tasks share same owner)
+        sample_owner_id = tasks[0].owner_id
         config = await self.db.get(VideoTaskConfig, sample_owner_id)
         threshold_high = config.score_threshold_high if config else 60.0
         threshold_low = config.score_threshold_low if config else 20.0
@@ -922,28 +925,44 @@ class VideoTaskService:
         next_order = (max_order_res.scalar() or 0) + 1
 
         counts = {"queued": 0, "abandoned": 0}
+        total = 0
 
-        for sub in subs:
-            if sub.has_ng:
-                sub.status = "abandoned"
-            else:
-                score = sub.weighted_total_score or 0.0
+        for task in tasks:
+            stashed_subs = [st for st in task.sub_tasks if st.status == "stashed"]
+            if not stashed_subs:
+                continue
+
+            total += len(stashed_subs)
+
+            # Pick best eligible sub-task: no NG, highest score
+            eligible = [st for st in stashed_subs if not st.has_ng]
+            eligible.sort(key=lambda st: st.weighted_total_score or 0.0, reverse=True)
+
+            winner = None
+            if eligible:
+                best = eligible[0]
+                score = best.weighted_total_score or 0.0
                 if score >= threshold_high:
+                    winner = best
+                elif score >= threshold_low:
+                    if random.random() < pool_ratio:
+                        winner = best
+
+            for sub in stashed_subs:
+                if sub is winner:
                     sub.status = "queued"
-                elif score < threshold_low:
-                    sub.status = "abandoned"
+                    if sub.queue_order is None:
+                        sub.queue_order = next_order
+                        next_order += 1
+                    counts["queued"] += 1
                 else:
-                    sub.status = "queued" if random.random() < pool_ratio else "abandoned"
+                    sub.status = "abandoned"
+                    counts["abandoned"] += 1
 
-            if sub.status == "queued" and sub.queue_order is None:
-                sub.queue_order = next_order
-                next_order += 1
-
-            counts[sub.status] += 1
-            sub.task.status = _compute_parent_status(sub.task.sub_tasks)
+            task.status = _compute_parent_status(task.sub_tasks)
 
         await self.db.commit()
-        return {"queued": counts["queued"], "abandoned": counts["abandoned"], "total": len(subs)}
+        return {"queued": counts["queued"], "abandoned": counts["abandoned"], "total": total}
 
     async def get_operator_stats(
         self,
