@@ -84,11 +84,19 @@ async def create_video_task(
     return task
 
 
-def _get_optional_owner_id(current_user: TokenData | None = Depends(get_optional_user)) -> uuid.UUID | None:
-    """No token → no owner filter (API access). Token present → filter by owner unless admin."""
-    if current_user is None:
-        return None
-    return None if current_user.is_admin else current_user.user_id
+def _resolve_owner_id(
+    owneupdate_sub_task_noter_id: uuid.UUID | None = Query(default=None, description="按所属用户筛选（外部API可传）"),
+    current_user: TokenData | None = Depends(get_optional_user),
+) -> uuid.UUID | None:
+    """External API can pass owner_id; with token, non-admin overrides to own user_id."""
+    if owner_id is not None:
+        # External API call with explicit owner_id
+        if current_user is not None and not current_user.is_admin:
+            return current_user.user_id
+        return owner_id
+    if current_user is not None:
+        return None if current_user.is_admin else current_user.user_id
+    return None
 
 
 @router.get("", response_model=VideoTaskListPage)
@@ -99,7 +107,7 @@ async def list_video_tasks(
     tiktok_blogger_id: uuid.UUID | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    owner_id: uuid.UUID | None = Depends(_get_optional_owner_id),
+    owner_id: uuid.UUID | None = Depends(_resolve_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     svc = VideoTaskService(db=session)
@@ -180,98 +188,6 @@ async def get_video_task_stats(
 
     return result
 
-
-@router.get("/{task_id}", response_model=VideoTaskDetailRead)
-async def get_video_task(
-    task_id: uuid.UUID,
-    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> Any:
-    svc = VideoTaskService(db=session)
-    item = await svc.get_task_detail(task_id, owner_id)
-    data = VideoTaskDetailRead.model_validate(item["task"])
-    data.account_name = item["account_name"]
-    data.template_title = item["template_title"]
-    if data.template_id:
-        tags_map = await _load_template_tags_map(session, [data.template_id])
-        data.tags = tags_map.get(data.template_id, [])
-        tpl = await session.get(VideoAITemplate, data.template_id)
-        if tpl and tpl.video_source_id:
-            vs = await session.get(VideoSource, tpl.video_source_id)
-            if vs:
-                data.original_video = VideoSourceSummary.model_validate(vs)
-    return data
-
-
-@router.delete("/{task_id}", status_code=status.HTTP_200_OK)
-async def delete_video_task(
-    task_id: uuid.UUID,
-    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    svc = VideoTaskService(db=session)
-    await svc.delete_task(task_id, owner_id)
-    return {"status": "success", "message": "删除成功"}
-
-
-@router.get("/{task_id}/state", response_model=VideoTaskStateRead)
-async def get_video_task_state(
-    task_id: uuid.UUID,
-    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> Any:
-    """Lightweight endpoint for polling task and sub-task statuses."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-    from fastapi import HTTPException
-    from app.models.video_task import VideoTask
-    
-    q = (
-        select(VideoTask)
-        .where(VideoTask.id == task_id)
-        .options(selectinload(VideoTask.sub_tasks))
-    )
-    if owner_id is not None:
-        q = q.where(VideoTask.owner_id == owner_id)
-    task = (await session.execute(q)).scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
-    
-    return task
-
-
-@router.get("/{task_id}/navigation", response_model=VideoTaskNavRead)
-async def get_video_task_navigation(
-    task_id: uuid.UUID,
-    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> Any:
-    """Return prev/next task and prev/next blogger task for navigation without full list fetches."""
-    svc = VideoTaskService(db=session)
-    raw = await svc.get_task_navigation(task_id, owner_id)
-
-    def _task_item(t):
-        if t is None:
-            return None
-        from app.schemas.video_task import TaskNavItem
-        return TaskNavItem(id=t.id, status=t.status)
-
-    def _blogger_item(row):
-        if row is None:
-            return None
-        from app.schemas.video_task import TaskNavItem
-        t, acc = row.VideoTask, row.Account
-        return TaskNavItem(id=t.id, status=t.status, account_id=acc.id, account_name=acc.account_name)
-
-    return VideoTaskNavRead(
-        position=raw["position"],
-        total=raw["total"],
-        selected_count=raw["selected_count"],
-        prev_task=_task_item(raw["prev_task"]),
-        next_task=_task_item(raw["next_task"]),
-        prev_blogger_task=_blogger_item(raw["prev_blogger_task"]),
-        next_blogger_task=_blogger_item(raw["next_blogger_task"]),
-    )
 
 
 # ── Batch operations by date ───────────────────────────────────────────────────
@@ -408,18 +324,25 @@ async def patch_sub_task_status(
 async def update_sub_task_note(
     sub_task_id: uuid.UUID,
     payload: VideoSubTaskNoteUpdate,
+    owner_id: uuid.UUID | None = Query(default=None, description="按所属用户筛选（外部API可传）"),
     current_user: TokenData | None = Depends(get_optional_user),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     """审核人填写备注、穿帮信息和多维度评分，原子地将状态从 reviewing → stashed。
     有 token 时 operator 取登录用户名；无 token 时从请求体 operator 字段获取。
+    owner_id 支持外部 API 传入筛选，规则同列表接口。
     """
     from fastapi import HTTPException as _HTTPException
     operator = current_user.username if current_user else payload.operator
     if not operator:
         raise _HTTPException(status_code=422, detail="无 token 时 operator 字段为必填")
 
-    owner_id = None if current_user is None else (None if current_user.is_admin else current_user.user_id)
+    # Resolve owner_id: external API can pass explicitly; token non-admin overrides
+    if owner_id is not None:
+        if current_user is not None and not current_user.is_admin:
+            owner_id = current_user.user_id
+    else:
+        owner_id = None if current_user is None else (None if current_user.is_admin else current_user.user_id)
 
     svc = VideoTaskService(db=session)
     return await svc.update_sub_task_note(
@@ -504,3 +427,98 @@ async def update_queue_order(
 
     await session.commit()
     return {"status": "ok"}
+
+
+# ── Dynamic {task_id} routes — MUST be after all fixed-path routes ────────────
+
+@router.get("/{task_id}", response_model=VideoTaskDetailRead)
+async def get_video_task(
+    task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    svc = VideoTaskService(db=session)
+    item = await svc.get_task_detail(task_id, owner_id)
+    data = VideoTaskDetailRead.model_validate(item["task"])
+    data.account_name = item["account_name"]
+    data.template_title = item["template_title"]
+    if data.template_id:
+        tags_map = await _load_template_tags_map(session, [data.template_id])
+        data.tags = tags_map.get(data.template_id, [])
+        tpl = await session.get(VideoAITemplate, data.template_id)
+        if tpl and tpl.video_source_id:
+            vs = await session.get(VideoSource, tpl.video_source_id)
+            if vs:
+                data.original_video = VideoSourceSummary.model_validate(vs)
+    return data
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_200_OK)
+async def delete_video_task(
+    task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    svc = VideoTaskService(db=session)
+    await svc.delete_task(task_id, owner_id)
+    return {"status": "success", "message": "删除成功"}
+
+
+@router.get("/{task_id}/state", response_model=VideoTaskStateRead)
+async def get_video_task_state(
+    task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """Lightweight endpoint for polling task and sub-task statuses."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from fastapi import HTTPException
+    from app.models.video_task import VideoTask
+
+    q = (
+        select(VideoTask)
+        .where(VideoTask.id == task_id)
+        .options(selectinload(VideoTask.sub_tasks))
+    )
+    if owner_id is not None:
+        q = q.where(VideoTask.owner_id == owner_id)
+    task = (await session.execute(q)).scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+
+    return task
+
+
+@router.get("/{task_id}/navigation", response_model=VideoTaskNavRead)
+async def get_video_task_navigation(
+    task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """Return prev/next task and prev/next blogger task for navigation without full list fetches."""
+    svc = VideoTaskService(db=session)
+    raw = await svc.get_task_navigation(task_id, owner_id)
+
+    def _task_item(t):
+        if t is None:
+            return None
+        from app.schemas.video_task import TaskNavItem
+        return TaskNavItem(id=t.id, status=t.status)
+
+    def _blogger_item(row):
+        if row is None:
+            return None
+        from app.schemas.video_task import TaskNavItem
+        t, acc = row.VideoTask, row.Account
+        return TaskNavItem(id=t.id, status=t.status, account_id=acc.id, account_name=acc.account_name)
+
+    return VideoTaskNavRead(
+        position=raw["position"],
+        total=raw["total"],
+        selected_count=raw["selected_count"],
+        prev_task=_task_item(raw["prev_task"]),
+        next_task=_task_item(raw["next_task"]),
+        prev_blogger_task=_blogger_item(raw["prev_blogger_task"]),
+        next_blogger_task=_blogger_item(raw["next_blogger_task"]),
+    )
