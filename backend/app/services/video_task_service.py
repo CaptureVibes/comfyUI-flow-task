@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 VALID_STATUSES = {"pending", "generating", "reviewing", "stashed", "decision_rejected", "queued", "publishing", "published", "publish_failed", "abandoned"}
 
+JOB = "jimeng/jobs"
+CLI_JOBS = "jimeng/cli-jobs"
+
+
 SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":           {"generating"},
     "generating":        {"reviewing", "abandoned"},
@@ -420,7 +424,8 @@ class VideoTaskService:
             task.status = "generating"
 
         date_str = target_date.strftime("%Y-%m-%d")
-        object_key = f"jimeng/jobs/{date_str}.json"
+        # object_key = f"jimeng/jobs/{date_str}.json"
+        object_key = f"{CLI_JOBS}/{date_str}.json"
         json_data = json.dumps(payload, ensure_ascii=False, indent=2)
 
         blob = self.bucket.blob(object_key)
