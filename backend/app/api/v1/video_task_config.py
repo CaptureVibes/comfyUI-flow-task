@@ -17,9 +17,9 @@ def _config_to_dict(config) -> dict:
     if config is None:
         return {}
     return {
-        "score_threshold_high": config.score_threshold_high,
-        "score_threshold_low": config.score_threshold_low,
-        "pool_ratio": config.pool_ratio,
+        "top_percent": config.top_percent,
+        "discard_below": config.discard_below,
+        "select_percent": config.select_percent,
         "auto_publish_enabled": config.auto_publish_enabled,
         "auto_publish_model": config.auto_publish_model,
         "auto_publish_prompt": config.auto_publish_prompt,

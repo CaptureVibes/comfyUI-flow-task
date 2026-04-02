@@ -28,12 +28,12 @@ class VideoTaskConfigService:
             config = VideoTaskConfig(owner_id=owner_id)
             self.db.add(config)
 
-        if update.score_threshold_high is not None:
-            config.score_threshold_high = update.score_threshold_high
-        if update.score_threshold_low is not None:
-            config.score_threshold_low = update.score_threshold_low
-        if update.pool_ratio is not None:
-            config.pool_ratio = update.pool_ratio
+        if update.top_percent is not None:
+            config.top_percent = update.top_percent
+        if update.discard_below is not None:
+            config.discard_below = update.discard_below
+        if update.select_percent is not None:
+            config.select_percent = update.select_percent
 
         if update.auto_publish_enabled is not None:
             config.auto_publish_enabled = update.auto_publish_enabled

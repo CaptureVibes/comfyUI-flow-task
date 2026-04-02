@@ -3,10 +3,8 @@ import http from './http'
 const BASE = '/video-task-config'
 
 /**
- * @returns {Promise<{ round1_enabled: boolean, round1_prompt: string, round1_model: string,
- *   round1_threshold: number, round1_weight: number,
- *   round2_enabled: boolean, round2_prompt: string, round2_model: string,
- *   round2_threshold: number, round2_weight: number }>}
+ * @returns {Promise<{ top_percent: number, discard_below: number, select_percent: number,
+ *   auto_publish_enabled: boolean, auto_publish_model: string, auto_publish_prompt: string }>}
  */
 export async function fetchTaskConfig() {
   const { data } = await http.get(BASE)
@@ -15,16 +13,12 @@ export async function fetchTaskConfig() {
 
 /**
  * @param {Object} payload
- * @param {boolean} [payload.round1_enabled]
- * @param {string} [payload.round1_prompt]
- * @param {string} [payload.round1_model]
- * @param {number} [payload.round1_threshold]
- * @param {number} [payload.round1_weight]
- * @param {boolean} [payload.round2_enabled]
- * @param {string} [payload.round2_prompt]
- * @param {string} [payload.round2_model]
- * @param {number} [payload.round2_threshold]
- * @param {number} [payload.round2_weight]
+ * @param {number} [payload.top_percent]
+ * @param {number} [payload.discard_below]
+ * @param {number} [payload.select_percent]
+ * @param {boolean} [payload.auto_publish_enabled]
+ * @param {string} [payload.auto_publish_model]
+ * @param {string} [payload.auto_publish_prompt]
  */
 export async function updateTaskConfig(payload) {
   const { data } = await http.put(BASE, payload)

@@ -27,62 +27,62 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <p>
               有穿帮（has_ng=true）→ 直接废弃；<br>
-              AI 感 ≥ 进入候选池分数线 → 进入发布队列；<br>
-              AI 感 &lt; 丢弃分数线 → 废弃；<br>
-              中间区间 → 按比例随机进入候选池。
+              第一步：按分数排名，挑选前 N% 直接进入发布队列；<br>
+              第二步：剩余的视频中，丢弃分数低于 X 的；<br>
+              第三步：剩下的再选前 Y% 进入发布队列。
             </p>
           </div>
 
           <div class="tc-field">
             <label class="tc-label">
-              AI 感进入候选池分数线
-              <span class="tc-threshold-val">{{ config.score_threshold_high }}</span>
+              第一步：挑选前
+              <span class="tc-threshold-val">{{ Math.round(config.top_percent) }}%</span>
             </label>
             <div class="tc-slider-wrap">
               <input
-                v-model.number="config.score_threshold_high"
+                v-model.number="config.top_percent"
                 type="range" :min="0" :max="100" :step="1"
                 class="tc-slider"
-                :style="sliderStyle(config.score_threshold_high)"
+                :style="sliderStyle(config.top_percent)"
               />
               <div class="tc-slider-marks">
-                <span>0</span><span>多维度加权总分达到此值进入候选池</span><span>100</span>
+                <span>0%</span><span>按分数排名直接进入发布队列的比例</span><span>100%</span>
               </div>
             </div>
           </div>
 
           <div class="tc-field">
             <label class="tc-label">
-              AI 感丢弃分数线
-              <span class="tc-threshold-val">{{ config.score_threshold_low }}</span>
+              第二步：丢弃分数低于
+              <span class="tc-threshold-val">{{ Math.round(config.discard_below) }}</span>
             </label>
             <div class="tc-slider-wrap">
               <input
-                v-model.number="config.score_threshold_low"
+                v-model.number="config.discard_below"
                 type="range" :min="0" :max="100" :step="1"
                 class="tc-slider"
-                :style="sliderStyle(config.score_threshold_low)"
+                :style="sliderStyle(config.discard_below)"
               />
               <div class="tc-slider-marks">
-                <span>0</span><span>低于此分数直接废弃</span><span>100</span>
+                <span>0</span><span>剩余视频中低于此分数直接废弃</span><span>100</span>
               </div>
             </div>
           </div>
 
           <div class="tc-field">
             <label class="tc-label">
-              中间区间进入候选池比例
-              <span class="tc-threshold-val">{{ Math.round(config.pool_ratio * 100) }}%</span>
+              第三步：再选前
+              <span class="tc-threshold-val">{{ Math.round(config.select_percent) }}%</span>
             </label>
             <div class="tc-slider-wrap">
               <input
-                v-model.number="config.pool_ratio"
-                type="range" :min="0" :max="1" :step="0.01"
+                v-model.number="config.select_percent"
+                type="range" :min="0" :max="100" :step="1"
                 class="tc-slider"
-                :style="sliderStyle(config.pool_ratio * 100)"
+                :style="sliderStyle(config.select_percent)"
               />
               <div class="tc-slider-marks">
-                <span>0%</span><span>中间区间内随机进入候选池的概率</span><span>100%</span>
+                <span>0%</span><span>过滤后剩下的视频再按分数选前 Y%</span><span>100%</span>
               </div>
             </div>
           </div>
@@ -151,9 +151,9 @@ const loading = ref(false)
 const saving = ref(false)
 
 const config = reactive({
-  score_threshold_high: 60,
-  score_threshold_low: 20,
-  pool_ratio: 0.75,
+  top_percent: 30,
+  discard_below: 40,
+  select_percent: 50,
   auto_publish_enabled: false,
   auto_publish_model: 'gemini-3.1-pro-preview',
   auto_publish_prompt: '',

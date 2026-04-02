@@ -885,19 +885,18 @@ class VideoTaskService:
         owner_id: uuid.UUID | None,
     ) -> dict:
         """
-        For each parent task in "stashed" status on the target date, pick the highest-scoring
-        stashed sub-task and route it into the queue. Other stashed sub-tasks are abandoned.
-        - has_ng=True → abandoned (not eligible for queuing)
-        - weighted_total_score >= high → queued
-        - weighted_total_score < low → abandoned
-        - middle range → probabilistic queued/abandoned
-        Returns counts of each outcome.
-        """
-        import random
-        from sqlalchemy import func
-        from collections import defaultdict
+        3-step batch routing for all stashed parent tasks on the target date:
 
-        # Load parent tasks in "stashed" status for the target date, with all their sub-tasks
+        1. From each task, pick the highest-scoring stashed sub-task (no NG).
+           Collect all winners across tasks, rank by score, take top N% → queued.
+        2. From the remaining winners, discard those with score < discard_below.
+        3. From those still remaining, take top Y% → queued.
+        All others (including NG sub-tasks and non-winners) → abandoned.
+        """
+        import math
+        from sqlalchemy import func
+
+        # Load parent tasks in "stashed" status for the target date
         task_q = (
             select(VideoTask)
             .where(VideoTask.status == "stashed")
@@ -911,12 +910,12 @@ class VideoTaskService:
         if not tasks:
             return {"queued": 0, "abandoned": 0, "total": 0}
 
-        # Fetch config once (all tasks share same owner)
+        # Fetch config
         sample_owner_id = tasks[0].owner_id
         config = await self.db.get(VideoTaskConfig, sample_owner_id)
-        threshold_high = config.score_threshold_high if config else 60.0
-        threshold_low = config.score_threshold_low if config else 20.0
-        pool_ratio = config.pool_ratio if config else 0.75
+        top_pct = (config.top_percent if config else None) or 30.0
+        discard_below = (config.discard_below if config else None) or 40.0
+        select_pct = (config.select_percent if config else None) or 50.0
 
         # Get current max queue_order
         max_order_res = await self.db.execute(
@@ -924,45 +923,68 @@ class VideoTaskService:
         )
         next_order = (max_order_res.scalar() or 0) + 1
 
-        counts = {"queued": 0, "abandoned": 0}
-        total = 0
-
+        # Step 0: From each task, pick the best eligible sub-task (no NG, highest score)
+        candidates = []  # list of (sub_task, parent_task)
         for task in tasks:
             stashed_subs = [st for st in task.sub_tasks if st.status == "stashed"]
             if not stashed_subs:
                 continue
-
-            total += len(stashed_subs)
-
-            # Pick best eligible sub-task: no NG, highest score
             eligible = [st for st in stashed_subs if not st.has_ng]
             eligible.sort(key=lambda st: st.weighted_total_score or 0.0, reverse=True)
-
-            winner = None
             if eligible:
-                best = eligible[0]
-                score = best.weighted_total_score or 0.0
-                if score >= threshold_high:
-                    winner = best
-                elif score >= threshold_low:
-                    if random.random() < pool_ratio:
-                        winner = best
+                candidates.append((eligible[0], task))
 
-            for sub in stashed_subs:
-                if sub is winner:
-                    sub.status = "queued"
-                    if sub.queue_order is None:
-                        sub.queue_order = next_order
+        total_candidates = len(candidates)
+        if total_candidates == 0:
+            # No eligible sub-tasks — abandon everything
+            counts = {"queued": 0, "abandoned": 0}
+            for task in tasks:
+                for st in task.sub_tasks:
+                    if st.status == "stashed":
+                        st.status = "abandoned"
+                        counts["abandoned"] += 1
+                task.status = _compute_parent_status(task.sub_tasks)
+            await self.db.commit()
+            return {"queued": 0, "abandoned": counts["abandoned"], "total": counts["abandoned"]}
+
+        # Sort all candidates by score descending
+        candidates.sort(key=lambda pair: pair[0].weighted_total_score or 0.0, reverse=True)
+
+        # Step 1: Pick top N% → queued
+        top_n = max(1, math.ceil(total_candidates * top_pct / 100.0))
+        step1_queued = candidates[:top_n]
+        remaining = candidates[top_n:]
+
+        # Step 2: Discard those with score < discard_below
+        step2_kept = [p for p in remaining if (p[0].weighted_total_score or 0.0) >= discard_below]
+
+        # Step 3: From those kept, pick top Y% → queued
+        step3_n = max(1, math.ceil(len(step2_kept) * select_pct / 100.0)) if step2_kept else 0
+        step3_queued = step2_kept[:step3_n]
+        step3_abandoned = step2_kept[step3_n:]
+
+        # All sub-tasks not selected as the best → abandoned
+        queued_subs = {p[0].id for p in step1_queued + step3_queued}
+        abandoned_subs = {p[0].id for p in remaining}  # all remaining from step1 that weren't in step3
+
+        counts = {"queued": 0, "abandoned": 0}
+        for task in tasks:
+            for st in task.sub_tasks:
+                if st.status != "stashed":
+                    continue
+                if st.id in queued_subs:
+                    st.status = "queued"
+                    if st.queue_order is None:
+                        st.queue_order = next_order
                         next_order += 1
                     counts["queued"] += 1
                 else:
-                    sub.status = "abandoned"
+                    st.status = "abandoned"
                     counts["abandoned"] += 1
-
             task.status = _compute_parent_status(task.sub_tasks)
 
         await self.db.commit()
-        return {"queued": counts["queued"], "abandoned": counts["abandoned"], "total": total}
+        return {"queued": counts["queued"], "abandoned": counts["abandoned"], "total": counts["queued"] + counts["abandoned"]}
 
     async def get_operator_stats(
         self,

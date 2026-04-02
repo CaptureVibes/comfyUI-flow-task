@@ -21,14 +21,13 @@ class VideoTaskConfig(Base):
 
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
 
-    # ── Publish Pool Thresholds ────────────────────────────────────────────────
-    # Videos with has_ng=True → always abandoned (never enter pool)
-    # weighted_total_score >= score_threshold_high → queued (enter pool)
-    # weighted_total_score < score_threshold_low → abandoned (discarded)
-    # score_threshold_low <= weighted_total_score < score_threshold_high → random(pool_ratio) → queued or abandoned
-    score_threshold_high: Mapped[float] = mapped_column(Float, nullable=False, default=60.0)
-    score_threshold_low: Mapped[float] = mapped_column(Float, nullable=False, default=20.0)
-    pool_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.75)
+    # ── Publish Pool: 3-step selection ─────────────────────────────────────────
+    # Step 1: Pick top N% by score → queued
+    # Step 2: Among the rest, discard those with score < discard_below
+    # Step 3: Among the remaining, pick top Y% → queued
+    top_percent: Mapped[float] = mapped_column(Float, nullable=False, default=30.0)
+    discard_below: Mapped[float] = mapped_column(Float, nullable=False, default=40.0)
+    select_percent: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
 
     # ── Auto Publish Metadata Generation ──────────────────────────────────────
     # AI generates title/desc/hashtag before auto-publishing queued videos

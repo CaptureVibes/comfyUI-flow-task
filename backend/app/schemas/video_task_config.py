@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 class VideoTaskConfigRead(BaseModel):
     """Read view of video task config (per-owner singleton)."""
 
-    score_threshold_high: float = 60.0   # AI感进入候选池分数线
-    score_threshold_low: float = 20.0    # AI感丢弃分数线
-    pool_ratio: float = 0.75             # 中间区间进入候选池比例
+    top_percent: float = 30.0       # Step 1: 直接挑选前 N%
+    discard_below: float = 40.0     # Step 2: 丢弃分数低于此值的
+    select_percent: float = 50.0    # Step 3: 剩下的再选前 Y%
 
     auto_publish_enabled: bool = False
     auto_publish_model: str = "gemini-3.1-pro-preview"
@@ -19,9 +19,9 @@ class VideoTaskConfigRead(BaseModel):
 class VideoTaskConfigUpdate(BaseModel):
     """Update payload for video task config."""
 
-    score_threshold_high: float | None = Field(default=None, ge=0, le=100)
-    score_threshold_low: float | None = Field(default=None, ge=0, le=100)
-    pool_ratio: float | None = Field(default=None, ge=0, le=1)
+    top_percent: float | None = Field(default=None, ge=0, le=100)
+    discard_below: float | None = Field(default=None, ge=0, le=100)
+    select_percent: float | None = Field(default=None, ge=0, le=100)
 
     auto_publish_enabled: bool | None = None
     auto_publish_model: str | None = None
