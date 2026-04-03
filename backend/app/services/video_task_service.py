@@ -513,10 +513,9 @@ class VideoTaskService:
         #    If video not found or upload failed → abandon the subtask immediately
         successfully_uploaded = []
         for task, sub, cdn_url, error_msg in upload_results:
-            if error_msg:
+            if not cdn_url:
                 errors.append(error_msg)
-                sub.status = "abandoned"
-                logger.info("Sub-task %s abandoned: %s", sub.id, error_msg)
+                logger.info("Sub-task %s not video: %s", sub.id, error_msg)
             else:
                 sub.result_video_url = cdn_url
                 sub.status = "reviewing"
