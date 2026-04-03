@@ -3,7 +3,7 @@ import { DUPLICATE_REQUEST_GAP_MS, TOKEN_KEY, USERNAME_KEY } from '../utils/cons
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1',
-  timeout: 20000
+  timeout: 40000
 })
 
 const pendingRequests = new Map()

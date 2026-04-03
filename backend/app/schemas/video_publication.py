@@ -61,36 +61,28 @@ class VideoPublicationDetailRead(VideoPublicationRead):
 
 
 class VideoPublicationMetricsVideoInfo(BaseModel):
-    title: str | None = None
-    description: str | None = None
     thumbnail_url: str | None = None
     duration: int | float | None = None
-    privacy_status: str | None = None
     published_at: datetime | None = None
 
 
 class VideoPublicationMetricsStats(BaseModel):
+    # TikTok 字段名
     view_count: int | float | None = None
-    views: int | float | None = None
     like_count: int | float | None = None
-    likes: int | float | None = None
     comment_count: int | float | None = None
-    comments: int | float | None = None
     share_count: int | float | None = None
+    # YouTube 字段名
+    views: int | float | None = None
+    likes: int | float | None = None
+    comments: int | float | None = None
     shares: int | float | None = None
-    download_count: int | float | None = None
     engaged_views: int | float | None = None
-    estimated_minutes_watched: int | float | None = None
     average_view_duration: int | float | None = None
     average_view_percentage: int | float | None = None
-    subscribers_gained: int | float | None = None
-    subscribers_lost: int | float | None = None
+    # Instagram 字段名
     reach_count: int | float | None = None
-    impressions_count: int | float | None = None
     save_count: int | float | None = None
-    total_interactions: int | float | None = None
-    avg_watch_time: int | float | None = None
-    stay_to_watch: int | float | None = None
 
 
 class VideoPublicationMetricsChannel(BaseModel):
@@ -135,7 +127,6 @@ class VideoPublicationStatsListItem(BaseModel):
     total_likes: int = 0
     total_comments: int = 0
     total_shares: int = 0
-    avg_stay_to_watch: float | None = None
     avg_view_percentage: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -171,4 +162,3 @@ class VideoPublicationStatusUpdate(BaseModel):
     channels: list[dict] | None = None
     completed_at: datetime | None = None
     timestamp: int
-    signature: str

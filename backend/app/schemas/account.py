@@ -164,8 +164,6 @@ class AccountPerformanceSnapshot(BaseModel):
     avg_views: int | float | None = None
     total_likes: int | float | None = None
     avg_like_rate: int | float | None = None
-    avg_stay_to_watch: int | float | None = None
-    avg_completion_rate: int | float | None = None
     first_content_date: datetime | None = None
     latest_video_published_at: datetime | None = None
 

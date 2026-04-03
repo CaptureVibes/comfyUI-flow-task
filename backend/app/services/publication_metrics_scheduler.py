@@ -1,0 +1,342 @@
+"""
+Publication metrics scheduler
+==============================
+每天北京时间 12:00 — 同步最近一个月已发布视频的指标快照（completed + partial）
+每天北京时间 13:00 — 根据 video_publications 数据聚合计算每个 Account 的 performance_snapshot
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timedelta, timezone
+
+import pytz
+
+from app.db.session import SessionLocal
+
+logger = logging.getLogger("app.publication_metrics_scheduler")
+
+_TZ = pytz.timezone("Asia/Shanghai")
+
+# 每日定时任务触发时间（北京时间，24小时制）
+_HOUR_SYNC_METRICS = 12        # 同步视频指标快照
+_HOUR_SYNC_ACCOUNT_SNAPSHOT = 13  # 计算账号 performance_snapshot
+
+_scheduler_task: asyncio.Task | None = None
+_scheduler_stop_event: asyncio.Event | None = None
+
+# 上次执行时间记录，key: "sync_metrics" | "sync_account_snapshot"
+_last_run: dict[str, str] = {}
+
+
+def start_publication_metrics_scheduler() -> None:
+    global _scheduler_task, _scheduler_stop_event
+    if _scheduler_task is not None and not _scheduler_task.done():
+        return
+    _scheduler_stop_event = asyncio.Event()
+    _scheduler_task = asyncio.get_running_loop().create_task(
+        _scheduler_loop(_scheduler_stop_event)
+    )
+    logger.info("【指标同步调度器】已启动")
+
+
+async def stop_publication_metrics_scheduler() -> None:
+    global _scheduler_task, _scheduler_stop_event
+    stop_event, worker = _scheduler_stop_event, _scheduler_task
+    _scheduler_stop_event = None
+    _scheduler_task = None
+    if stop_event is not None:
+        stop_event.set()
+    if worker is None:
+        return
+    worker.cancel()
+    try:
+        await worker
+    except asyncio.CancelledError:
+        pass
+    logger.info("【指标同步调度器】已停止")
+
+
+async def _scheduler_loop(stop_event: asyncio.Event) -> None:
+    try:
+        while not stop_event.is_set():
+            try:
+                await _check_and_run()
+            except Exception:
+                logger.exception("【指标同步调度器】轮询异常")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+            except asyncio.TimeoutError:
+                pass
+    except asyncio.CancelledError:
+        pass
+
+
+def _today_key(job: str) -> str:
+    """返回今日北京时间日期字符串作为去重 key"""
+    return f"{job}:{datetime.now(_TZ).strftime('%Y-%m-%d')}"
+
+
+async def _check_and_run() -> None:
+    now_bj = datetime.now(_TZ)
+
+    # 每天 12:00 同步指标
+    if now_bj.hour == _HOUR_SYNC_METRICS and now_bj.minute < 2:
+        key = _today_key("sync_metrics")
+        if _last_run.get("sync_metrics") != key:
+            _last_run["sync_metrics"] = key
+            logger.info("【指标同步调度器】触发每日指标同步（北京时间 %s）", now_bj.strftime("%H:%M"))
+            asyncio.get_running_loop().create_task(_run_sync_metrics())
+
+    # 每天 13:00 计算账号快照
+    if now_bj.hour == _HOUR_SYNC_ACCOUNT_SNAPSHOT and now_bj.minute < 2:
+        key = _today_key("sync_account_snapshot")
+        if _last_run.get("sync_account_snapshot") != key:
+            _last_run["sync_account_snapshot"] = key
+            logger.info("【指标同步调度器】触发账号快照计算（北京时间 %s）", now_bj.strftime("%H:%M"))
+            asyncio.get_running_loop().create_task(_run_sync_account_snapshots())
+
+
+async def _run_sync_metrics() -> None:
+    """同步最近一个月 completed + partial 发布记录的 metrics_snapshot"""
+    try:
+        async with SessionLocal() as db:
+            from app.services.video_publication_service import VideoPublicationService
+            from app.schemas.video_publication import VideoPublicationStatsQuery
+            from datetime import date
+
+            one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).date()
+            today = datetime.now(timezone.utc).date()
+
+            query = VideoPublicationStatsQuery(
+                date_from=one_month_ago,
+                date_to=today,
+            )
+            service = VideoPublicationService(db)
+            result = await service.sync_metrics_for_stats_page(query, owner_id=None)
+            logger.info(
+                "【指标同步调度器】每日指标同步完成：synced=%d failed=%d total=%d",
+                result["synced"], result["failed"], result["total"],
+            )
+    except Exception:
+        logger.exception("【指标同步调度器】每日指标同步异常")
+
+
+async def _run_sync_account_snapshots() -> None:
+    """根据 video_publications 聚合计算所有账号的 performance_snapshot"""
+    try:
+        async with SessionLocal() as db:
+            await sync_account_performance_snapshots(db)
+    except Exception:
+        logger.exception("【指标同步调度器】账号快照计算异常")
+
+
+def _fetch_youtube_subscribers(channel_name: str) -> int | None:
+    """用 yt-dlp 获取 YouTube 频道订阅数。在线程中调用（阻塞）。"""
+    try:
+        import yt_dlp  # type: ignore
+    except ImportError:
+        logger.warning("yt-dlp 未安装，无法获取 YouTube 订阅数")
+        return None
+
+    url = f"https://www.youtube.com/@{channel_name}"
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        # 不用 extract_flat，需要完整频道元数据才能拿到 channel_follower_count
+        "playlist_items": "0",
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        count = info.get("channel_follower_count")
+        if count is not None:
+            logger.info("【yt-dlp】YouTube @%s 订阅数=%s", channel_name, count)
+            return int(count)
+        logger.warning("【yt-dlp】YouTube @%s 未返回 channel_follower_count，字段: %s", channel_name, list(info.keys()))
+        return None
+    except Exception as exc:
+        logger.warning("【yt-dlp】获取 YouTube @%s 订阅数失败: %s", channel_name, exc)
+        return None
+
+
+async def _fetch_tiktok_followers(channel_name: str) -> int | None:
+    """用 RapidAPI 获取 TikTok 粉丝数（单次调用，失败返回 None）。"""
+    import httpx
+    from app.core.config import settings
+
+    api_key = getattr(settings, "rapidapi_key", None)
+    if not api_key:
+        logger.warning("【RapidAPI】未配置 rapidapi_key，跳过 TikTok 粉丝数获取")
+        return None
+
+    url = "https://tiktok-api23.p.rapidapi.com/api/user/info"
+    headers = {
+        "x-rapidapi-host": "tiktok-api23.p.rapidapi.com",
+        "x-rapidapi-key": api_key,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
+            resp = await client.get(url, params={"uniqueId": channel_name}, headers=headers)
+        resp.raise_for_status()
+        payload = resp.json()
+        user_info = payload.get("userInfo") or {}
+        stats_v2 = user_info.get("statsV2") or {}
+        stats = user_info.get("stats") or {}
+        raw = stats_v2.get("followerCount") or stats.get("followerCount") or 0
+        count = int(raw)
+        logger.info("【RapidAPI】TikTok @%s 粉丝数=%d", channel_name, count)
+        return count
+    except Exception as exc:
+        logger.warning("【RapidAPI】获取 TikTok @%s 粉丝数失败: %s", channel_name, exc)
+        return None
+
+
+async def sync_account_performance_snapshots(db, account_id=None) -> dict:
+    """
+    遍历 Account，统计其关联的 video_publications（completed + partial）里的指标：
+    - total_views, total_likes, avg_views, avg_like_rate
+    - video_count（有 metrics 数据的视频数）
+    - latest_video_published_at, first_content_date
+    - followers_count（YouTube 频道订阅数，via yt-dlp）
+    写入 account.performance_snapshot。
+    account_id: 若传入则只计算该账号，否则计算所有账号。
+    """
+    from sqlalchemy import select
+    from app.models.account import Account
+    from app.models.video_publication import VideoPublication
+    from app.models.video_task import VideoSubTask, VideoTask
+
+    stmt = select(Account)
+    if account_id is not None:
+        stmt = stmt.where(Account.id == account_id)
+    result = await db.execute(stmt)
+    accounts = list(result.scalars().all())
+
+    updated = 0
+    for account in accounts:
+        try:
+            # 查该账号下所有 completed / partial 的发布记录
+            stmt = (
+                select(VideoPublication)
+                .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+                .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+                .where(VideoTask.account_id == account.id)
+                .where(VideoPublication.status.in_(["completed", "partial"]))
+                .where(VideoPublication.metrics_snapshot.isnot(None))
+            )
+            pubs = list((await db.execute(stmt)).scalars().all())
+
+            # 从 social_bindings 遍历各平台获取粉丝数（各平台累加）
+            followers_count: int | None = None
+            bindings = account.social_bindings or []
+            loop = asyncio.get_running_loop()
+            for binding in bindings:
+                if not isinstance(binding, dict):
+                    continue
+                platform = binding.get("platform") or ""
+                ch_name = binding.get("channel_name") or ""
+                if not ch_name:
+                    continue
+                if platform == "youtube":
+                    count = await loop.run_in_executor(None, _fetch_youtube_subscribers, ch_name)
+                elif platform == "tiktok":
+                    count = await _fetch_tiktok_followers(ch_name)
+                else:
+                    continue
+                if count is not None:
+                    followers_count = (followers_count or 0) + count
+
+            if not pubs:
+                # 即使没有发布记录，如果拿到了订阅数也保存
+                if followers_count is not None:
+                    existing = account.performance_snapshot or {}
+                    if isinstance(existing, dict):
+                        existing["followers_count"] = followers_count
+                        existing["synced_at"] = datetime.now(timezone.utc).isoformat()
+                        account.performance_snapshot = existing
+                        updated += 1
+                continue
+
+            total_views = 0
+            total_likes = 0
+            like_rate_values: list[float] = []
+            published_dates: list[datetime] = []
+            video_count = 0
+
+            for pub in pubs:
+                snapshot = pub.metrics_snapshot
+                if not isinstance(snapshot, dict):
+                    continue
+                channels = snapshot.get("channels") or []
+                if not channels:
+                    continue
+
+                pub_views = 0
+                pub_likes = 0
+                has_data = False
+
+                for ch in channels:
+                    if not isinstance(ch, dict):
+                        continue
+                    stats = ch.get("stats") or {}
+                    platform = str(ch.get("platform") or "").lower()
+
+                    views = _to_int(stats.get("views") if platform == "youtube" else stats.get("view_count"))
+                    likes = _to_int(stats.get("likes") if platform == "youtube" else stats.get("like_count"))
+                    if views > 0 or likes > 0:
+                        has_data = True
+                    pub_views += views
+                    pub_likes += likes
+
+                if not has_data:
+                    continue
+
+                video_count += 1
+                total_views += pub_views
+                total_likes += pub_likes
+
+                if pub_views > 0 and pub_likes >= 0:
+                    like_rate_values.append(pub_likes / pub_views * 100)
+
+                if pub.completed_at:
+                    published_dates.append(pub.completed_at)
+
+            if video_count == 0:
+                continue
+
+            avg_views = round(total_views / video_count, 1) if video_count else None
+            avg_like_rate = round(sum(like_rate_values) / len(like_rate_values), 2) if like_rate_values else None
+            latest = max(published_dates) if published_dates else None
+            first = min(published_dates) if published_dates else None
+
+            account.performance_snapshot = {
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+                "followers_count": followers_count,
+                "video_count": video_count,
+                "total_views": total_views,
+                "total_likes": total_likes,
+                "avg_views": avg_views,
+                "avg_like_rate": avg_like_rate,
+                "latest_video_published_at": latest.isoformat() if latest else None,
+                "first_content_date": first.isoformat() if first else None,
+            }
+            updated += 1
+
+        except Exception:
+            logger.exception("【指标同步调度器】计算账号快照失败: account_id=%s", account.id)
+
+    if updated:
+        await db.commit()
+
+    logger.info("【指标同步调度器】账号快照计算完成：updated=%d / total=%d", updated, len(accounts))
+    return {"updated": updated, "total": len(accounts)}
+
+
+def _to_int(value) -> int:
+    try:
+        if value is None or value == "":
+            return 0
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0

@@ -3,7 +3,7 @@ from datetime import date
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
@@ -79,7 +79,7 @@ async def get_publication_stats(
     sort_by: str = Query("published_at", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -99,6 +99,70 @@ async def get_publication_stats(
     service = VideoPublicationService(db)
     items, total = await service.get_publication_stats_page(query, owner_id=owner_id)
     return VideoPublicationStatsListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.post("/video-publications/sync-metrics")
+async def sync_publication_metrics(
+    background_tasks: BackgroundTasks,
+    platform: str | None = Query(None),
+    account_id: uuid.UUID | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """先查出待同步数量立即返回，后台执行指标同步"""
+    from sqlalchemy import select, func
+    from app.models.video_task import VideoSubTask, VideoTask
+    from app.db.session import SessionLocal
+
+    query = VideoPublicationStatsQuery(
+        platform=platform,
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    owner_id = None if current_user.is_admin else current_user.user_id
+
+    # 先查数量
+    from datetime import date as date_type
+    from app.models.video_publication import VideoPublication
+    stmt = (
+        select(func.count())
+        .select_from(VideoPublication)
+        .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+        .where(VideoPublication.status.in_(["completed", "partial"]))
+        .where(VideoPublication.open_api_task_id.isnot(None))
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoTask.owner_id == owner_id)
+    if query.account_id is not None:
+        stmt = stmt.where(VideoTask.account_id == query.account_id)
+    if query.date_from is not None:
+        from datetime import datetime, timezone
+        stmt = stmt.where(
+            VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if query.date_to is not None:
+        from datetime import datetime, timezone
+        next_day = date_type.fromordinal(query.date_to.toordinal() + 1)
+        stmt = stmt.where(
+            VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    total = (await db.execute(stmt)).scalar() or 0
+
+    async def _run():
+        try:
+            async with SessionLocal() as bg_db:
+                service = VideoPublicationService(bg_db)
+                result = await service.sync_metrics_for_stats_page(query, owner_id=owner_id)
+                logger.info("sync-metrics background done: %s", result)
+        except Exception:
+            logger.exception("sync-metrics background failed")
+
+    background_tasks.add_task(_run)
+    return {"total": total, "message": f"后台同步 {total} 条视频数据中"}
 
 
 @router.get("/video-publications/{publication_id}", response_model=VideoPublicationDetailRead)
@@ -207,6 +271,36 @@ async def handle_publication_callback(
         return {"message": "success", "data": None}
 
     return {"message": "success", "data": {"publication_id": str(publication.id)}}
+
+
+@router.post("/video-publications/sync-account-snapshots")
+async def sync_account_snapshots(
+    background_tasks: BackgroundTasks,
+    account_id: uuid.UUID | None = Query(None, description="指定账号 ID，不传则计算所有账号"),
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """先查出待计算账号数量立即返回，后台执行 performance_snapshot 计算"""
+    from sqlalchemy import select, func
+    from app.models.account import Account
+    from app.db.session import SessionLocal
+    from app.services.publication_metrics_scheduler import sync_account_performance_snapshots
+
+    stmt = select(func.count()).select_from(Account)
+    if account_id is not None:
+        stmt = stmt.where(Account.id == account_id)
+    total = (await db.execute(stmt)).scalar() or 0
+
+    async def _run():
+        try:
+            async with SessionLocal() as bg_db:
+                result = await sync_account_performance_snapshots(bg_db, account_id=account_id)
+                logger.info("sync-account-snapshots background done: %s", result)
+        except Exception:
+            logger.exception("sync-account-snapshots background failed")
+
+    background_tasks.add_task(_run)
+    return {"total": total, "message": f"后台同步 {total} 个博主数据中"}
 
 
 @router.get("/open-api/channels")

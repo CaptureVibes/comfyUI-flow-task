@@ -4,6 +4,11 @@
     <div class="ps-header">
       <h1 class="ps-title">数据统计</h1>
       <div class="ps-header-right">
+        <button class="ps-btn ps-btn-sync" :disabled="syncing" @click="handleSyncMetrics">
+          <svg v-if="!syncing" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:5px;vertical-align:-2px"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:5px;vertical-align:-2px;animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          {{ syncing ? '同步中...' : '同步数据' }}
+        </button>
         <!-- Date mode -->
         <el-radio-group v-model="filters.date_mode" size="small" @change="handleDateModeChange">
           <el-radio-button label="day">某一天</el-radio-button>
@@ -95,9 +100,6 @@
               <button class="ps-sort-btn" @click="toggleSort('total_shares')">分享{{ sortMark('total_shares') }}</button>
             </th>
             <th class="ps-th ps-th-num">
-              <button class="ps-sort-btn" @click="toggleSort('avg_stay_to_watch')">前3秒停留{{ sortMark('avg_stay_to_watch') }}</button>
-            </th>
-            <th class="ps-th ps-th-num">
               <button class="ps-sort-btn" @click="toggleSort('avg_view_percentage')">平均观看比{{ sortMark('avg_view_percentage') }}</button>
             </th>
           </tr>
@@ -133,7 +135,6 @@
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_likes) }}</td>
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_comments) }}</td>
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_shares) }}</td>
-            <td class="ps-td ps-td-num">{{ formatPercent(item.avg_stay_to_watch) }}</td>
             <td class="ps-td ps-td-num">{{ formatPercent(item.avg_view_percentage) }}</td>
           </tr>
         </tbody>
@@ -148,6 +149,8 @@
           <option :value="20">20</option>
           <option :value="50">50</option>
           <option :value="100">100</option>
+          <option :value="200">200</option>
+          <option :value="500">500</option>
         </select>
       </div>
       <div class="ps-pagination">
@@ -208,10 +211,6 @@
           <div class="psd-card-value">{{ compactNumber(activeItem.total_shares) }}</div>
         </div>
         <div class="psd-summary-card">
-          <div class="psd-card-label">前3秒停留率</div>
-          <div class="psd-card-value">{{ formatPercent(activeItem.avg_stay_to_watch) }}</div>
-        </div>
-        <div class="psd-summary-card">
           <div class="psd-card-label">平均观看比</div>
           <div class="psd-card-value">{{ formatPercent(activeItem.avg_view_percentage) }}</div>
         </div>
@@ -240,6 +239,10 @@
               <span class="psd-stat-label">播放量</span>
               <span class="psd-stat-val">{{ compactNumber(statVal(ch, 'views')) }}</span>
             </div>
+            <div class="psd-stat-row" v-if="ch.stats.engaged_views != null">
+              <span class="psd-stat-label">有效播放</span>
+              <span class="psd-stat-val">{{ compactNumber(ch.stats.engaged_views) }}</span>
+            </div>
             <div class="psd-stat-row" v-if="statVal(ch, 'likes') != null">
               <span class="psd-stat-label">点赞</span>
               <span class="psd-stat-val">{{ compactNumber(statVal(ch, 'likes')) }}</span>
@@ -252,10 +255,6 @@
               <span class="psd-stat-label">分享</span>
               <span class="psd-stat-val">{{ compactNumber(statVal(ch, 'shares')) }}</span>
             </div>
-            <div class="psd-stat-row" v-if="ch.stats.stay_to_watch != null">
-              <span class="psd-stat-label">前3秒停留率</span>
-              <span class="psd-stat-val">{{ formatPercent(ch.stats.stay_to_watch) }}</span>
-            </div>
             <div class="psd-stat-row" v-if="ch.stats.average_view_percentage != null">
               <span class="psd-stat-label">平均观看比</span>
               <span class="psd-stat-val">{{ formatPercent(ch.stats.average_view_percentage) }}</span>
@@ -264,17 +263,9 @@
               <span class="psd-stat-label">平均观看时长</span>
               <span class="psd-stat-val">{{ formatSeconds(ch.stats.average_view_duration) }}</span>
             </div>
-            <div class="psd-stat-row" v-if="ch.stats.engaged_views != null">
-              <span class="psd-stat-label">有效播放</span>
-              <span class="psd-stat-val">{{ compactNumber(ch.stats.engaged_views) }}</span>
-            </div>
             <div class="psd-stat-row" v-if="ch.stats.reach_count != null">
               <span class="psd-stat-label">触达人数</span>
               <span class="psd-stat-val">{{ compactNumber(ch.stats.reach_count) }}</span>
-            </div>
-            <div class="psd-stat-row" v-if="ch.stats.impressions_count != null">
-              <span class="psd-stat-label">曝光次数</span>
-              <span class="psd-stat-val">{{ compactNumber(ch.stats.impressions_count) }}</span>
             </div>
             <div class="psd-stat-row" v-if="ch.stats.save_count != null">
               <span class="psd-stat-label">收藏</span>
@@ -291,8 +282,9 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { fetchAccounts } from '../api/accounts'
-import { fetchPublicationStats } from '../api/video_publications'
+import { fetchPublicationStats, syncPublicationMetrics } from '../api/video_publications'
 
 const route = useRoute()
 
@@ -511,6 +503,28 @@ function changePage(page) {
   load()
 }
 
+const syncing = ref(false)
+
+async function handleSyncMetrics() {
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    syncDateFiltersFromMode()
+    const result = await syncPublicationMetrics({
+      platform: filters.platform || undefined,
+      account_id: filters.account_id || undefined,
+      date_from: filters.date_from || undefined,
+      date_to: filters.date_to || undefined,
+    })
+    ElMessage.success(result.message || '同步任务已提交')
+    await load()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '同步失败，请稍后重试')
+  } finally {
+    syncing.value = false
+  }
+}
+
 function handleSizeChange() {
   filters.page = 1
   load()
@@ -536,6 +550,11 @@ onMounted(async () => {
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* Header */
@@ -607,6 +626,24 @@ onMounted(async () => {
 .ps-btn-secondary:hover {
   background: #e2e8f0;
   color: #0f172a;
+}
+
+.ps-btn-sync {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ps-btn-sync:hover:not(:disabled) {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.ps-btn-sync:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .ps-count-badge {

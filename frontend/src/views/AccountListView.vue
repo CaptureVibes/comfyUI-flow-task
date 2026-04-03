@@ -259,7 +259,6 @@
             <th class="al-th al-th-stat">总 Views</th>
             <th class="al-th al-th-stat">均 Views</th>
             <th class="al-th al-th-stat">点赞率</th>
-            <th class="al-th al-th-stat">完播率</th>
             <th class="al-th al-th-date">最新发布</th>
             <th class="al-th al-th-tags">标签 / 博主</th>
             <th class="al-th al-th-actions">操作</th>
@@ -331,9 +330,6 @@
             <!-- 点赞率 -->
             <td class="al-td al-td-stat">{{ formatPercent(snapshotValue(item, 'avg_like_rate')) }}</td>
 
-            <!-- 完播率 -->
-            <td class="al-td al-td-stat">{{ formatPercent(snapshotValue(item, 'avg_completion_rate')) }}</td>
-
             <!-- 最新发布 -->
             <td class="al-td al-td-date">{{ formatSnapshotDate(snapshotValue(item, 'latest_video_published_at')) }}</td>
 
@@ -366,6 +362,7 @@
             <td class="al-td al-td-actions" @click.stop>
               <div class="al-row-actions">
                 <button class="ac-btn ac-btn-stats" @click="$router.push({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
+                <button class="ac-btn ac-btn-sync" :class="{ loading: syncingId === item.id }" @click="handleSyncAccount(item)">{{ syncingId === item.id ? '同步中' : '同步' }}</button>
                 <button class="ac-btn ac-btn-edit" @click="$router.push(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
                 <button class="ac-btn ac-btn-del" :class="{ loading: deleting === item.id }" @click="handleDelete(item)">删除</button>
               </div>
@@ -432,6 +429,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish } from '../api/accounts'
+import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
@@ -475,6 +473,22 @@ async function handleDownload() {
     downloading.value = false
   }
 }
+const syncingId = ref(null)
+
+async function handleSyncAccount(item) {
+  if (syncingId.value) return
+  syncingId.value = item.id
+  try {
+    const r = await syncAccountSnapshots(item.id)
+    ElMessage.success(r?.message || '同步任务已提交')
+    await loadData()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '同步失败')
+  } finally {
+    syncingId.value = null
+  }
+}
+
 const bulkGenerating = ref(false)
 const bulkRestarting = ref(false)
 const showBulkContinueDialog = ref(false)
@@ -1401,6 +1415,18 @@ onMounted(loadData)
   border-color: #fca5a5;
   color: #b91c1c;
   background: #fee2e2;
+}
+
+.ac-btn-sync {
+  border-color: #fde68a;
+  color: #92400e;
+  background: #fffbeb;
+}
+
+.ac-btn-sync:hover {
+  border-color: #fcd34d;
+  color: #78350f;
+  background: #fef3c7;
 }
 
 .ac-btn.loading {

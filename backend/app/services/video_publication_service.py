@@ -366,7 +366,7 @@ class VideoPublicationService:
             .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
             .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
             .outerjoin(Account, Account.id == VideoTask.account_id)
-            .where(VideoPublication.status == "completed")
+            .where(VideoPublication.status.in_(["completed", "partial"]))
             .order_by(
                 VideoPublication.completed_at.desc().nullslast(),
                 VideoPublication.created_at.desc(),
@@ -426,7 +426,6 @@ class VideoPublicationService:
         total_likes = 0
         total_comments = 0
         total_shares = 0
-        stay_values: list[float] = []
         view_percentage_values: list[float] = []
 
         for channel in metrics_channels:
@@ -436,10 +435,6 @@ class VideoPublicationService:
             total_likes += self._to_int(stats.get("likes") if platform == "youtube" else stats.get("like_count"))
             total_comments += self._to_int(stats.get("comments") if platform == "youtube" else stats.get("comment_count"))
             total_shares += self._to_int(stats.get("shares") if platform == "youtube" else stats.get("share_count"))
-
-            stay_to_watch = self._to_float(stats.get("stay_to_watch"))
-            if stay_to_watch is not None:
-                stay_values.append(stay_to_watch)
 
             avg_view_percentage = self._to_float(stats.get("average_view_percentage"))
             if avg_view_percentage is not None:
@@ -463,7 +458,6 @@ class VideoPublicationService:
             total_likes=total_likes,
             total_comments=total_comments,
             total_shares=total_shares,
-            avg_stay_to_watch=(sum(stay_values) / len(stay_values)) if stay_values else None,
             avg_view_percentage=(sum(view_percentage_values) / len(view_percentage_values)) if view_percentage_values else None,
             created_at=publication.created_at,
             updated_at=publication.updated_at,
@@ -509,8 +503,6 @@ class VideoPublicationService:
                 return item.total_comments
             if key_name == "total_shares":
                 return item.total_shares
-            if key_name == "avg_stay_to_watch":
-                return item.avg_stay_to_watch if item.avg_stay_to_watch is not None else -1
             if key_name == "avg_view_percentage":
                 return item.avg_view_percentage if item.avg_view_percentage is not None else -1
             return item.published_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc)
@@ -612,6 +604,80 @@ class VideoPublicationService:
         await self.db.refresh(publication)
 
         return publication
+
+    async def sync_metrics_for_stats_page(
+        self,
+        query: VideoPublicationStatsQuery,
+        owner_id: uuid.UUID | None = None,
+    ) -> dict:
+        """批量同步数据统计页中已完成发布记录的指标快照。
+        按当前筛选条件捞出所有 completed 记录，逐一调用 Open API metrics，
+        将结果写入 metrics_snapshot 字段。
+        返回 {"synced": n, "failed": n} 统计。
+        """
+        from app.models.video_task import VideoSubTask, VideoTask
+        from datetime import date
+
+        stmt = (
+            select(VideoPublication)
+            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+            .where(VideoPublication.status.in_(["completed", "partial"]))
+            .where(VideoPublication.open_api_task_id.isnot(None))
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+        if query.account_id is not None:
+            stmt = stmt.where(VideoTask.account_id == query.account_id)
+        if query.date_from is not None:
+            stmt = stmt.where(
+                VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc)
+            )
+        if query.date_to is not None:
+            next_day = date.fromordinal(query.date_to.toordinal() + 1)
+            stmt = stmt.where(
+                VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
+            )
+
+        publications = list((await self.db.execute(stmt)).scalars().all())
+
+        synced = 0
+        failed = 0
+        for pub in publications:
+            try:
+                response = await self.open_api.fetch_upload_metrics(
+                    task_id=pub.open_api_task_id,
+                    external_id=pub.external_id,
+                )
+                # logger.info(
+                #     "sync_metrics raw response: publication_id=%s task_id=%s response=%s",
+                #     pub.id, pub.open_api_task_id, response,
+                # )
+                if response.get("code") != 0:
+                    failed += 1
+                    continue
+                data = response.get("data") or {}
+                snapshot = {
+                    "status": data.get("status"),
+                    "total_channels": data.get("total_channels", 0),
+                    "completed_channels": data.get("completed_channels", 0),
+                    "failed_channels": data.get("failed_channels", 0),
+                    "synced_at": utcnow().isoformat(),
+                    "channels": data.get("channels") or [],
+                }
+                pub.metrics_snapshot = snapshot
+                synced += 1
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError):
+                logger.warning("sync_metrics: timeout for publication %s", pub.id)
+                failed += 1
+            except Exception:
+                logger.exception("sync_metrics: error for publication %s", pub.id)
+                failed += 1
+
+        if synced:
+            await self.db.commit()
+
+        return {"synced": synced, "failed": failed, "total": len(publications)}
 
     async def handle_callback(self, callback_data: dict) -> VideoPublication | None:
         """处理 Open API 回调"""

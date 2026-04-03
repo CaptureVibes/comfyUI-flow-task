@@ -23,3 +23,13 @@ frontend/.env
 .idea/
 
 *.log
+logs/
+
+# DS_Store
+.DS_Store
+
+# Temp / test files
+backend/job.json
+backend/job_result.json
+backend/tmp/
+backend/test_*.py

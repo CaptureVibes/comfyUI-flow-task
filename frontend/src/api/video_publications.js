@@ -76,6 +76,17 @@ export async function fetchPublicationStats(params = {}) {
   return data
 }
 
+export async function syncPublicationMetrics(params = {}) {
+  const { data } = await http.post('/video-publications/sync-metrics', null, { params })
+  return data
+}
+
+export async function syncAccountSnapshots(accountId) {
+  const params = accountId ? { account_id: accountId } : {}
+  const { data } = await http.post('/video-publications/sync-account-snapshots', null, { params })
+  return data
+}
+
 /**
  * 同步发布任务状态（从 Open API）
  * @param {string} publicationId - 发布任务 ID

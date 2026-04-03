@@ -17,6 +17,7 @@ from app.db.init_db import init_db
 from app.services.video_ai_service import start_video_ai_queue_processor, stop_video_ai_queue_processor, recover_stuck_templates_on_startup
 from app.services.ai_account_service import start_ai_account_queue_processor, stop_ai_account_queue_processor, recover_stuck_accounts_on_startup
 from app.services.video_publication_service import start_video_publication_poller, stop_video_publication_poller
+from app.services.publication_metrics_scheduler import start_publication_metrics_scheduler, stop_publication_metrics_scheduler
 from app.services.video_stats_collector import stop_video_stats_collector
 from app.services.account_publish_scheduler import start_account_publish_scheduler, stop_account_publish_scheduler
 from app.services.candidate_scheduler_service import start_candidate_scheduler, stop_candidate_scheduler
@@ -85,6 +86,7 @@ async def startup_event() -> None:
     start_ai_account_queue_processor()
     await recover_stuck_accounts_on_startup()
     start_video_publication_poller()
+    start_publication_metrics_scheduler()
     # start_video_stats_collector()  # 暂停：每日统计定时任务
     start_account_publish_scheduler()
     start_candidate_scheduler()
@@ -100,6 +102,7 @@ async def shutdown_event() -> None:
     await stop_video_ai_queue_processor()
     await stop_ai_account_queue_processor()
     await stop_video_publication_poller()
+    await stop_publication_metrics_scheduler()
     await stop_video_stats_collector()
     await stop_account_publish_scheduler()
     await stop_candidate_scheduler()
