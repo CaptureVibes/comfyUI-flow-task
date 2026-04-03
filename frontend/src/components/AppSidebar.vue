@@ -39,7 +39,7 @@
           </svg>
         </div>
         <transition name="sidebar-text">
-          <span v-if="!collapsed" class="brand-text">ComfyUI Flow</span>
+          <span v-if="!collapsed" class="brand-text">EchoMatrix™</span>
         </transition>
       </router-link>
     </div>
