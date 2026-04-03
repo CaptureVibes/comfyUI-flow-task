@@ -28,6 +28,7 @@ VALID_STATUSES = {"pending", "generating", "reviewing", "stashed", "decision_rej
 JOB = "jimeng/jobs"
 CLI_JOBS = "jimeng/cli-jobs"
 
+SUBTASK_COUNT = 3
 
 SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":           {"generating"},
@@ -149,7 +150,7 @@ class VideoTaskService:
         if tpl and not tpl.is_used:
             tpl.is_used = True
 
-        for i in range(1, 2):
+        for i in range(1, SUBTASK_COUNT + 1):
             sub = VideoSubTask(
                 task_id=task.id,
                 sub_index=i,
