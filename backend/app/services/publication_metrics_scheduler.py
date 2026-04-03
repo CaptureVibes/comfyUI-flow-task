@@ -139,7 +139,8 @@ def _fetch_youtube_subscribers(channel_name: str) -> int | None:
         logger.warning("yt-dlp 未安装，无法获取 YouTube 订阅数")
         return None
 
-    url = f"https://www.youtube.com/@{channel_name}"
+    # username 可能带 @ 前缀，统一处理
+    url = f"https://www.youtube.com/{channel_name}"
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -177,7 +178,8 @@ async def _fetch_tiktok_followers(channel_name: str) -> int | None:
     }
     try:
         async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
-            resp = await client.get(url, params={"uniqueId": channel_name}, headers=headers)
+            unique_id = channel_name.lstrip("@")
+            resp = await client.get(url, params={"uniqueId": unique_id}, headers=headers)
         resp.raise_for_status()
         payload = resp.json()
         user_info = payload.get("userInfo") or {}
@@ -235,7 +237,7 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 if not isinstance(binding, dict):
                     continue
                 platform = binding.get("platform") or ""
-                ch_name = binding.get("channel_name") or ""
+                ch_name = binding.get("username") or ""
                 if not ch_name:
                     continue
                 if platform == "youtube":

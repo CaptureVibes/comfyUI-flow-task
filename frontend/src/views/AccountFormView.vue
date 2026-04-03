@@ -592,6 +592,7 @@ function handleChannelSelect(binding) {
   const channel = channelsMap.value[binding.platform]?.find(c => c.channel_id === binding.channel_id)
   if (channel) {
     binding.channel_name = channel.channel_name
+    binding.username = channel.username || ''
   }
 }
 
@@ -600,7 +601,8 @@ async function addBinding() {
     platform: 'youtube',
     _prevPlatform: '',
     channel_id: '',
-    channel_name: ''
+    channel_name: '',
+    username: ''
   })
   await loadChannels('youtube', { reset: true })
 }
