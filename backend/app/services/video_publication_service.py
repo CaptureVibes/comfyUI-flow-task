@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+
 import hmac
 import json
 import logging
@@ -23,12 +24,14 @@ from app.schemas.video_publication import (
 logger = logging.getLogger("app.video_publication_service")
 
 # ── 后台轮询器 ──────────────────────────────────────────────────────────────────
-
 _POLL_INTERVAL_SECONDS = 60.0
-
 _poller_task: asyncio.Task | None = None
 _poller_stop_event: asyncio.Event | None = None
 
+# 同步视频指标限流参数
+_SYNC_METRICS_RATE_LIMIT_SEC = 1   # 每条请求间隔（秒）
+_SYNC_METRICS_RETRY_DELAY_SEC = 10  # 失败后重试等待（秒）
+_SYNC_METRICS_RETRIES = 3           # 最大重试次数
 
 def start_video_publication_poller() -> None:
     global _poller_task, _poller_stop_event
@@ -644,35 +647,41 @@ class VideoPublicationService:
         synced = 0
         failed = 0
         for pub in publications:
-            try:
-                response = await self.open_api.fetch_upload_metrics(
-                    task_id=pub.open_api_task_id,
-                    external_id=pub.external_id,
-                )
-                # logger.info(
-                #     "sync_metrics raw response: publication_id=%s task_id=%s response=%s",
-                #     pub.id, pub.open_api_task_id, response,
-                # )
-                if response.get("code") != 0:
-                    failed += 1
-                    continue
-                data = response.get("data") or {}
-                snapshot = {
-                    "status": data.get("status"),
-                    "total_channels": data.get("total_channels", 0),
-                    "completed_channels": data.get("completed_channels", 0),
-                    "failed_channels": data.get("failed_channels", 0),
-                    "synced_at": utcnow().isoformat(),
-                    "channels": data.get("channels") or [],
-                }
-                pub.metrics_snapshot = snapshot
-                synced += 1
-            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError):
-                logger.warning("sync_metrics: timeout for publication %s", pub.id)
-                failed += 1
-            except Exception:
-                logger.exception("sync_metrics: error for publication %s", pub.id)
-                failed += 1
+            await asyncio.sleep(_SYNC_METRICS_RATE_LIMIT_SEC)
+            for attempt in range(_SYNC_METRICS_RETRIES + 1):
+                try:
+                    response = await self.open_api.fetch_upload_metrics(
+                        task_id=pub.open_api_task_id,
+                        external_id=pub.external_id,
+                    )
+                    if response.get("code") != 0:
+                        raise RuntimeError(f"API code={response.get('code')} msg={response.get('message')}")
+                    data = response.get("data") or {}
+                    snapshot = {
+                        "status": data.get("status"),
+                        "total_channels": data.get("total_channels", 0),
+                        "completed_channels": data.get("completed_channels", 0),
+                        "failed_channels": data.get("failed_channels", 0),
+                        "synced_at": utcnow().isoformat(),
+                        "channels": data.get("channels") or [],
+                    }
+                    pub.metrics_snapshot = snapshot
+                    synced += 1
+                    break
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as exc:
+                    if attempt < _SYNC_METRICS_RETRIES:
+                        logger.warning("sync_metrics: timeout for publication %s, %ds 后重试: %s", pub.id, _SYNC_METRICS_RETRY_DELAY_SEC, exc)
+                        await asyncio.sleep(_SYNC_METRICS_RETRY_DELAY_SEC)
+                    else:
+                        logger.warning("sync_metrics: timeout for publication %s, 放弃: %s", pub.id, exc)
+                        failed += 1
+                except Exception as exc:
+                    if attempt < _SYNC_METRICS_RETRIES:
+                        logger.warning("sync_metrics: error for publication %s, %ds 后重试: %s", pub.id, _SYNC_METRICS_RETRY_DELAY_SEC, exc)
+                        await asyncio.sleep(_SYNC_METRICS_RETRY_DELAY_SEC)
+                    else:
+                        logger.exception("sync_metrics: error for publication %s, 放弃", pub.id)
+                        failed += 1
 
         if synced:
             await self.db.commit()
