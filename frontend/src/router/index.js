@@ -155,6 +155,12 @@ const routes = [
         meta: { title: '审核人统计' }
       },
       {
+        path: 'publication-stats',
+        name: 'publication-stats',
+        component: () => import('../views/PublicationStatsView.vue'),
+        meta: { title: '数据统计' }
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('../views/SettingsView.vue'),

@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from typing import Any
 
 import httpx
@@ -11,6 +12,8 @@ from app.schemas.video_publication import (
     VideoPublicationCreate,
     VideoPublicationDetailRead,
     VideoPublicationRead,
+    VideoPublicationStatsListResponse,
+    VideoPublicationStatsQuery,
     VideoPublicationStatusUpdate,
 )
 from app.services.video_publication_service import VideoPublicationService
@@ -64,6 +67,38 @@ async def create_publication(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建发布任务失败: {str(e)}")
+
+
+@router.get("/video-publications/stats", response_model=VideoPublicationStatsListResponse)
+async def get_publication_stats(
+    platform: str | None = Query(None, description="平台类型: tiktok/youtube/instagram"),
+    account_id: uuid.UUID | None = Query(None, description="账号 ID"),
+    date_from: date | None = Query(None, description="发布时间起始日期"),
+    date_to: date | None = Query(None, description="发布时间结束日期"),
+    keyword: str | None = Query(None, description="标题/账号/渠道/平台链接关键字"),
+    sort_by: str = Query("published_at", description="排序字段"),
+    sort_order: str = Query("desc", description="排序方向: asc/desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取数据统计页已发布视频列表。"""
+    query = VideoPublicationStatsQuery(
+        platform=platform,
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+        keyword=keyword,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        page_size=page_size,
+    )
+    owner_id = None if current_user.is_admin else current_user.user_id
+    service = VideoPublicationService(db)
+    items, total = await service.get_publication_stats_page(query, owner_id=owner_id)
+    return VideoPublicationStatsListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/video-publications/{publication_id}", response_model=VideoPublicationDetailRead)

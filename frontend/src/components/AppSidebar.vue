@@ -221,6 +221,17 @@ const IconFaceLibrary = () => h('svg', {
   h('path', { d: 'M6 21v-1a6 6 0 0 1 12 0v1' })
 ])
 
+const IconPublicationStats = () => h('svg', {
+  width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none',
+  stroke: 'currentColor', 'stroke-width': 1.75,
+  'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+}, [
+  h('path', { d: 'M4 19h16' }),
+  h('rect', { x: 6, y: 10, width: 3, height: 6, rx: 1 }),
+  h('rect', { x: 11, y: 7, width: 3, height: 9, rx: 1 }),
+  h('rect', { x: 16, y: 4, width: 3, height: 12, rx: 1 })
+])
+
 const baseMenuItems = [
   { path: '/dashboard/topics', name: 'topics', label: '主题词', iconComponent: IconTopic },
   { path: '/dashboard/candidate-library', name: 'candidate-library', label: '候选库', iconComponent: IconCandidateLibrary },
@@ -230,6 +241,7 @@ const baseMenuItems = [
   { path: '/dashboard/accounts', name: 'accounts', label: 'AI博主', iconComponent: IconAccount },
   { path: '/dashboard/daily-tasks', name: 'daily-tasks', label: 'TASKS', iconComponent: IconTaskMgmt },
   { path: '/dashboard/operator-stats', name: 'operator-stats', label: '审核统计', iconComponent: IconOperatorStats },
+  { path: '/dashboard/publication-stats', name: 'publication-stats', label: '数据统计', iconComponent: IconPublicationStats },
   { path: '/dashboard/tiktok-bloggers', name: 'tiktok-bloggers', label: 'TK博主', iconComponent: IconTiktokBlogger },
   { path: '/dashboard/settings', name: 'settings', label: '设置', iconComponent: IconSetting }
 ]
@@ -245,13 +257,7 @@ function isActive(name) {
 }
 
 function handleNavClick(item) {
-  const parentName = route.meta?.parent || ''
-  // If currently in a child page of this module, go back to preserve query params
-  if (parentName === item.name) {
-    router.back()
-  } else {
-    router.push(item.path)
-  }
+  router.push(item.path)
 }
 </script>
 

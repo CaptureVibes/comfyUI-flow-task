@@ -156,6 +156,20 @@ class ScheduledPublishConfig(BaseModel):
     publish_count: int = 1
 
 
+class AccountPerformanceSnapshot(BaseModel):
+    synced_at: datetime | None = None
+    followers_count: int | float | None = None
+    video_count: int | None = None
+    total_views: int | float | None = None
+    avg_views: int | float | None = None
+    total_likes: int | float | None = None
+    avg_like_rate: int | float | None = None
+    avg_stay_to_watch: int | float | None = None
+    avg_completion_rate: int | float | None = None
+    first_content_date: datetime | None = None
+    latest_video_published_at: datetime | None = None
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
@@ -167,6 +181,7 @@ class AccountRead(BaseModel):
     photo_url: str | None = None
     painting_url: str | None = None
     social_bindings: list | None
+    performance_snapshot: AccountPerformanceSnapshot | None = None
     tiktok_bloggers: list[BoundBloggerRead] = []
     bound_tags: list[BoundTagRead] = []
     publish_enabled: bool = False

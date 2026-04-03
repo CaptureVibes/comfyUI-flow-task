@@ -247,120 +247,132 @@
       </template>
     </el-dialog>
 
-    <!-- Card grid -->
-    <div v-loading="loading" class="al-grid">
-      <div
-        v-for="item in items"
-        :key="item.id"
-        class="ac"
-        @click="goToDetail(item)"
-      >
-        <!-- Media area -->
-        <div class="ac-media-wrap">
-          <span v-if="item.pending_publish_count" class="ac-pending-badge" :title="`待发布视频 ${item.pending_publish_count} 条`">
-            {{ item.pending_publish_count }}
-          </span>
-          <img
-            v-if="item.photo_url"
-            :src="item.photo_url"
-            class="ac-photo-img"
-            :alt="`${item.account_name} 照片`"
-            @click.stop="previewMedia(item, 'photo')"
-          />
-          <div v-else class="ac-photo-placeholder">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.7"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-5.5-5.5a2 2 0 0 0-2.828 0L4 21V5z"/><circle cx="15" cy="9" r="2"/></svg>
-            <span>暂无照片</span>
-          </div>
-          <button
-            type="button"
-            class="ac-avatar-float"
-            :class="{ 'is-clickable': !!item.avatar_url }"
-            @click.stop="previewMedia(item, 'avatar')"
+    <!-- Table list -->
+    <div v-loading="loading" class="al-table-wrap">
+      <table class="al-table">
+        <thead>
+          <tr>
+            <th class="al-th al-th-media">头像 / 照片</th>
+            <th class="al-th al-th-name">账号名称</th>
+            <th class="al-th al-th-platform">平台绑定</th>
+            <th class="al-th al-th-stat">粉丝数</th>
+            <th class="al-th al-th-stat">总 Views</th>
+            <th class="al-th al-th-stat">均 Views</th>
+            <th class="al-th al-th-stat">点赞率</th>
+            <th class="al-th al-th-stat">完播率</th>
+            <th class="al-th al-th-date">最新发布</th>
+            <th class="al-th al-th-tags">标签 / 博主</th>
+            <th class="al-th al-th-actions">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="item in items"
+            :key="item.id"
+            class="al-tr"
+            @click="goToDetail(item)"
           >
-            <img v-if="item.avatar_url" :src="item.avatar_url" class="ac-avatar-img" :alt="`${item.account_name} 头像`" />
-            <div v-else class="ac-avatar-placeholder">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            </div>
-          </button>
-          <!-- Platform badges -->
-          <div class="ac-platforms">
-            <span
-              v-for="binding in (item.social_bindings || [])"
-              :key="binding.platform"
-              class="ac-platform-dot"
-              :class="`ac-platform-${binding.platform}`"
-              :title="platformLabel(binding.platform)"
-            >{{ platformIcon(binding.platform) }}</span>
-          </div>
-        </div>
-
-        <!-- Body -->
-        <div class="ac-body">
-          <div class="ac-name-row">
-            <div class="ac-name">{{ item.account_name }}</div>
-            <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'traffic'}`">
-              {{ item.account_type === 'persona' ? '人设号' : '流量号' }}
-            </span>
-            <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
-              {{ aiGenerationStatusLabel(item.ai_generation_status) }}
-            </span>
-          </div>
-          <div v-if="item.style_description" class="ac-style">{{ item.style_description }}</div>
-          <div v-if="!item.social_bindings?.length && !item.tiktok_bloggers?.length" class="ac-no-binding">未绑定平台</div>
-
-          <!-- Bound tags -->
-          <div v-if="item.bound_tags && item.bound_tags.length > 0" class="ac-tags">
-            <div
-              v-for="tag in item.bound_tags"
-              :key="tag.id"
-              class="ac-tag-chip"
-            >
-              <span class="ac-tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
-              {{ tag.name }}
-            </div>
-          </div>
-
-          <!-- Bound TikTok bloggers -->
-          <div v-if="item.tiktok_bloggers?.length" class="ac-bloggers">
-            <div
-              v-for="blogger in item.tiktok_bloggers"
-              :key="blogger.id"
-              class="ac-blogger-chip"
-              :title="blogger.blogger_name + (blogger.blogger_handle ? ' @' + blogger.blogger_handle : '')"
-            >
-              <img v-if="blogger.avatar_url" :src="blogger.avatar_url" class="ac-blogger-avatar" />
-              <div v-else class="ac-blogger-avatar ac-blogger-avatar-ph">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            <!-- 头像/照片 -->
+            <td class="al-td al-td-media" @click.stop>
+              <div class="al-media-cell">
+                <div class="al-photo-wrap" @click="previewMedia(item, 'photo')">
+                  <img v-if="item.photo_url" :src="item.photo_url" class="al-photo-img" />
+                  <div v-else class="al-photo-ph">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.7"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-5.5-5.5a2 2 0 0 0-2.828 0L4 21V5z"/><circle cx="15" cy="9" r="2"/></svg>
+                  </div>
+                </div>
+                <div class="al-avatar-wrap" @click="previewMedia(item, 'avatar')">
+                  <img v-if="item.avatar_url" :src="item.avatar_url" class="al-avatar-img" />
+                  <div v-else class="al-avatar-ph">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                  </div>
+                </div>
+                <span v-if="item.pending_publish_count" class="al-pending-badge" :title="`待发布 ${item.pending_publish_count} 条`">{{ item.pending_publish_count }}</span>
               </div>
-              <span class="ac-blogger-name">{{ blogger.blogger_name }}</span>
-            </div>
-          </div>
+            </td>
 
-          <div class="ac-footer">
-            <div class="ac-binding-tags">
-              <span
-                v-for="binding in (item.social_bindings || [])"
-                :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
-                class="ac-tag"
-                :class="`ac-tag-${binding.platform}`"
-                :title="bindingDisplayLabel(binding)"
-              >{{ bindingDisplayLabel(binding) }}</span>
-            </div>
-            <div class="ac-actions" @click.stop>
-              <button
-                class="ac-btn ac-btn-edit"
-                @click="$router.push(`/dashboard/accounts/${item.id}/edit`)"
-              >编辑</button>
-              <button
-                class="ac-btn ac-btn-del"
-                :class="{ loading: deleting === item.id }"
-                @click="handleDelete(item)"
-              >删除</button>
-            </div>
-          </div>
-        </div>
-      </div>
+            <!-- 账号名称 -->
+            <td class="al-td al-td-name">
+              <div class="al-name-main">{{ item.account_name }}</div>
+              <div class="al-name-meta">
+                <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'traffic'}`">
+                  {{ item.account_type === 'persona' ? '人设号' : '流量号' }}
+                </span>
+                <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
+                  {{ aiGenerationStatusLabel(item.ai_generation_status) }}
+                </span>
+              </div>
+              <div v-if="item.style_description" class="al-style-desc">{{ item.style_description }}</div>
+            </td>
 
+            <!-- 平台绑定 -->
+            <td class="al-td al-td-platform">
+              <div v-if="item.social_bindings?.length" class="al-bindings">
+                <span
+                  v-for="binding in item.social_bindings"
+                  :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
+                  class="ac-tag"
+                  :class="`ac-tag-${binding.platform}`"
+                  :title="bindingDisplayLabel(binding)"
+                >{{ bindingDisplayLabel(binding) }}</span>
+              </div>
+              <span v-else class="al-no-binding">未绑定</span>
+            </td>
+
+            <!-- 粉丝数 -->
+            <td class="al-td al-td-stat">{{ formatCount(snapshotValue(item, 'followers_count')) }}</td>
+
+            <!-- 总 Views -->
+            <td class="al-td al-td-stat">{{ formatCount(snapshotValue(item, 'total_views')) }}</td>
+
+            <!-- 均 Views -->
+            <td class="al-td al-td-stat">{{ formatCount(snapshotValue(item, 'avg_views')) }}</td>
+
+            <!-- 点赞率 -->
+            <td class="al-td al-td-stat">{{ formatPercent(snapshotValue(item, 'avg_like_rate')) }}</td>
+
+            <!-- 完播率 -->
+            <td class="al-td al-td-stat">{{ formatPercent(snapshotValue(item, 'avg_completion_rate')) }}</td>
+
+            <!-- 最新发布 -->
+            <td class="al-td al-td-date">{{ formatSnapshotDate(snapshotValue(item, 'latest_video_published_at')) }}</td>
+
+            <!-- 标签 / 博主 -->
+            <td class="al-td al-td-tags">
+              <div v-if="item.bound_tags?.length" class="al-tags-wrap">
+                <span v-for="tag in item.bound_tags" :key="tag.id" class="ac-tag-chip">
+                  <span class="ac-tag-dot" :style="tag.color ? { background: tag.color } : {}"></span>
+                  {{ tag.name }}
+                </span>
+              </div>
+              <div v-if="item.tiktok_bloggers?.length" class="al-bloggers-wrap">
+                <span
+                  v-for="blogger in item.tiktok_bloggers"
+                  :key="blogger.id"
+                  class="ac-blogger-chip"
+                  :title="blogger.blogger_name + (blogger.blogger_handle ? ' @' + blogger.blogger_handle : '')"
+                >
+                  <img v-if="blogger.avatar_url" :src="blogger.avatar_url" class="ac-blogger-avatar" />
+                  <div v-else class="ac-blogger-avatar ac-blogger-avatar-ph">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                  </div>
+                  <span class="ac-blogger-name">{{ blogger.blogger_name }}</span>
+                </span>
+              </div>
+              <span v-if="!item.bound_tags?.length && !item.tiktok_bloggers?.length" class="al-no-binding">—</span>
+            </td>
+
+            <!-- 操作 -->
+            <td class="al-td al-td-actions" @click.stop>
+              <div class="al-row-actions">
+                <button class="ac-btn ac-btn-stats" @click="$router.push({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
+                <button class="ac-btn ac-btn-edit" @click="$router.push(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
+                <button class="ac-btn ac-btn-del" :class="{ loading: deleting === item.id }" @click="handleDelete(item)">删除</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" :image-size="80" />
@@ -429,7 +441,6 @@ const route = useRoute()
 const router = useRouter()
 
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
-const PLATFORM_ICONS = { youtube: '▶', tiktok: '♪', instagram: '◈' }
 
 const loading = ref(false)
 const deleting = ref(null)
@@ -572,12 +583,14 @@ const visiblePages = computed(() => {
 })
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
-function platformIcon(p) { return PLATFORM_ICONS[p] || '●' }
 function bindingDisplayLabel(binding) {
   const platform = platformLabel(binding.platform)
   const channelName = binding.channel_name?.trim()
   const channelId = binding.channel_id?.trim()
   return channelName ? `${platform} · ${channelName}` : channelId ? `${platform} · ${channelId}` : platform
+}
+function snapshotValue(item, key) {
+  return item?.performance_snapshot?.[key]
 }
 function aiGenerationStatusLabel(status) {
   const map = {
@@ -591,6 +604,33 @@ function aiGenerationStatusLabel(status) {
     failed: '失败',
   }
   return map[status] || status
+}
+
+function formatCount(value) {
+  if (value == null || value === '') return '-'
+  const n = Number(value)
+  if (Number.isNaN(n)) return String(value)
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(Math.round(n))
+}
+
+function formatPercent(value) {
+  if (value == null || value === '') return '-'
+  const n = Number(value)
+  if (Number.isNaN(n)) return String(value)
+  return `${n.toFixed(1)}%`
+}
+
+function formatSnapshotDate(value) {
+  if (!value) return '-'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value)
+  return d.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
 }
 
 function previewMedia(item, type) {
@@ -974,246 +1014,223 @@ onMounted(loadData)
   border: none;
 }
 
-/* Grid */
-.al-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 20px;
+/* Table */
+.al-table-wrap {
+  width: 100%;
+  overflow-x: auto;
   margin-bottom: 28px;
-}
-
-/* Account card */
-.ac {
-  background: #fff;
   border: 1px solid #e8edf5;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,.05);
-  transition: box-shadow 0.2s, transform 0.2s;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.04);
+}
+
+.al-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 960px;
+}
+
+.al-th {
+  padding: 11px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-align: left;
+  background: #f8fafc;
+  border-bottom: 1px solid #e8edf5;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.al-th:first-child { border-top-left-radius: 14px; }
+.al-th:last-child  { border-top-right-radius: 14px; }
+
+.al-th-media    { width: 110px; }
+.al-th-name     { min-width: 160px; }
+.al-th-platform { min-width: 140px; }
+.al-th-stat     { width: 88px; text-align: right; }
+.al-th-date     { width: 100px; }
+.al-th-tags     { min-width: 160px; }
+.al-th-actions  { width: 100px; text-align: center; }
+
+.al-tr {
   cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.al-tr:last-child { border-bottom: none; }
+
+.al-tr:hover { background: #f8faff; }
+
+.al-td {
+  padding: 10px 14px;
+  vertical-align: middle;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.al-td-stat {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+
+.al-td-date {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.al-td-actions { text-align: center; }
+
+/* Media cell */
+.al-media-cell {
   display: flex;
-  flex-direction: column;
-}
-
-.ac:hover {
-  box-shadow: 0 8px 24px rgba(0,0,0,.1);
-  transform: translateY(-2px);
-}
-
-/* Media */
-.ac-media-wrap {
+  align-items: center;
+  gap: 8px;
   position: relative;
-  height: 168px;
-  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
-  overflow: hidden;
 }
 
-.ac-photo-img {
+.al-photo-wrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: zoom-in;
+  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.al-photo-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
-  cursor: zoom-in;
 }
 
-.ac-photo-placeholder {
+.al-photo-ph {
   width: 100%;
   height: 100%;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: #94a3b8;
-  font-size: 12px;
-  background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
 }
 
-.ac-pending-badge {
+.al-avatar-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: zoom-in;
+  background: #eef2ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.1);
+}
+
+.al-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.al-avatar-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.al-pending-badge {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 8px;
+  top: -4px;
+  left: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 999px;
   background: rgba(234, 88, 12, 0.96);
   color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 800;
   line-height: 1;
-  box-shadow: 0 6px 18px rgba(194, 65, 12, 0.28);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 6px rgba(194, 65, 12, 0.3);
 }
 
-.ac-avatar-float {
-  position: absolute;
-  left: 14px;
-  bottom: 14px;
-  width: 72px;
-  height: 72px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.ac-avatar-float.is-clickable {
-  cursor: zoom-in;
-}
-
-.ac-avatar-img {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 3px solid #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,.12);
-}
-
-.ac-avatar-placeholder {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,.08);
-}
-
-.ac-media-tip {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(6px);
-  padding: 4px 8px;
-  border-radius: 999px;
-}
-
-.ac-platforms {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  display: flex;
-  gap: 4px;
-}
-
-.ac-platform-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,.2);
-}
-
-.ac-platform-youtube { background: #ef4444; }
-.ac-platform-tiktok  { background: #010101; }
-.ac-platform-instagram { background: linear-gradient(135deg, #f59e0b, #ef4444, #8b5cf6); }
-
-/* Body */
-.ac-body {
-  padding: 14px 16px 12px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.ac-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.ac-name {
-  font-size: 15px;
+/* Name cell */
+.al-name-main {
+  font-size: 14px;
   font-weight: 700;
   color: #0f172a;
+  margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
-  flex: 1;
+  max-width: 200px;
 }
 
-.ac-ai-status {
-  flex-shrink: 0;
+.al-name-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.al-style-desc {
   font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: #e2e8f0;
-  color: #475569;
-}
-
-.ac-ai-status.is-pending,
-.ac-ai-status.is-video_analyzing,
-.ac-ai-status.is-name_generating,
-.ac-ai-status.is-photo_generating,
-.ac-ai-status.is-avatar_generating {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.ac-ai-status.is-awaiting_photo_selection {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.ac-ai-status.is-failed {
-  background: #fee2e2;
-  color: #b91c1c;
-}
-
-.ac-ai-status.is-completed {
-  background: #dcfce7;
-  color: #15803d;
-}
-
-.ac-style {
-  font-size: 12px;
   color: #64748b;
-  margin-bottom: 10px;
+  margin-top: 4px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  line-height: 1.5;
-  flex: 1;
+  max-width: 200px;
 }
 
-.ac-no-binding {
-  font-size: 12px;
-  color: #94a3b8;
-  margin-bottom: 10px;
-  flex: 1;
-}
-
-.ac-bloggers {
+/* Platform cell */
+.al-bindings {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 4px;
 }
 
+.al-no-binding {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* Tags cell */
+.al-tags-wrap,
+.al-bloggers-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+/* Row actions */
+.al-row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+/* Shared chip / badge styles */
 .ac-blogger-chip {
   display: flex;
   align-items: center;
@@ -1222,7 +1239,7 @@ onMounted(loadData)
   border: 1px solid #e0e7ff;
   border-radius: 20px;
   padding: 3px 8px 3px 3px;
-  max-width: 100%;
+  max-width: 140px;
 }
 
 .ac-blogger-avatar {
@@ -1247,48 +1264,26 @@ onMounted(loadData)
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100px;
-}
-
-.ac-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top: 1px solid #f1f5f9;
-  padding-top: 10px;
-  margin-top: 4px;
-}
-
-.ac-binding-tags {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-/* Account card bound tags */
-.ac-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  max-width: 90px;
 }
 
 .ac-tag-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
+  gap: 5px;
+  padding: 2px 8px;
   border-radius: 6px;
   border: 1px solid #e2e8f0;
   background: #f8fafc;
-  font-size: 12px;
+  font-size: 11px;
   color: #334155;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .ac-tag-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -1298,6 +1293,7 @@ onMounted(loadData)
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 6px;
+  white-space: nowrap;
 }
 
 .ac-tag-youtube  { background: #fef2f2; color: #dc2626; }
@@ -1325,10 +1321,39 @@ onMounted(loadData)
   color: #1d4ed8;
 }
 
-.ac-actions {
-  display: flex;
-  gap: 6px;
+.ac-ai-status {
   flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.ac-ai-status.is-pending,
+.ac-ai-status.is-video_analyzing,
+.ac-ai-status.is-name_generating,
+.ac-ai-status.is-photo_generating,
+.ac-ai-status.is-avatar_generating {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ac-ai-status.is-awaiting_photo_selection {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.ac-ai-status.is-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.ac-ai-status.is-completed {
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .ac-btn {
@@ -1342,11 +1367,22 @@ onMounted(loadData)
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
-  flex-shrink: 0;
   height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.ac-btn-stats {
+  border-color: #bae6fd;
+  color: #0369a1;
+  background: #f0f9ff;
+}
+
+.ac-btn-stats:hover {
+  border-color: #7dd3fc;
+  color: #0284c7;
+  background: #e0f2fe;
 }
 
 .ac-btn-edit:hover {

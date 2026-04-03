@@ -71,6 +71,11 @@ export async function fetchSubTaskPublications(subTaskId) {
   return data
 }
 
+export async function fetchPublicationStats(params = {}) {
+  const { data } = await http.get('/video-publications/stats', { params })
+  return data
+}
+
 /**
  * 同步发布任务状态（从 Open API）
  * @param {string} publicationId - 发布任务 ID

@@ -1,7 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VideoPublicationCreate(BaseModel):
@@ -43,6 +44,7 @@ class VideoPublicationRead(BaseModel):
     completed_channels: int
     failed_channels: int
     channels_status: list[VideoPublicationChannelStatus] | None = None
+    metrics_snapshot: "VideoPublicationMetricsSnapshot | None" = None
     error_message: str | None = None
     callback_received: bool
     created_at: datetime | None = None
@@ -56,6 +58,106 @@ class VideoPublicationDetailRead(VideoPublicationRead):
     """发布任务详情（包含请求数据）"""
     request_payload: dict | None = None
     response_data: dict | None = None
+
+
+class VideoPublicationMetricsVideoInfo(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    thumbnail_url: str | None = None
+    duration: int | float | None = None
+    privacy_status: str | None = None
+    published_at: datetime | None = None
+
+
+class VideoPublicationMetricsStats(BaseModel):
+    view_count: int | float | None = None
+    views: int | float | None = None
+    like_count: int | float | None = None
+    likes: int | float | None = None
+    comment_count: int | float | None = None
+    comments: int | float | None = None
+    share_count: int | float | None = None
+    shares: int | float | None = None
+    download_count: int | float | None = None
+    engaged_views: int | float | None = None
+    estimated_minutes_watched: int | float | None = None
+    average_view_duration: int | float | None = None
+    average_view_percentage: int | float | None = None
+    subscribers_gained: int | float | None = None
+    subscribers_lost: int | float | None = None
+    reach_count: int | float | None = None
+    impressions_count: int | float | None = None
+    save_count: int | float | None = None
+    total_interactions: int | float | None = None
+    avg_watch_time: int | float | None = None
+    stay_to_watch: int | float | None = None
+
+
+class VideoPublicationMetricsChannel(BaseModel):
+    platform: Literal["tiktok", "youtube", "instagram"] | str
+    channel_id: str | None = None
+    channel_name: str | None = None
+    status: str | None = None
+    platform_video_id: str | None = None
+    platform_video_url: str | None = None
+    video_info: VideoPublicationMetricsVideoInfo | None = None
+    stats: VideoPublicationMetricsStats | None = None
+
+
+class VideoPublicationMetricsSnapshot(BaseModel):
+    status: str | None = None
+    total_channels: int = 0
+    completed_channels: int = 0
+    failed_channels: int = 0
+    synced_at: datetime | None = None
+    channels: list[VideoPublicationMetricsChannel] = Field(default_factory=list)
+
+
+class VideoPublicationStatsChannel(VideoPublicationMetricsChannel):
+    pass
+
+
+class VideoPublicationStatsListItem(BaseModel):
+    id: uuid.UUID
+    sub_task_id: uuid.UUID
+    task_id: uuid.UUID | None = None
+    account_id: uuid.UUID | None = None
+    account_name: str | None = None
+    status: str
+    video_url: str | None = None
+    published_at: datetime | None = None
+    title: str | None = None
+    description: str | None = None
+    channels_status: list[VideoPublicationChannelStatus] | None = None
+    metrics_snapshot: VideoPublicationMetricsSnapshot | None = None
+    metrics_channels: list[VideoPublicationStatsChannel] = Field(default_factory=list)
+    total_views: int = 0
+    total_likes: int = 0
+    total_comments: int = 0
+    total_shares: int = 0
+    avg_stay_to_watch: float | None = None
+    avg_view_percentage: float | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class VideoPublicationStatsListResponse(BaseModel):
+    items: list[VideoPublicationStatsListItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class VideoPublicationStatsQuery(BaseModel):
+    platform: str | None = None
+    account_id: uuid.UUID | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    keyword: str | None = None
+    sort_by: str = "published_at"
+    sort_order: str = "desc"
+    page: int = 1
+    page_size: int = 20
 
 
 class VideoPublicationStatusUpdate(BaseModel):

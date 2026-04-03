@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.account import Account
 from app.models.video_publication import VideoPublication
-from app.schemas.video_publication import VideoPublicationCreate
+from app.schemas.video_publication import (
+    VideoPublicationCreate,
+    VideoPublicationStatsListItem,
+    VideoPublicationStatsQuery,
+)
 
 logger = logging.getLogger("app.video_publication_service")
 
@@ -348,6 +352,194 @@ class VideoPublicationService:
             .order_by(VideoPublication.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def get_publication_stats_page(
+        self,
+        query: VideoPublicationStatsQuery,
+        owner_id: uuid.UUID | None = None,
+    ) -> tuple[list[VideoPublicationStatsListItem], int]:
+        """获取数据统计页所需的已发布视频列表。"""
+        from app.models.video_task import VideoSubTask, VideoTask
+
+        stmt = (
+            select(VideoPublication, VideoSubTask, VideoTask, Account)
+            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+            .outerjoin(Account, Account.id == VideoTask.account_id)
+            .where(VideoPublication.status == "completed")
+            .order_by(
+                VideoPublication.completed_at.desc().nullslast(),
+                VideoPublication.created_at.desc(),
+            )
+        )
+
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+        if query.account_id is not None:
+            stmt = stmt.where(VideoTask.account_id == query.account_id)
+        if query.date_from is not None:
+            stmt = stmt.where(VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc))
+        if query.date_to is not None:
+            next_day = query.date_to.toordinal() + 1
+            date_to_exclusive = date.fromordinal(next_day)
+            stmt = stmt.where(
+                VideoPublication.completed_at < datetime.combine(date_to_exclusive, datetime.min.time(), tzinfo=timezone.utc)
+            )
+
+        rows = (await self.db.execute(stmt)).all()
+        items = [
+            self._build_stats_item(publication, sub_task, task, account)
+            for publication, sub_task, task, account in rows
+        ]
+
+        platform = (query.platform or "").strip().lower()
+        if platform:
+            items = [item for item in items if self._matches_platform(item, platform)]
+
+        keyword = (query.keyword or "").strip().lower()
+        if keyword:
+            items = [item for item in items if self._matches_keyword(item, keyword)]
+
+        items = self._sort_stats_items(items, query.sort_by, query.sort_order)
+
+        total = len(items)
+        start = (query.page - 1) * query.page_size
+        end = start + query.page_size
+        return items[start:end], total
+
+    def _build_stats_item(
+        self,
+        publication: VideoPublication,
+        sub_task: Any,
+        task: Any,
+        account: Account | None,
+    ) -> VideoPublicationStatsListItem:
+        request_payload = publication.request_payload or {}
+        metrics_snapshot = publication.metrics_snapshot if isinstance(publication.metrics_snapshot, dict) else None
+        metrics_channels = []
+        if metrics_snapshot:
+            raw_channels = metrics_snapshot.get("channels") or []
+            if isinstance(raw_channels, list):
+                metrics_channels = [channel for channel in raw_channels if isinstance(channel, dict)]
+
+        total_views = 0
+        total_likes = 0
+        total_comments = 0
+        total_shares = 0
+        stay_values: list[float] = []
+        view_percentage_values: list[float] = []
+
+        for channel in metrics_channels:
+            stats = channel.get("stats") or {}
+            platform = str(channel.get("platform") or "").lower()
+            total_views += self._to_int(stats.get("views") if platform == "youtube" else stats.get("view_count"))
+            total_likes += self._to_int(stats.get("likes") if platform == "youtube" else stats.get("like_count"))
+            total_comments += self._to_int(stats.get("comments") if platform == "youtube" else stats.get("comment_count"))
+            total_shares += self._to_int(stats.get("shares") if platform == "youtube" else stats.get("share_count"))
+
+            stay_to_watch = self._to_float(stats.get("stay_to_watch"))
+            if stay_to_watch is not None:
+                stay_values.append(stay_to_watch)
+
+            avg_view_percentage = self._to_float(stats.get("average_view_percentage"))
+            if avg_view_percentage is not None:
+                view_percentage_values.append(avg_view_percentage)
+
+        return VideoPublicationStatsListItem(
+            id=publication.id,
+            sub_task_id=publication.sub_task_id,
+            task_id=getattr(task, "id", None),
+            account_id=getattr(task, "account_id", None),
+            account_name=getattr(account, "account_name", None),
+            status=publication.status,
+            video_url=getattr(sub_task, "result_video_url", None),
+            published_at=publication.completed_at,
+            title=request_payload.get("title"),
+            description=request_payload.get("description"),
+            channels_status=publication.channels_status,
+            metrics_snapshot=metrics_snapshot,
+            metrics_channels=metrics_channels,
+            total_views=total_views,
+            total_likes=total_likes,
+            total_comments=total_comments,
+            total_shares=total_shares,
+            avg_stay_to_watch=(sum(stay_values) / len(stay_values)) if stay_values else None,
+            avg_view_percentage=(sum(view_percentage_values) / len(view_percentage_values)) if view_percentage_values else None,
+            created_at=publication.created_at,
+            updated_at=publication.updated_at,
+        )
+
+    @staticmethod
+    def _to_int(value: Any) -> int:
+        try:
+            if value is None or value == "":
+                return 0
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            if value is None or value == "":
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _sort_stats_items(
+        items: list[VideoPublicationStatsListItem],
+        sort_by: str,
+        sort_order: str,
+    ) -> list[VideoPublicationStatsListItem]:
+        reverse = str(sort_order or "desc").lower() != "asc"
+        key_name = str(sort_by or "published_at").lower()
+
+        def key(item: VideoPublicationStatsListItem):
+            if key_name == "title":
+                return (item.title or "").lower()
+            if key_name == "account_name":
+                return (item.account_name or "").lower()
+            if key_name == "total_views":
+                return item.total_views
+            if key_name == "total_likes":
+                return item.total_likes
+            if key_name == "total_comments":
+                return item.total_comments
+            if key_name == "total_shares":
+                return item.total_shares
+            if key_name == "avg_stay_to_watch":
+                return item.avg_stay_to_watch if item.avg_stay_to_watch is not None else -1
+            if key_name == "avg_view_percentage":
+                return item.avg_view_percentage if item.avg_view_percentage is not None else -1
+            return item.published_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc)
+
+        return sorted(items, key=key, reverse=reverse)
+
+    @staticmethod
+    def _matches_platform(item: VideoPublicationStatsListItem, platform: str) -> bool:
+        for channel in item.metrics_channels:
+            if str(channel.platform or "").lower() == platform:
+                return True
+        for channel in item.channels_status or []:
+            if str(channel.platform or "").lower() == platform:
+                return True
+        return False
+
+    @staticmethod
+    def _matches_keyword(item: VideoPublicationStatsListItem, keyword: str) -> bool:
+        haystacks = [
+            item.title or "",
+            item.account_name or "",
+        ]
+        for channel in item.metrics_channels:
+            haystacks.append(str(channel.channel_name or ""))
+            haystacks.append(str(channel.platform_video_url or ""))
+        for channel in item.channels_status or []:
+            haystacks.append(channel.channel_name or "")
+            haystacks.append(channel.platform_video_url or "")
+        return any(keyword in value.lower() for value in haystacks if value)
 
     async def sync_publication_status(self, publication_id: uuid.UUID) -> VideoPublication:
         """从 Open API 同步发布任务状态，并同步更新 sub_task 状态"""

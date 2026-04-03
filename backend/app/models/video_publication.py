@@ -46,6 +46,9 @@ class VideoPublication(Base):
 
     # 各渠道发布状态（Open API 返回的列表格式）
     channels_status: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # 发布后指标快照（由外部同步或人工写入）
+    metrics_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 格式: [
     #   {
     #     "platform": "youtube", "channel_id": "UCxxx", "channel_name": "...",
