@@ -35,6 +35,12 @@ const routes = [
     component: DashboardLayout,
     children: [
       {
+        path: '',
+        name: 'dashboard-home',
+        component: () => import('../views/DashboardHomeView.vue'),
+        meta: { title: '概览' }
+      },
+      {
         path: 'video-library',
         name: 'video-library',
         component: () => import('../views/VideoLibraryView.vue'),
@@ -186,8 +192,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  // 支持子路径部署（如 /comfyui-flow/）
-  history: createWebHistory(import.meta.env.BASE_URL || '/comfyui-flow/'),
+  history: createWebHistory(import.meta.env.BASE_URL || '/echo-matrix/'),
   routes
 })
 
@@ -201,7 +206,7 @@ router.beforeEach((to) => {
   if (!token && !isPublic) {
     // 在 iframe 中且没有 token，通知父系统
     if (isInIframe) {
-      window.parent.postMessage({ type: 'requestAuth', source: 'comfyui-flow' }, '*')
+      window.parent.postMessage({ type: 'requestAuth', source: 'echo-matrix' }, '*')
       return false // 暂时不跳转，等待父系统响应
     }
     return '/login'

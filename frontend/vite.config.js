@@ -3,12 +3,11 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
-  base: '/comfyui-flow/', // 子路径部署，改为你的实际路径
+  base: '/echo-matrix/',
   server: {
     port: 5173,
     host: true,
-    // 开发环境也使用 base 路径
-    origin: 'http://localhost:5173/comfyui-flow/'
+    origin: 'http://localhost:5173/echo-matrix/'
   },
   build: {
     // 生成 sourcemap 方便调试
