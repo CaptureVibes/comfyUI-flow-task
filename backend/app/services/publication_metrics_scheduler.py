@@ -237,7 +237,7 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 if not isinstance(binding, dict):
                     continue
                 platform = binding.get("platform") or ""
-                ch_name = binding.get("username") or ""
+                ch_name = binding.get("username") or binding.get("channel_name") or ""
                 if not ch_name:
                     continue
                 if platform == "youtube":

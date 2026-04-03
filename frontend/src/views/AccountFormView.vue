@@ -698,6 +698,7 @@ async function handleSave() {
         platform: binding.platform,
         channel_id: binding.channel_id || '',
         channel_name: binding.channel_name || '',
+        username: binding.username || '',
       }))
       const payload = {
         account_name: form.account_name.trim(),
