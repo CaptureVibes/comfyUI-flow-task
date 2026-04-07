@@ -1223,3 +1223,200 @@ async def recover_stuck_ai_review_on_startup() -> None:
     logger.info("【全量审核】启动恢复：发现 %d 条中断任务，重新入队", len(ids))
     for cid in ids:
         asyncio.create_task(_process_one_ai_review(cid))
+
+
+# ---------------------------------------------------------------------------
+# 补充模板（为 AI 博主账号搜索并导入新视频）
+# ---------------------------------------------------------------------------
+
+async def supplement_templates_for_account(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None,
+    template_type: str,  # "shared" | "exclusive"
+    max_new_videos: int = 10,
+) -> dict[str, Any]:
+    """
+    为单个 AI 博主账号补充模板。
+
+    流程：
+    1. 查询账号绑定的第一个 tag 名称作为关键词
+    2. 调 RapidAPI 搜索该关键词，翻页直到找到 max_new_videos 个不在库内的视频 URL
+    3. 对每个新视频：parse → create_video_source → trigger_download_and_upload → 创建模板 → 后台入队
+    4. 打标签：共享=tag名，独享=tag名（与现有候选库逻辑一致）
+
+    返回 {"account_id": str, "keyword": str, "imported": int, "skipped": int}
+    """
+    from app.db.session import SessionLocal
+    from app.models.account_tag import AccountTag
+    from app.models.tag import Tag
+    from app.models.video_source import VideoSource
+    from app.models.video_ai_template import VideoAITemplate
+    from app.models.enums import VideoAIProcessStatus
+    from app.models.tag import VideoSourceTag
+    from app.schemas.video_source import VideoSourceCreate
+    from app.services.video_source_service import (
+        create_video_source,
+        parse_video_url,
+        trigger_download_and_upload,
+    )
+
+    async with SessionLocal() as session:
+        # Step 1: 取账号绑定的第一个 tag 名称
+        stmt = (
+            select(Tag.name)
+            .join(AccountTag, AccountTag.tag_id == Tag.id)
+            .where(AccountTag.account_id == account_id)
+            .order_by(AccountTag.created_at.asc())
+            .limit(1)
+        )
+        tag_name: str | None = await session.scalar(stmt)
+
+    if not tag_name:
+        logger.warning("【补充模板】account_id=%s 无绑定标签，跳过", account_id)
+        return {"account_id": str(account_id), "keyword": None, "imported": 0, "skipped": 0}
+
+    logger.info("【补充模板】account_id=%s keyword=%s template_type=%s 开始搜索", account_id, tag_name, template_type)
+
+    # Step 2: 翻页搜索，收集 max_new_videos 个未在库内的视频 URL
+    new_video_urls: list[str] = []
+    cursor = 0
+    retry_delay = 5.0
+    seen_video_ids: set[str] = set()
+
+    while len(new_video_urls) < max_new_videos:
+        try:
+            result = await rapid_api.search_videos(tag_name, cursor=cursor, retry_delay=retry_delay)
+        except Exception as exc:
+            logger.warning("【补充模板】搜索失败 keyword=%s cursor=%d: %s", tag_name, cursor, exc)
+            break
+
+        items = result.get("items", [])
+        if not items:
+            break
+
+        # 检查这批视频是否已在库内
+        video_urls_batch = [v["video_url"] for v in items if v.get("video_url") and v.get("video_id") not in seen_video_ids]
+        for item in items:
+            seen_video_ids.add(item.get("video_id", ""))
+
+        if video_urls_batch:
+            async with SessionLocal() as session:
+                existing_urls = set(
+                    (await session.scalars(
+                        select(VideoSource.source_url).where(
+                            VideoSource.source_url.in_(video_urls_batch),
+                            VideoSource.owner_id == owner_id,
+                        )
+                    )).all()
+                )
+            for url in video_urls_batch:
+                if url not in existing_urls and len(new_video_urls) < max_new_videos:
+                    new_video_urls.append(url)
+
+        if not result.get("has_more"):
+            break
+        cursor = result.get("next_cursor", 0)
+
+    logger.info("【补充模板】account_id=%s keyword=%s 搜索到 %d 个新视频", account_id, tag_name, len(new_video_urls))
+
+    # Step 3: 逐个导入
+    imported = 0
+    skipped = 0
+
+    for video_url in new_video_urls:
+        try:
+            async with SessionLocal() as session:
+                result = await parse_video_url(video_url, session=session, owner_id=owner_id)
+
+                if result.existing_id is not None:
+                    skipped += 1
+                    continue
+
+                payload = VideoSourceCreate(
+                    source_url=result.source_url,
+                    platform=result.platform,
+                    blogger_name=result.blogger_name,
+                    video_title=result.video_title,
+                    video_desc=result.video_desc,
+                    video_url=result.video_url,
+                    thumbnail_url=result.thumbnail_url,
+                    view_count=result.view_count,
+                    like_count=result.like_count,
+                    favorite_count=result.favorite_count,
+                    comment_count=result.comment_count,
+                    share_count=result.share_count,
+                    publish_date=result.publish_date,
+                    duration=result.duration,
+                    width=result.width,
+                    height=result.height,
+                    aspect_ratio=result.aspect_ratio,
+                    extra=result.extra,
+                )
+                is_new, vs = await create_video_source(session, payload, owner_id)
+
+                if not is_new:
+                    skipped += 1
+                    continue
+
+                # 下载+上传（后台）
+                await trigger_download_and_upload(session, vs.id, owner_id)
+
+                # 创建模板记录（pending）
+                tpl = VideoAITemplate(
+                    owner_id=owner_id,
+                    title=(vs.video_title or vs.blogger_name or "新模板")[:200],
+                    description="",
+                    video_source_id=vs.id,
+                    process_status=VideoAIProcessStatus.pending,
+                )
+                if getattr(vs, "tiktok_blogger_id", None) is not None:
+                    tpl.tiktok_blogger_id = vs.tiktok_blogger_id
+                session.add(tpl)
+                await session.commit()
+                await session.refresh(tpl)
+
+                vs_id = vs.id
+                tpl_id = tpl.id
+
+            # 后台：等下载完成后打标签并入队
+            # 共享：仅用 tag_name；独享：tag_name（与候选库逻辑一致）
+            keyword_text = tag_name
+            blogger_name_for_tag = None  # 补充模板始终以 tag 名为标签，不附加博主名
+
+            asyncio.create_task(
+                _download_then_enqueue_template(
+                    vs_id=vs_id,
+                    tpl_id=tpl_id,
+                    owner_id=owner_id,
+                    blogger_name=blogger_name_for_tag,
+                    keyword_text=keyword_text,
+                    template_type=template_type,
+                )
+            )
+            imported += 1
+            logger.info("【补充模板】导入成功 video_url=%s vs_id=%s tpl_id=%s", video_url, vs_id, tpl_id)
+
+        except Exception as exc:
+            logger.warning("【补充模板】导入失败 video_url=%s: %s", video_url, exc)
+
+    logger.info("【补充模板】account_id=%s keyword=%s 完成：导入=%d 跳过=%d", account_id, tag_name, imported, skipped)
+    return {"account_id": str(account_id), "keyword": tag_name, "imported": imported, "skipped": skipped}
+
+
+async def supplement_templates_for_accounts(
+    account_ids: list[uuid.UUID],
+    owner_id: uuid.UUID | None,
+    template_type: str,
+    max_new_videos: int = 10,
+) -> list[dict[str, Any]]:
+    """为多个账号并发（串行）补充模板，返回每个账号的结果列表。"""
+    results = []
+    for account_id in account_ids:
+        result = await supplement_templates_for_account(
+            account_id=account_id,
+            owner_id=owner_id,
+            template_type=template_type,
+            max_new_videos=max_new_videos,
+        )
+        results.append(result)
+    return results

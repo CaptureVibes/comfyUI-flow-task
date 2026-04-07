@@ -100,3 +100,12 @@ export async function bindTagToAccount(accountId, tagId) {
 export async function unbindTagFromAccount(accountId, tagId) {
   await http.delete(`/accounts/${accountId}/tags/${tagId}`)
 }
+
+export async function supplementTemplates(accountIds, templateType = 'shared', maxNewVideos = 10) {
+  const { data } = await http.post('/accounts/supplement-templates', {
+    account_ids: accountIds,
+    template_type: templateType,
+    max_new_videos: maxNewVideos,
+  })
+  return data
+}

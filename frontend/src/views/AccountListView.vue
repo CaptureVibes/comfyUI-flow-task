@@ -45,6 +45,14 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           {{ selectedMap.size > 0 ? `一键定时 (${selectedMap.size})` : '一键定时' }}
         </el-button>
+        <el-button
+          class="al-supplement-btn"
+          :disabled="total === 0"
+          @click="openSupplementDialog"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          {{ selectedMap.size > 0 ? `补充模板 (${selectedMap.size})` : '补充模板' }}
+        </el-button>
         <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新建账号
@@ -244,6 +252,61 @@
       <template #footer>
         <el-button @click="showBulkScheduleDialog = false">取消</el-button>
         <el-button type="primary" :loading="savingBulkSchedule" @click="handleBulkSchedule">{{ selectedMap.size > 0 ? `应用到已选 ${selectedMap.size} 个账号` : '应用到全部账号' }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 补充模板弹窗 -->
+    <el-dialog
+      v-model="showSupplementDialog"
+      title="补充模板"
+      width="480px"
+      :close-on-click-modal="false"
+    >
+      <div class="al-supplement-body">
+        <!-- 操作范围提示 -->
+        <div class="al-supplement-scope">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span v-if="selectedMap.size > 0">将为已选 <b>{{ selectedMap.size }}</b> 个账号补充模板</span>
+          <span v-else>将为全部 <b>{{ total }}</b> 个账号补充模板</span>
+        </div>
+        <!-- 类型选择 -->
+        <div class="al-supplement-types">
+          <button
+            class="al-supplement-type-card"
+            :class="{ active: supplementForm.templateType === 'shared' }"
+            @click="supplementForm.templateType = 'shared'"
+          >
+            <div class="al-supplement-type-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            </div>
+            <div class="al-supplement-type-name">补充共享</div>
+            <div class="al-supplement-type-desc">以标签名搜索视频，导入到公共库</div>
+          </button>
+          <button
+            class="al-supplement-type-card is-disabled"
+            @click="ElMessage.info('补充独享功能正在开发中...')"
+          >
+            <div class="al-supplement-type-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <div class="al-supplement-type-name">补充独享</div>
+            <div class="al-supplement-type-desc">即将推出</div>
+          </button>
+        </div>
+        <!-- 数量配置 -->
+        <div class="al-supplement-config">
+          <div class="al-supplement-config-label">每账号最多新增视频数</div>
+          <div class="al-supplement-config-row">
+            <button class="al-supplement-minus" @click="supplementForm.maxNewVideos = Math.max(1, supplementForm.maxNewVideos - 1)">−</button>
+            <span class="al-supplement-num">{{ supplementForm.maxNewVideos }}</span>
+            <button class="al-supplement-plus" @click="supplementForm.maxNewVideos = Math.min(50, supplementForm.maxNewVideos + 1)">+</button>
+            <span class="al-supplement-num-hint">条</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showSupplementDialog = false">取消</el-button>
+        <el-button type="primary" :loading="supplementing" @click="handleSupplement">开始补充</el-button>
       </template>
     </el-dialog>
 
@@ -633,7 +696,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish, supplementTemplates } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1389,6 +1452,51 @@ async function handleBulkSchedule() {
   const failMsg = failCount > 0 ? `，${failCount} 个失败` : ''
   ElMessage.success(`已为 ${successCount} 个账号启用定时发布${failMsg}`)
   await loadData()
+}
+
+// ── 补充模板 ────────────────────────────────────────────────────────────────
+
+const showSupplementDialog = ref(false)
+const supplementing = ref(false)
+const supplementForm = ref({ templateType: 'shared', maxNewVideos: 10 })
+
+function openSupplementDialog() {
+  supplementForm.value = { templateType: 'shared', maxNewVideos: 10 }
+  showSupplementDialog.value = true
+}
+
+async function handleSupplement() {
+  if (supplementing.value) return
+  if (supplementForm.value.templateType !== 'shared') {
+    ElMessage.info('补充独享功能正在开发中...')
+    return
+  }
+  supplementing.value = true
+
+  const isSelection = selectedMap.value.size > 0
+  let accountIds = []
+  if (isSelection) {
+    accountIds = [...selectedMap.value.keys()]
+  } else {
+    try {
+      const data = await fetchAccounts({ page: 1, page_size: 9999 })
+      accountIds = (data.items || []).map(a => a.id)
+    } catch {
+      ElMessage.error('加载账号列表失败')
+      supplementing.value = false
+      return
+    }
+  }
+
+  try {
+    const result = await supplementTemplates(accountIds, supplementForm.value.templateType, supplementForm.value.maxNewVideos)
+    showSupplementDialog.value = false
+    ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
+  } catch (e) {
+    ElMessage.error('启动补充模板失败')
+  } finally {
+    supplementing.value = false
+  }
 }
 
 onMounted(() => {
@@ -2250,6 +2358,177 @@ onMounted(() => {
   cursor: not-allowed;
   transform: none !important;
   box-shadow: none !important;
+}
+
+/* 补充模板按钮 */
+.al-supplement-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(234,88,12,0.2) !important;
+  background: rgba(234,88,12,0.06) !important;
+  color: #c2410c !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.al-supplement-btn:hover:not(:disabled) {
+  background: rgba(234,88,12,0.12) !important;
+  border-color: rgba(234,88,12,0.4) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(234,88,12,0.16);
+}
+.al-supplement-btn:active { transform: translateY(1px); }
+.al-supplement-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+/* 补充模板弹窗 */
+.al-supplement-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.al-supplement-scope {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  line-height: 1.5;
+}
+.al-supplement-scope svg { flex-shrink: 0; color: #6366f1; }
+.al-supplement-scope b { color: #0f172a; font-weight: 700; }
+
+.al-supplement-types {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.al-supplement-type-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px;
+  border-radius: 12px;
+  border: 2px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+.al-supplement-type-card:hover:not(.is-disabled) {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+.al-supplement-type-card.active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+}
+.al-supplement-type-card.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #f1f5f9;
+}
+
+.al-supplement-type-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6366f1;
+}
+.al-supplement-type-card.active .al-supplement-type-icon {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+.al-supplement-type-card.is-disabled .al-supplement-type-icon {
+  color: #94a3b8;
+}
+
+.al-supplement-type-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.al-supplement-type-card.is-disabled .al-supplement-type-name {
+  color: #94a3b8;
+}
+
+.al-supplement-type-desc {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
+}
+.al-supplement-type-card.is-disabled .al-supplement-type-desc {
+  color: #94a3b8;
+}
+
+.al-supplement-config {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.al-supplement-config-label {
+  font-size: 13px;
+  color: #334155;
+  font-weight: 500;
+}
+.al-supplement-config-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.al-supplement-minus,
+.al-supplement-plus {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  line-height: 1;
+}
+.al-supplement-minus:hover,
+.al-supplement-plus:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+.al-supplement-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  min-width: 28px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.al-supplement-num-hint {
+  font-size: 13px;
+  color: #94a3b8;
 }
 
 /* AI 配置弹窗内容 */

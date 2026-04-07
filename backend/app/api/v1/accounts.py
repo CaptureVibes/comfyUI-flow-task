@@ -642,3 +642,44 @@ async def unbind_tag_from_account(
         await session.delete(binding)
         await session.commit()
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# 补充模板
+# ---------------------------------------------------------------------------
+
+class SupplementTemplatesBody(BaseModel):
+    account_ids: list[uuid.UUID]
+    template_type: str = "shared"  # "shared" | "exclusive"
+    max_new_videos: int = 10
+
+
+@router.post("/supplement-templates", status_code=200)
+async def supplement_templates(
+    body: SupplementTemplatesBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+):
+    """
+    为指定账号批量补充模板（后台异步执行，立即返回）。
+    """
+    from app.services.candidate_service import supplement_templates_for_accounts
+    import asyncio as _asyncio
+
+    if not body.account_ids:
+        return {"message": "无账号，跳过", "count": 0}
+
+    template_type = body.template_type if body.template_type in ("shared", "exclusive") else "shared"
+
+    _asyncio.create_task(
+        supplement_templates_for_accounts(
+            account_ids=body.account_ids,
+            owner_id=owner_id,
+            template_type=template_type,
+            max_new_videos=body.max_new_videos,
+        )
+    )
+
+    return {
+        "message": f"已为 {len(body.account_ids)} 个账号启动补充模板任务（{template_type}）",
+        "count": len(body.account_ids),
+    }
