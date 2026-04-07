@@ -138,6 +138,14 @@ class BindTagBody(BaseModel):
     tag_id: uuid.UUID
 
 
+class BoundFlagRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    color: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class BoundBloggerRead(BaseModel):
     id: uuid.UUID
     blogger_name: str
@@ -182,6 +190,7 @@ class AccountRead(BaseModel):
     performance_snapshot: AccountPerformanceSnapshot | None = None
     tiktok_bloggers: list[BoundBloggerRead] = []
     bound_tags: list[BoundTagRead] = []
+    bound_flags: list[BoundFlagRead] = []
     publish_enabled: bool = False
     publish_cron: str | None = None
     publish_window_minutes: int = 0

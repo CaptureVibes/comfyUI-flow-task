@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
+from app.models.flag import AccountFlag
 from app.schemas.account import AccountCreate, AccountPatch
 
 
@@ -37,12 +38,20 @@ async def list_accounts(
     page: int,
     page_size: int,
     owner_id: UUID | None = None,
+    flag_id: UUID | None = None,
 ) -> tuple[list[Account], int]:
     stmt = select(Account).order_by(Account.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     total_stmt = select(func.count(Account.id))
     if owner_id is not None:
         stmt = stmt.where(Account.owner_id == owner_id)
         total_stmt = total_stmt.where(Account.owner_id == owner_id)
+    if flag_id is not None:
+        stmt = stmt.where(Account.id.in_(
+            select(AccountFlag.account_id).where(AccountFlag.flag_id == flag_id)
+        ))
+        total_stmt = total_stmt.where(Account.id.in_(
+            select(AccountFlag.account_id).where(AccountFlag.flag_id == flag_id)
+        ))
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)
     return list(rows), total

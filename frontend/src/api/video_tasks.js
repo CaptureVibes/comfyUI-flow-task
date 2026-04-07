@@ -65,8 +65,10 @@ export async function downloadVideos(dateStr) {
   return response.data  // Blob
 }
 
-export async function downloadLatestPublishedVideos() {
+export async function downloadLatestPublishedVideos(accountIds = null) {
+  const params = accountIds?.length ? { account_ids: accountIds.join(',') } : {}
   const response = await http.get('/video-tasks/download-latest-published', {
+    params,
     responseType: 'blob',
     timeout: 300000,
   })

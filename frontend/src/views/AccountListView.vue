@@ -5,7 +5,7 @@
       <div style="display: flex; gap: 12px; align-items: center;">
         <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
           <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          {{ downloading ? '下载中...' : '下载视频' }}
+          {{ downloading ? '下载中...' : selectedMap.size > 0 ? `下载视频 (${selectedMap.size})` : '下载视频' }}
         </el-button>
         <el-button class="al-config-btn" @click="openAISettings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -35,7 +35,7 @@
           @click="handleBulkVideoGenerate"
         >
           <svg v-if="!bulkVideoGenerating" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          {{ bulkVideoGenerating ? `${bulkVideoGenProgress.current}/${bulkVideoGenProgress.total} 账号` : '一键生成' }}
+          {{ bulkVideoGenerating ? `${bulkVideoGenProgress.current}/${bulkVideoGenProgress.total} 账号` : selectedMap.size > 0 ? `一键生成 (${selectedMap.size})` : '一键生成' }}
         </el-button>
         <el-button
           class="al-schedule-btn"
@@ -43,7 +43,7 @@
           @click="openBulkScheduleDialog"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          一键定时
+          {{ selectedMap.size > 0 ? `一键定时 (${selectedMap.size})` : '一键定时' }}
         </el-button>
         <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -243,15 +243,75 @@
       </el-form>
       <template #footer>
         <el-button @click="showBulkScheduleDialog = false">取消</el-button>
-        <el-button type="primary" :loading="savingBulkSchedule" @click="handleBulkSchedule">应用到全部账号</el-button>
+        <el-button type="primary" :loading="savingBulkSchedule" @click="handleBulkSchedule">{{ selectedMap.size > 0 ? `应用到已选 ${selectedMap.size} 个账号` : '应用到全部账号' }}</el-button>
       </template>
     </el-dialog>
 
+    <!-- Flag 过滤栏 -->
+    <div class="al-filter-bar">
+      <div class="al-filter-flags">
+        <button
+          class="al-flag-filter-btn"
+          :class="{ active: filterFlagId === null }"
+          @click="handleFilterFlag(null)"
+        >全部</button>
+        <template v-for="flag in visibleFilterFlags" :key="flag.id">
+          <button
+            class="al-flag-filter-btn"
+            :class="{ active: filterFlagId === flag.id, 'is-pinned': flag.is_pinned }"
+            :style="filterFlagId === flag.id && flag.color ? { background: flag.color, borderColor: flag.color, color: '#fff' } : flag.color ? { borderColor: flag.color, color: flag.color } : {}"
+            @click="handleFilterFlag(flag.id)"
+          >
+            <svg v-if="flag.is_pinned" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6h2v-6h5v-2l-2-2z"/></svg>
+            <span class="al-flag-dot" v-else :style="flag.color ? { background: flag.color } : {}"></span>
+            {{ flag.name }}
+          </button>
+        </template>
+        <button v-if="hasMoreFlags" class="al-flag-expand-btn" @click="flagBarExpanded = !flagBarExpanded">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <polyline v-if="flagBarExpanded" points="18 15 12 9 6 15"/>
+            <polyline v-else points="6 9 12 15 18 9"/>
+          </svg>
+          {{ flagBarExpanded ? '收起' : `展开全部 (${allFlags.length})` }}
+        </button>
+        <button class="al-flag-manage-btn" @click="openFlagManager">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          管理标识
+        </button>
+      </div>
+
+      <!-- 多选批量操作栏 -->
+      <transition name="bulk-bar">
+        <div v-if="selectedIds.size > 0" class="al-bulk-bar">
+          <span class="al-bulk-count">已选 {{ selectedIds.size }} 个</span>
+          <button class="al-bulk-action-btn is-bind" @click="openBulkFlagDialog('bind')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            批量绑定标识
+          </button>
+          <button class="al-bulk-action-btn is-unbind" @click="openBulkFlagDialog('unbind')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            批量移除标识
+          </button>
+          <button class="al-bulk-clear-btn" @click="clearSelection">取消选择</button>
+        </div>
+      </transition>
+    </div>
+
     <!-- Table list -->
     <div v-loading="loading" class="al-table-wrap">
+      <div class="al-table-scroll">
       <table class="al-table">
         <thead>
           <tr>
+            <th class="al-th al-th-check">
+              <input
+                type="checkbox"
+                class="al-checkbox"
+                :checked="allSelected"
+                :indeterminate="someSelected"
+                @change="e => toggleSelectAll(e.target.checked)"
+              />
+            </th>
             <th class="al-th al-th-media">头像 / 照片</th>
             <th class="al-th al-th-name">账号名称</th>
             <th class="al-th al-th-platform">平台绑定</th>
@@ -260,6 +320,7 @@
             <th class="al-th al-th-stat">均 Views</th>
             <th class="al-th al-th-stat">点赞率</th>
             <th class="al-th al-th-date">最新发布</th>
+            <th class="al-th al-th-flags">标识</th>
             <th class="al-th al-th-tags">标签 / 博主</th>
             <th class="al-th al-th-actions">操作</th>
           </tr>
@@ -269,8 +330,19 @@
             v-for="item in items"
             :key="item.id"
             class="al-tr"
+            :class="{ 'is-selected': selectedIds.has(item.id) }"
             @click="goToDetail(item)"
           >
+            <!-- 多选 -->
+            <td class="al-td al-td-check" @click.stop>
+              <input
+                type="checkbox"
+                class="al-checkbox"
+                :checked="selectedIds.has(item.id)"
+                @change="() => toggleSelectItem(item.id)"
+              />
+            </td>
+
             <!-- 头像/照片 -->
             <td class="al-td al-td-media" @click.stop>
               <div class="al-media-cell">
@@ -333,6 +405,17 @@
             <!-- 最新发布 -->
             <td class="al-td al-td-date">{{ formatSnapshotDate(snapshotValue(item, 'latest_video_published_at')) }}</td>
 
+            <!-- 标识 -->
+            <td class="al-td al-td-flags">
+              <div v-if="item.bound_flags?.length" class="al-flags-wrap">
+                <span v-for="flag in item.bound_flags" :key="flag.id" class="ac-flag-chip" :style="flag.color ? { background: flag.color + '22', borderColor: flag.color + '66', color: flag.color } : {}">
+                  <span class="ac-flag-dot" :style="flag.color ? { background: flag.color } : {}"></span>
+                  {{ flag.name }}
+                </span>
+              </div>
+              <span v-else class="al-no-binding">—</span>
+            </td>
+
             <!-- 标签 / 博主 -->
             <td class="al-td al-td-tags">
               <div v-if="item.bound_tags?.length" class="al-tags-wrap">
@@ -370,7 +453,129 @@
           </tr>
         </tbody>
       </table>
+      </div><!-- end al-table-scroll -->
     </div>
+
+    <!-- Flag 管理弹窗 -->
+    <el-dialog
+      v-model="showFlagManagerDialog"
+      title="管理标识"
+      width="520px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="fm-body">
+        <!-- 新建 / 编辑表单 -->
+        <div class="fm-form">
+          <div class="fm-form-title">{{ editingFlag ? '编辑标识' : '新建标识' }}</div>
+          <div class="fm-form-row">
+            <input
+              v-model="flagForm.name"
+              class="fm-input"
+              placeholder="标识名称"
+              maxlength="100"
+              @keyup.enter="saveFlagForm"
+            />
+            <div class="fm-color-picker">
+              <div
+                class="fm-color-preview"
+                :style="{ background: flagForm.color || '#e2e8f0' }"
+                :title="flagForm.color"
+              ></div>
+              <div class="fm-color-swatches">
+                <button
+                  v-for="c in FLAG_COLORS"
+                  :key="c"
+                  class="fm-swatch"
+                  :class="{ active: flagForm.color === c }"
+                  :style="{ background: c }"
+                  @click="flagForm.color = c"
+                ></button>
+              </div>
+            </div>
+          </div>
+          <label class="fm-pin-toggle">
+            <input type="checkbox" v-model="flagForm.is_pinned" class="fm-pin-checkbox" />
+            <span class="fm-pin-label">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6h2v-6h5v-2l-2-2z"/></svg>
+              设为快捷标签（固定显示在过滤栏最前面）
+            </span>
+          </label>
+          <div class="fm-form-actions">
+            <button v-if="editingFlag" class="fm-cancel-btn" @click="cancelEditFlag">取消</button>
+            <button class="fm-save-btn" :disabled="flagSaving" @click="saveFlagForm">
+              {{ flagSaving ? '保存中…' : editingFlag ? '更新' : '创建' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 已有标识列表 -->
+        <div class="fm-list">
+          <div v-if="pinnedFlags.length > 0" class="fm-group">
+            <div class="fm-group-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6h2v-6h5v-2l-2-2z"/></svg>
+              快捷标签
+            </div>
+            <div v-for="flag in pinnedFlags" :key="flag.id" class="fm-item is-pinned">
+              <span class="fm-item-dot" :style="flag.color ? { background: flag.color } : {}"></span>
+              <span class="fm-item-name">{{ flag.name }}</span>
+              <div class="fm-item-actions">
+                <button class="fm-edit-btn" @click="startEditFlag(flag)">编辑</button>
+                <button class="fm-del-btn" :class="{ loading: flagDeletingId === flag.id }" @click="handleDeleteFlag(flag)">删除</button>
+              </div>
+            </div>
+          </div>
+          <div v-if="unpinnedFlags.length > 0" class="fm-group">
+            <div class="fm-group-label">全部标识（{{ unpinnedFlags.length }}）</div>
+            <div v-for="flag in unpinnedFlags" :key="flag.id" class="fm-item">
+              <span class="fm-item-dot" :style="flag.color ? { background: flag.color } : {}"></span>
+              <span class="fm-item-name">{{ flag.name }}</span>
+              <div class="fm-item-actions">
+                <button class="fm-edit-btn" @click="startEditFlag(flag)">编辑</button>
+                <button class="fm-del-btn" :class="{ loading: flagDeletingId === flag.id }" @click="handleDeleteFlag(flag)">删除</button>
+              </div>
+            </div>
+          </div>
+          <div v-if="allFlags.length === 0" class="fm-empty">暂无标识</div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 批量绑定/移除标识弹窗 -->
+    <el-dialog
+      v-model="showBulkFlagDialog"
+      :title="bulkFlagMode === 'bind' ? `批量绑定标识（已选 ${selectedIds.size} 个账号）` : `批量移除标识（已选 ${selectedIds.size} 个账号）`"
+      width="460px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="bfd-body">
+        <div class="bfd-hint">{{ bulkFlagMode === 'bind' ? '选择要绑定到选中账号的标识：' : '选择要从选中账号移除的标识：' }}</div>
+        <div class="bfd-flags">
+          <label
+            v-for="flag in allFlags"
+            :key="flag.id"
+            class="bfd-flag-item"
+            :class="{ selected: bulkFlagSelectedIds.includes(flag.id) }"
+          >
+            <input type="checkbox" :value="flag.id" v-model="bulkFlagSelectedIds" class="bfd-checkbox" />
+            <span class="bfd-flag-dot" :style="flag.color ? { background: flag.color } : {}"></span>
+            <span class="bfd-flag-name">{{ flag.name }}</span>
+          </label>
+        </div>
+        <div v-if="allFlags.length === 0" class="bfd-empty">暂无标识，请先在「管理标识」中创建</div>
+      </div>
+      <template #footer>
+        <el-button @click="showBulkFlagDialog = false">取消</el-button>
+        <el-button
+          :type="bulkFlagMode === 'bind' ? 'primary' : 'danger'"
+          :loading="bulkFlagSaving"
+          @click="handleBulkFlagSubmit"
+        >
+          {{ bulkFlagMode === 'bind' ? '确认绑定' : '确认移除' }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" :image-size="80" />
 
@@ -429,6 +634,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish } from '../api/accounts'
+import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
@@ -450,7 +656,8 @@ async function handleDownload() {
   if (downloading.value) return
   downloading.value = true
   try {
-    const blob = await downloadLatestPublishedVideos()
+    const ids = selectedMap.value.size > 0 ? [...selectedMap.value.keys()] : null
+    const blob = await downloadLatestPublishedVideos(ids)
     const blobUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = blobUrl
@@ -500,10 +707,213 @@ const total = ref(0)
 const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(20)
 
+// ── 多选（跨页）────────────────────────────────────────────────────────────────
+// Map<id, account对象> 跨页保留完整 account 信息
+const selectedMap = ref(new Map())
+const selectedIds = computed(() => new Set(selectedMap.value.keys()))
+
+// ── Flag 相关 ─────────────────────────────────────────────────────────────────
+const allFlags = ref([])
+const filterFlagId = ref(null)
+const flagBarExpanded = ref(false)
+const FLAG_BAR_LIMIT = 20
+
+const pinnedFlags = computed(() => allFlags.value.filter(f => f.is_pinned))
+const unpinnedFlags = computed(() => allFlags.value.filter(f => !f.is_pinned))
+// 过滤栏显示：快捷标签全显，其余按展开状态截断
+const visibleFilterFlags = computed(() => {
+  const pinned = pinnedFlags.value
+  const unpinned = unpinnedFlags.value
+  if (flagBarExpanded.value) return [...pinned, ...unpinned]
+  const remain = FLAG_BAR_LIMIT - pinned.length
+  return [...pinned, ...unpinned.slice(0, Math.max(0, remain))]
+})
+const hasMoreFlags = computed(() =>
+  allFlags.value.length > FLAG_BAR_LIMIT ||
+  (pinnedFlags.value.length < FLAG_BAR_LIMIT && unpinnedFlags.value.length > FLAG_BAR_LIMIT - pinnedFlags.value.length)
+)
+
+// Flag 管理弹窗
+const showFlagManagerDialog = ref(false)
+const flagForm = ref({ name: '', color: '#6366f1', is_pinned: false })
+const editingFlag = ref(null)
+const flagSaving = ref(false)
+const flagDeletingId = ref(null)
+
+const FLAG_COLORS = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
+  '#eab308', '#22c55e', '#10b981', '#06b6d4', '#3b82f6',
+  '#64748b', '#0f172a',
+]
+
+async function loadFlags() {
+  try {
+    allFlags.value = await fetchFlags()
+  } catch { /* silent */ }
+}
+
+function openFlagManager() {
+  flagForm.value = { name: '', color: '#6366f1', is_pinned: false }
+  editingFlag.value = null
+  showFlagManagerDialog.value = true
+}
+
+function startEditFlag(flag) {
+  editingFlag.value = flag
+  flagForm.value = { name: flag.name, color: flag.color || '#6366f1', is_pinned: !!flag.is_pinned }
+}
+
+function cancelEditFlag() {
+  editingFlag.value = null
+  flagForm.value = { name: '', color: '#6366f1', is_pinned: false }
+}
+
+async function saveFlagForm() {
+  if (!flagForm.value.name.trim()) {
+    ElMessage.warning('请输入标识名称')
+    return
+  }
+  flagSaving.value = true
+  try {
+    if (editingFlag.value) {
+      const updated = await updateFlag(editingFlag.value.id, {
+        name: flagForm.value.name.trim(),
+        color: flagForm.value.color || null,
+        is_pinned: flagForm.value.is_pinned,
+      })
+      const idx = allFlags.value.findIndex(f => f.id === updated.id)
+      if (idx >= 0) allFlags.value[idx] = updated
+      // 重新排序：pinned 在前
+      allFlags.value.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0) || new Date(a.created_at) - new Date(b.created_at))
+      cancelEditFlag()
+      ElMessage.success('已更新')
+    } else {
+      const created = await createFlag({
+        name: flagForm.value.name.trim(),
+        color: flagForm.value.color || null,
+        is_pinned: flagForm.value.is_pinned,
+      })
+      allFlags.value.push(created)
+      allFlags.value.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0) || new Date(a.created_at) - new Date(b.created_at))
+      flagForm.value = { name: '', color: '#6366f1', is_pinned: false }
+      ElMessage.success('已创建')
+    }
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败')
+  } finally {
+    flagSaving.value = false
+  }
+}
+
+async function handleDeleteFlag(flag) {
+  try {
+    await ElMessageBox.confirm(`确定删除标识「${flag.name}」？`, '删除确认', {
+      confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning',
+    })
+  } catch { return }
+  flagDeletingId.value = flag.id
+  try {
+    await deleteFlag(flag.id)
+    allFlags.value = allFlags.value.filter(f => f.id !== flag.id)
+    if (filterFlagId.value === flag.id) {
+      filterFlagId.value = null
+      loadData()
+    }
+    ElMessage.success('已删除')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '删除失败')
+  } finally {
+    flagDeletingId.value = null
+  }
+}
+
+// 批量绑定 flag 弹窗
+const showBulkFlagDialog = ref(false)
+const bulkFlagMode = ref('bind') // 'bind' | 'unbind'
+const bulkFlagSelectedIds = ref([])
+const bulkFlagSaving = ref(false)
+
+function openBulkFlagDialog(mode) {
+  if (selectedIds.value.size === 0) {
+    ElMessage.warning('请先勾选账号')
+    return
+  }
+  bulkFlagMode.value = mode
+  bulkFlagSelectedIds.value = []
+  showBulkFlagDialog.value = true
+}
+
+async function handleBulkFlagSubmit() {
+  if (bulkFlagSelectedIds.value.length === 0) {
+    ElMessage.warning('请选择至少一个标识')
+    return
+  }
+  bulkFlagSaving.value = true
+  try {
+    const accountIds = [...selectedIds.value]
+    if (bulkFlagMode.value === 'bind') {
+      await bulkBindFlags(accountIds, bulkFlagSelectedIds.value)
+      ElMessage.success(`已为 ${accountIds.length} 个账号绑定标识`)
+    } else {
+      await bulkUnbindFlags(accountIds, bulkFlagSelectedIds.value)
+      ElMessage.success(`已从 ${accountIds.length} 个账号移除标识`)
+    }
+    showBulkFlagDialog.value = false
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败')
+  } finally {
+    bulkFlagSaving.value = false
+  }
+}
+
+// 多选（跨页保留）
+function toggleSelectAll(checked) {
+  const next = new Map(selectedMap.value)
+  if (checked) {
+    items.value.forEach(i => next.set(i.id, i))
+  } else {
+    // 只取消当前页的选中
+    items.value.forEach(i => next.delete(i.id))
+  }
+  selectedMap.value = next
+}
+
+function toggleSelectItem(id) {
+  const next = new Map(selectedMap.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    const item = items.value.find(i => i.id === id)
+    if (item) next.set(id, item)
+  }
+  selectedMap.value = next
+}
+
+function clearSelection() {
+  selectedMap.value = new Map()
+}
+
+const allSelected = computed(() =>
+  items.value.length > 0 && items.value.every(i => selectedIds.value.has(i.id))
+)
+const someSelected = computed(() =>
+  items.value.some(i => selectedIds.value.has(i.id)) && !allSelected.value
+)
+
 function syncUrl() {
   const query = {}
   if (page.value > 1) query.page = String(page.value)
+  if (filterFlagId.value) query.flag_id = filterFlagId.value
   router.replace({ query })
+}
+
+function handleFilterFlag(flagId) {
+  filterFlagId.value = flagId
+  page.value = 1
+  jumpPage.value = 1
+  syncUrl()
+  loadData()
 }
 
 // AI 博主配置弹窗
@@ -665,7 +1075,9 @@ function goToDetail(item) {
 async function loadData() {
   loading.value = true
   try {
-    const data = await fetchAccounts({ page: page.value, page_size: pageSize.value })
+    const params = { page: page.value, page_size: pageSize.value }
+    if (filterFlagId.value) params.flag_id = filterFlagId.value
+    const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
   } catch (err) {
@@ -792,10 +1204,13 @@ function formatDuration(seconds) {
 async function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
 
+  const isSelection = selectedMap.value.size > 0
+  const scopeCount = isSelection ? selectedMap.value.size : total.value
+
   let templateLimit = 0
   try {
     const { value } = await ElMessageBox.prompt(
-      `将为全部 ${total.value} 个账号自动选择未用模板并创建生成任务。\n请输入每个账号最多使用的模板数量（0 = 不限制）：`,
+      `将为${isSelection ? `已选 ${scopeCount}` : `全部 ${scopeCount}`} 个账号自动选择未用模板并创建生成任务。\n请输入每个账号最多使用的模板数量（0 = 不限制）：`,
       '一键生成',
       {
         confirmButtonText: '开始生成',
@@ -811,15 +1226,19 @@ async function handleBulkVideoGenerate() {
 
   bulkVideoGenerating.value = true
 
-  // 拉取全部账号
+  // 使用已选账号或拉取全部账号
   let allAccounts = []
-  try {
-    const data = await fetchAccounts({ page: 1, page_size: 9999 })
-    allAccounts = data.items || []
-  } catch (err) {
-    ElMessage.error('加载账号列表失败')
-    bulkVideoGenerating.value = false
-    return
+  if (isSelection) {
+    allAccounts = [...selectedMap.value.values()]
+  } else {
+    try {
+      const data = await fetchAccounts({ page: 1, page_size: 9999 })
+      allAccounts = data.items || []
+    } catch (err) {
+      ElMessage.error('加载账号列表失败')
+      bulkVideoGenerating.value = false
+      return
+    }
   }
 
   bulkVideoGenProgress.value = { current: 0, total: allAccounts.length }
@@ -886,7 +1305,8 @@ async function handleBulkVideoGenerate() {
 
   const skipMsg = accountsSkipped > 0 ? `，${accountsSkipped} 个账号无未用模板已跳过` : ''
   const failMsg = totalFail > 0 ? `，${totalFail} 个任务失败` : ''
-  ElMessage.success(`已为全部账号创建 ${totalSuccess} 个生成任务${failMsg}${skipMsg}`)
+  const scopeLabel = isSelection ? `已选 ${allAccounts.length} 个账号` : '全部账号'
+  ElMessage.success(`已为${scopeLabel}创建 ${totalSuccess} 个生成任务${failMsg}${skipMsg}`)
 }
 
 // ── 一键定时 ────────────────────────────────────────────────────────────────
@@ -933,15 +1353,20 @@ async function handleBulkSchedule() {
 
   savingBulkSchedule.value = true
 
-  // 拉取全部账号
+  // 使用已选账号或拉取全部账号
+  const isSelection = selectedMap.value.size > 0
   let allAccounts = []
-  try {
-    const data = await fetchAccounts({ page: 1, page_size: 9999 })
-    allAccounts = data.items || []
-  } catch {
-    ElMessage.error('加载账号列表失败')
-    savingBulkSchedule.value = false
-    return
+  if (isSelection) {
+    allAccounts = [...selectedMap.value.values()]
+  } else {
+    try {
+      const data = await fetchAccounts({ page: 1, page_size: 9999 })
+      allAccounts = data.items || []
+    } catch {
+      ElMessage.error('加载账号列表失败')
+      savingBulkSchedule.value = false
+      return
+    }
   }
 
   const results = await Promise.allSettled(
@@ -966,7 +1391,10 @@ async function handleBulkSchedule() {
   await loadData()
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadFlags()
+  loadData()
+})
 </script>
 
 <style scoped>
@@ -981,6 +1409,8 @@ onMounted(loadData)
   justify-content: space-between;
   align-items: center;
   margin-bottom: 28px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .al-title {
@@ -1029,20 +1459,31 @@ onMounted(loadData)
 }
 
 /* Table */
+/* 外层容器：边框/圆角/阴影 */
 .al-table-wrap {
   width: 100%;
-  overflow-x: auto;
   margin-bottom: 28px;
   border: 1px solid #e8edf5;
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 2px 8px rgba(0,0,0,.04);
+  position: relative;
+  overflow: hidden; /* 裁剪圆角 — sticky 列在此容器内仍可正常工作 */
+}
+
+/* 内层滚动容器：横向滚动，sticky 在这里生效 */
+.al-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .al-table {
   width: 100%;
-  border-collapse: collapse;
-  min-width: 960px;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 1440px;
+  table-layout: fixed;
 }
 
 .al-th {
@@ -1057,21 +1498,36 @@ onMounted(loadData)
   user-select: none;
 }
 
+/* Sticky Header Cells */
+.al-th.al-th-check,
+.al-th.al-th-media,
+.al-th.al-th-name {
+  position: sticky;
+  z-index: 30;
+  background: #f8fafc;
+}
+
 .al-th:first-child { border-top-left-radius: 14px; }
 .al-th:last-child  { border-top-right-radius: 14px; }
 
-.al-th-media    { width: 110px; }
-.al-th-name     { min-width: 160px; }
-.al-th-platform { min-width: 140px; }
-.al-th-stat     { width: 88px; text-align: right; }
-.al-th-date     { width: 100px; }
-.al-th-tags     { min-width: 160px; }
-.al-th-actions  { width: 100px; text-align: center; }
+.al-th-check    { width: 44px; text-align: center; left: 0; border-right: 1px solid #e8edf5; }
+.al-th-media    { width: 110px; left: 44px; border-right: 1px solid #e8edf5; }
+.al-th-name     { width: 220px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
+.al-th-platform { width: 140px; }
+.al-th-stat     { width: 90px; text-align: right; }
+.al-th-date     { width: 130px; }
+.al-th-flags    { width: 160px; }
+.al-th-tags     { width: 180px; }
+.al-th-actions  { width: 160px; text-align: center; }
 
 .al-tr {
   cursor: pointer;
   transition: background 0.15s;
   border-bottom: 1px solid #f1f5f9;
+}
+
+.al-tr.is-selected {
+  background: #eef2ff;
 }
 
 .al-tr:last-child { border-bottom: none; }
@@ -1083,6 +1539,44 @@ onMounted(loadData)
   vertical-align: middle;
   font-size: 13px;
   color: #1e293b;
+  background: #fff; /* Opaque background for sticky columns */
+}
+
+/* Sticky Data Cells */
+.al-td.al-td-check,
+.al-td.al-td-media,
+.al-td.al-td-name {
+  position: sticky;
+  z-index: 20;
+}
+
+.al-td-check  { text-align: center; width: 44px; left: 0; border-right: 1px solid #f1f5f9; }
+.al-td-media  { width: 110px; left: 44px; border-right: 1px solid #f1f5f9; }
+.al-td-name   { width: 220px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
+.al-td-flags   { width: 160px; }
+.al-td-actions { text-align: center; width: 160px; }
+
+/* Name cell adjustments for fixed layout */
+.al-name-main {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+.al-tr:hover .al-td.al-td-check,
+.al-tr:hover .al-td.al-td-media,
+.al-tr:hover .al-td.al-td-name {
+  background: #f8faff;
+}
+
+.al-tr.is-selected .al-td.al-td-check,
+.al-tr.is-selected .al-td.al-td-media,
+.al-tr.is-selected .al-td.al-td-name {
+  background: #eef2ff;
 }
 
 .al-td-stat {
@@ -1097,8 +1591,6 @@ onMounted(loadData)
   color: #64748b;
   white-space: nowrap;
 }
-
-.al-td-actions { text-align: center; }
 
 /* Media cell */
 .al-media-cell {
@@ -1228,7 +1720,8 @@ onMounted(loadData)
   color: #94a3b8;
 }
 
-/* Tags cell */
+/* Tags / Flags cell */
+.al-flags-wrap,
 .al-tags-wrap,
 .al-bloggers-wrap {
   display: flex;
@@ -1237,10 +1730,34 @@ onMounted(loadData)
   margin-bottom: 4px;
 }
 
+.ac-flag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.ac-flag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
 /* Row actions */
 .al-row-actions {
   display: flex;
-  gap: 6px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 5px;
   justify-content: center;
 }
 
@@ -1772,5 +2289,458 @@ onMounted(loadData)
 .ai-cfg-desc {
   font-size: 12px;
   color: #94a3b8;
+}
+
+/* ── Flag 过滤栏 ──────────────────────────────────────────────────────────── */
+.al-filter-bar {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.al-filter-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.al-flag-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.al-flag-filter-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.al-flag-filter-btn.active {
+  font-weight: 700;
+}
+
+.al-flag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.al-flag-filter-btn.is-pinned {
+  font-weight: 600;
+}
+
+.al-flag-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.al-flag-expand-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.al-flag-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px dashed #cbd5e1;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.al-flag-manage-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #f8f9ff;
+}
+
+/* ── 多选 checkbox ─────────────────────────────────────────────────────────── */
+.al-checkbox {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+/* ── 批量操作栏 ───────────────────────────────────────────────────────────── */
+.al-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+}
+
+.al-bulk-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: #4f46e5;
+  margin-right: 4px;
+}
+
+.al-bulk-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.al-bulk-action-btn.is-bind {
+  border-color: #a5b4fc;
+  background: #fff;
+  color: #4f46e5;
+}
+
+.al-bulk-action-btn.is-bind:hover {
+  background: #6366f1;
+  color: #fff;
+  border-color: #6366f1;
+}
+
+.al-bulk-action-btn.is-unbind {
+  border-color: #fca5a5;
+  background: #fff;
+  color: #dc2626;
+}
+
+.al-bulk-action-btn.is-unbind:hover {
+  background: #ef4444;
+  color: #fff;
+  border-color: #ef4444;
+}
+
+.al-bulk-clear-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #94a3b8;
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.15s;
+}
+
+.al-bulk-clear-btn:hover {
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.bulk-bar-enter-active,
+.bulk-bar-leave-active {
+  transition: all 0.2s ease;
+}
+
+.bulk-bar-enter-from,
+.bulk-bar-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* ── Flag 管理弹窗 ─────────────────────────────────────────────────────────── */
+.fm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.fm-form {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fm-form-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.fm-form-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.fm-input {
+  flex: 1;
+  height: 36px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.fm-input:focus {
+  border-color: #6366f1;
+}
+
+.fm-color-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fm-color-preview {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  flex-shrink: 0;
+}
+
+.fm-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: 180px;
+}
+
+.fm-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+  outline: none;
+}
+
+.fm-swatch:hover { transform: scale(1.2); }
+.fm-swatch.active { border-color: #fff; box-shadow: 0 0 0 2px #6366f1; }
+
+.fm-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fm-cancel-btn {
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.fm-save-btn {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.fm-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 快捷标签开关 */
+.fm-pin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.fm-pin-checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: #6366f1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fm-pin-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.fm-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* 分组 */
+.fm-group { display: flex; flex-direction: column; gap: 5px; }
+
+.fm-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 2px;
+}
+
+.fm-item.is-pinned {
+  border-color: #e0e7ff;
+  background: #f5f3ff;
+}
+
+.fm-empty {
+  font-size: 13px;
+  color: #cbd5e1;
+  text-align: center;
+  padding: 12px;
+}
+
+.fm-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #f1f5f9;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.fm-item-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  flex-shrink: 0;
+}
+
+.fm-item-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+}
+
+.fm-item-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.fm-edit-btn,
+.fm-del-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.fm-edit-btn { color: #6366f1; border-color: #c7d2fe; background: #eef2ff; }
+.fm-edit-btn:hover { background: #6366f1; color: #fff; }
+
+.fm-del-btn { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+.fm-del-btn:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+.fm-del-btn.loading { opacity: 0.5; pointer-events: none; }
+
+/* ── 批量标识弹窗 ──────────────────────────────────────────────────────────── */
+.bfd-body { display: flex; flex-direction: column; gap: 14px; }
+
+.bfd-hint {
+  font-size: 13px;
+  color: #475569;
+}
+
+.bfd-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bfd-flag-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.12s;
+  user-select: none;
+}
+
+.bfd-flag-item:hover { border-color: #a5b4fc; background: #eef2ff; }
+
+.bfd-flag-item.selected {
+  border-color: #6366f1;
+  background: #eef2ff;
+  font-weight: 600;
+}
+
+.bfd-checkbox { display: none; }
+
+.bfd-flag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.bfd-flag-name { font-size: 13px; color: #334155; }
+
+.bfd-empty {
+  font-size: 13px;
+  color: #94a3b8;
+  text-align: center;
+  padding: 16px;
 }
 </style>

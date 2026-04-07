@@ -1089,6 +1089,7 @@ class VideoTaskService:
     async def download_latest_published_videos(
         self,
         owner_id: uuid.UUID | None,
+        account_ids: list[uuid.UUID] | None = None,
     ) -> tuple["io.BytesIO", str] | tuple[None, None]:
         """
         下载每个账号最新已发布的视频，同时打包对应的 caption/hashtag txt。
@@ -1115,6 +1116,8 @@ class VideoTaskService:
         )
         if owner_id is not None:
             stmt = stmt.where(VideoTask.owner_id == owner_id)
+        if account_ids:
+            stmt = stmt.where(VideoTask.account_id.in_(account_ids))
 
         rows = (await self.db.execute(stmt)).all()
         if not rows:

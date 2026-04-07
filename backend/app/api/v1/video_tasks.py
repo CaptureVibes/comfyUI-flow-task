@@ -130,6 +130,7 @@ async def list_video_tasks(
 
 @router.get("/download-latest-published")
 async def download_latest_published_videos(
+    account_ids: str | None = Query(default=None, description="逗号分隔的 account_id 列表，为空则全量"),
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ):
@@ -137,8 +138,15 @@ async def download_latest_published_videos(
     from fastapi import HTTPException
     from fastapi.responses import StreamingResponse
 
+    parsed_account_ids: list[uuid.UUID] | None = None
+    if account_ids:
+        try:
+            parsed_account_ids = [uuid.UUID(a.strip()) for a in account_ids.split(",") if a.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="account_ids 格式错误")
+
     svc = VideoTaskService(db=session)
-    buf, filename = await svc.download_latest_published_videos(owner_id)
+    buf, filename = await svc.download_latest_published_videos(owner_id, account_ids=parsed_account_ids)
     if buf is None:
         raise HTTPException(status_code=404, detail="没有已发布的视频")
     return StreamingResponse(

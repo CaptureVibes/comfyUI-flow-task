@@ -14,13 +14,14 @@ from app.db.session import get_db
 from app.models.account import Account
 from app.models.account_blogger_binding import AccountBloggerBinding
 from app.models.account_tag import AccountTag
+from app.models.flag import AccountFlag, Flag
 from app.models.tag import Tag
 from app.models.tag import VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
 from app.models.video_task import VideoSubTask, VideoTask
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
-    BoundBloggerRead, BoundTagRead, ScheduledPublishConfig,
+    BoundBloggerRead, BoundFlagRead, BoundTagRead, ScheduledPublishConfig,
     AIGenerateBody, AIGenerateStatusResponse, BindTagBody, BulkGenerateAIAccountsResponse,
     BulkResumeAIAccountsResponse, ResumeAIGenerationBody, SelectPhotoCandidateBody,
 )
@@ -52,6 +53,17 @@ async def _load_bound_bloggers(session: AsyncSession, account_id: uuid.UUID) -> 
     return [BoundBloggerRead.model_validate(b) for b in rows]
 
 
+async def _load_bound_flags(session: AsyncSession, account_id: uuid.UUID) -> list[BoundFlagRead]:
+    stmt = (
+        select(Flag)
+        .join(AccountFlag, AccountFlag.flag_id == Flag.id)
+        .where(AccountFlag.account_id == account_id)
+        .order_by(AccountFlag.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [BoundFlagRead.model_validate(f) for f in rows]
+
+
 async def _load_bound_tags(session: AsyncSession, account_id: uuid.UUID) -> list[BoundTagRead]:
     stmt = (
         select(Tag)
@@ -67,11 +79,13 @@ def _account_read(
     account,
     bloggers: list[BoundBloggerRead],
     tags: list[BoundTagRead] | None = None,
+    flags: list[BoundFlagRead] | None = None,
     pending_publish_count: int = 0,
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
     data.bound_tags = tags or []
+    data.bound_flags = flags or []
     data.pending_publish_count = pending_publish_count
     return data
 
@@ -120,14 +134,16 @@ async def create_account_endpoint(
 async def list_accounts_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=9999),
+    flag_id: uuid.UUID | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
-    items, total = await list_accounts(session, page=page, page_size=page_size, owner_id=owner_id)
-    # Batch-load bound bloggers and tags for all accounts.
+    items, total = await list_accounts(session, page=page, page_size=page_size, owner_id=owner_id, flag_id=flag_id)
+    # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]
     blogger_map: dict[uuid.UUID, list[BoundBloggerRead]] = {aid: [] for aid in account_ids}
     tag_map: dict[uuid.UUID, list[BoundTagRead]] = {aid: [] for aid in account_ids}
+    flag_map: dict[uuid.UUID, list[BoundFlagRead]] = {aid: [] for aid in account_ids}
     pending_publish_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
     if account_ids:
         blogger_stmt = (
@@ -148,6 +164,15 @@ async def list_accounts_endpoint(
         for aid, tag in (await session.execute(tag_stmt)).all():
             tag_map[aid].append(BoundTagRead.model_validate(tag))
 
+        flag_stmt = (
+            select(AccountFlag.account_id, Flag)
+            .join(Flag, AccountFlag.flag_id == Flag.id)
+            .where(AccountFlag.account_id.in_(account_ids))
+            .order_by(AccountFlag.created_at.asc())
+        )
+        for aid, flag in (await session.execute(flag_stmt)).all():
+            flag_map[aid].append(BoundFlagRead.model_validate(flag))
+
         pending_publish_stmt = (
             select(VideoTask.account_id, func.count(VideoSubTask.id))
             .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
@@ -166,6 +191,7 @@ async def list_accounts_endpoint(
             a,
             blogger_map[a.id],
             tag_map[a.id],
+            flag_map[a.id],
             pending_publish_map[a.id],
         )
         for a in items
@@ -187,7 +213,8 @@ async def get_account_endpoint(
     account = await get_account_or_404(session, account_id, owner_id)
     bloggers = await _load_bound_bloggers(session, account_id)
     tags = await _load_bound_tags(session, account_id)
-    return _account_read(account, bloggers, tags)
+    flags = await _load_bound_flags(session, account_id)
+    return _account_read(account, bloggers, tags, flags)
 
 
 @router.patch("/{account_id}", response_model=AccountRead)
@@ -201,7 +228,8 @@ async def patch_account_endpoint(
     account = await patch_account(session, account, payload)
     bloggers = await _load_bound_bloggers(session, account_id)
     tags = await _load_bound_tags(session, account_id)
-    return _account_read(account, bloggers, tags)
+    flags = await _load_bound_flags(session, account_id)
+    return _account_read(account, bloggers, tags, flags)
 
 
 @router.delete("/{account_id}")
@@ -233,7 +261,8 @@ async def update_scheduled_publish(
     await session.refresh(account)
     bloggers = await _load_bound_bloggers(session, account_id)
     tags = await _load_bound_tags(session, account_id)
-    return _account_read(account, bloggers, tags)
+    flags = await _load_bound_flags(session, account_id)
+    return _account_read(account, bloggers, tags, flags)
 
 
 # ── 账号-博主绑定 ─────────────────────────────────────────────────────────────

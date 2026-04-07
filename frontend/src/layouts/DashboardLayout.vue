@@ -38,8 +38,9 @@ const { isCollapsed, toggle } = useSidebar()
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  overflow: visible;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
   transition: margin-left var(--sidebar-transition);
 }
 
@@ -48,6 +49,7 @@ const { isCollapsed, toggle } = useSidebar()
   flex: 1;
   padding: var(--space-6);
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--surface-secondary);
 }
 
