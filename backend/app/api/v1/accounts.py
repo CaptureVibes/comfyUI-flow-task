@@ -455,7 +455,14 @@ async def bulk_resume_ai_generation(
     from app.services.ai_account_service import resume_ai_account_generation
 
     owner_id = current_user.user_id
+
     stmt = select(Account.id).where(Account.owner_id == owner_id)
+
+    # 指定账号列表时限定范围
+    if body.account_ids:
+        stmt = stmt.where(Account.id.in_(body.account_ids))
+
+    # stage 筛选逻辑始终生效
     if body.from_stage == "current":
         stmt = (
             stmt
@@ -471,6 +478,7 @@ async def bulk_resume_ai_generation(
                 Account.avatar_url.is_not(None),
             )
         )
+
     stmt = stmt.order_by(Account.created_at.desc())
     account_ids = [str(aid) for aid in (await session.execute(stmt)).scalars().all()]
     if not account_ids:

@@ -61,8 +61,10 @@ export async function resumeAIAccountGeneration(accountId) {
   return res.data
 }
 
-export async function bulkResumeAIAccountGeneration(fromStage = 'current') {
-  const { data } = await http.post('/accounts/bulk-resume-ai-generation', { from_stage: fromStage })
+export async function bulkResumeAIAccountGeneration(fromStage = 'current', accountIds = null) {
+  const payload = { from_stage: fromStage }
+  if (accountIds) payload.account_ids = accountIds
+  const { data } = await http.post('/accounts/bulk-resume-ai-generation', payload)
   return data
 }
 

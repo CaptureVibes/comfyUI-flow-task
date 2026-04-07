@@ -26,7 +26,7 @@
           :disabled="items.length === 0"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-          一键继续 AI 生成
+          {{ selectedMap.size > 0 ? `一键继续 (${selectedMap.size})` : '一键继续 AI 生成' }}
         </el-button>
         <el-button
           class="al-gen-btn"
@@ -170,7 +170,13 @@
     >
       <div class="al-bulk-resume-body">
         <div class="al-bulk-resume-hint">
-          选择从哪个阶段开始继续。该操作会对当前账号下所有未完成、且不处于“待选照片”的 AI 博主统一生效。
+          选择从哪个阶段开始继续。
+          <template v-if="selectedMap.size > 0">
+            <b>操作范围：已选 {{ selectedMap.size }} 个账号</b>。
+          </template>
+          <template v-else>
+            该操作会对当前账号下所有未完成、且不处于"待选照片"的 AI 博主统一生效。
+          </template>
         </div>
         <el-form-item label="继续阶段">
           <el-select v-model="bulkResumeStage" style="width: 100%">
@@ -1183,7 +1189,8 @@ async function handleBulkContinueAIGeneration() {
 
   bulkRestarting.value = true
   try {
-    const result = await bulkResumeAIAccountGeneration(bulkResumeStage.value)
+    const ids = selectedMap.value.size > 0 ? [...selectedMap.value.keys()] : null
+    const result = await bulkResumeAIAccountGeneration(bulkResumeStage.value, ids)
     if (result.status === 'no_accounts') {
       ElMessage.info(
         bulkResumeStage.value === 'current'
@@ -1207,7 +1214,7 @@ async function handleBulkGenerateAIAccounts() {
 
   try {
     await ElMessageBox.confirm(
-      '将根据“已有关联视频、但尚未绑定任何 AI 博主账号”的标签批量创建账号，并统一进入后端队列排队生成。确定继续？',
+      '将根据"已有关联视频、但尚未绑定任何 AI 博主账号"的标签批量创建账号，并统一进入后端队列排队生成。确定继续？',
       '确认生成',
       { confirmButtonText: '开始生成', cancelButtonText: '取消', type: 'warning' }
     )

@@ -90,6 +90,7 @@ AIResumeStage = Literal["current", "video_analyzing", "name_generating", "photo_
 
 class ResumeAIGenerationBody(BaseModel):
     from_stage: AIResumeStage = "current"
+    account_ids: list[uuid.UUID] | None = None
 
 
 class BulkResumeAIAccountsResponse(BaseModel):
