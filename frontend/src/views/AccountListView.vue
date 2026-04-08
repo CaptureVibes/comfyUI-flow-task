@@ -427,7 +427,7 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
                   </div>
                 </div>
-                <span v-if="item.pending_publish_count" class="al-pending-badge" :title="`待发布 ${item.pending_publish_count} 条`">{{ item.pending_publish_count }}</span>
+                <span v-if="item.pending_publish_count" class="al-pending-badge" :title="`队列中 ${item.pending_publish_count} 条`">{{ item.pending_publish_count }}</span>
               </div>
             </td>
 

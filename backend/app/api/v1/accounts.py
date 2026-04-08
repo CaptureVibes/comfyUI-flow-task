@@ -178,7 +178,7 @@ async def list_accounts_endpoint(
             .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
             .where(
                 VideoTask.account_id.in_(account_ids),
-                VideoSubTask.status == "pending_publish",
+                VideoSubTask.status == "queued",
             )
             .group_by(VideoTask.account_id)
         )
@@ -585,7 +585,7 @@ async def bulk_restart_ai_generation(
     # 批量重启
     for aid_str in body.account_ids:
         try:
-            aid = UUID(aid_str)
+            aid = uuid.UUID(aid_str)
             acc = await session.get(Account, aid)
             if acc and acc.owner_id == owner_id:
                 await restart_ai_account_generation(aid_str)
