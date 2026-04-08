@@ -204,8 +204,8 @@ class VideoTaskService:
         count_q = select(func.count()).select_from(base_q.subquery())
         total: int = (await self.db.execute(count_q)).scalar_one()
 
-        # Paginate
-        q = base_q.options(selectinload(VideoTask.sub_tasks))
+        # Paginate — no sub_tasks eager load for list view
+        q = base_q
         if page is not None and page_size is not None:
             q = q.offset((page - 1) * page_size).limit(page_size)
         result = await self.db.execute(q)
@@ -766,10 +766,17 @@ class VideoTaskService:
         page_size: int = 20,
     ) -> tuple[list[dict], int]:
         """Returns (enriched task list, total count). Supports pagination."""
+        from sqlalchemy import func, case
+
         tasks, total = await self.get_tasks(
             target_date, owner_id, account_id, status_filter, tiktok_blogger_id,
             page=page, page_size=page_size,
         )
+
+        if not tasks:
+            return [], total
+
+        task_ids = [t.id for t in tasks]
 
         # Batch-fetch account and template names
         account_ids = {t.account_id for t in tasks if t.account_id}
@@ -790,13 +797,26 @@ class VideoTaskService:
             )
             template_map = {r.id: r.title for r in rows}
 
+        # Single aggregation query for sub_tasks_done (avoids loading all sub_tasks objects)
+        done_rows = await self.db.execute(
+            select(
+                VideoSubTask.task_id,
+                func.count(
+                    case((VideoSubTask.result_video_url.isnot(None), 1))
+                ).label("done"),
+            )
+            .where(VideoSubTask.task_id.in_(task_ids))
+            .group_by(VideoSubTask.task_id)
+        )
+        done_map: dict[uuid.UUID, int] = {r.task_id: r.done for r in done_rows}
+
         result = []
         for task in tasks:
             item = {
                 "task": task,
                 "account_name": account_map.get(task.account_id) if task.account_id else None,
                 "template_title": template_map.get(task.template_id) if task.template_id else None,
-                "sub_tasks_done": sum(1 for st in task.sub_tasks if st.result_video_url),
+                "sub_tasks_done": done_map.get(task.id, 0),
             }
             result.append(item)
         return result, total
