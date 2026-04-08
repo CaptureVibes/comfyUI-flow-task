@@ -759,13 +759,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish, supplementTemplates } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
-import { createVideoTask, downloadLatestPublishedVideos } from '../api/video_tasks'
+import { downloadLatestPublishedVideos } from '../api/video_tasks'
 
 const route = useRoute()
 const router = useRouter()
@@ -1323,12 +1323,6 @@ const bulkVideoGenProgress = ref({ current: 0, total: 0 })
 const showBulkGenDialog = ref(false)
 const bulkGenForm = ref({ mode: 'unused', limit: 0 })
 
-function formatDuration(seconds) {
-  if (!seconds) return '0s'
-  let s = Math.floor(seconds)
-  if (s > 15) s = 15
-  return `${s}s`
-}
 
 function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
@@ -1336,111 +1330,36 @@ function handleBulkVideoGenerate() {
   showBulkGenDialog.value = true
 }
 
-function shuffleArray(arr) {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
-
 async function startBulkVideoGenerate() {
-  const { mode, limit: templateLimit } = bulkGenForm.value
+  const { mode, limit } = bulkGenForm.value
   showBulkGenDialog.value = false
   bulkVideoGenerating.value = true
 
-  const isSelection = selectedMap.value.size > 0
+  try {
+    const isSelection = selectedMap.value.size > 0
+    let accountIds = []
 
-  // 使用已选账号或拉取全部账号
-  let allAccounts = []
-  if (isSelection) {
-    allAccounts = [...selectedMap.value.values()]
-  } else {
-    try {
+    if (isSelection) {
+      accountIds = [...selectedMap.value.values()].map(a => a.id)
+    } else {
       const data = await fetchAccounts({ page: 1, page_size: 9999 })
-      allAccounts = data.items || []
-    } catch (err) {
-      ElMessage.error('加载账号列表失败')
-      bulkVideoGenerating.value = false
+      accountIds = (data.items || []).map(a => a.id)
+    }
+
+    if (accountIds.length === 0) {
+      ElMessage.info('没有可操作的账号')
       return
     }
+
+    const result = await bulkGenerateVideoTasks(accountIds, mode, limit)
+    const skipMsg = result.skipped > 0 ? `，${result.skipped} 个账号跳过` : ''
+    const failMsg = result.failed > 0 ? `，${result.failed} 个失败` : ''
+    ElMessage.success(`已创建 ${result.created} 个生成任务${failMsg}${skipMsg}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '一键生成失败')
+  } finally {
+    bulkVideoGenerating.value = false
   }
-
-  bulkVideoGenProgress.value = { current: 0, total: allAccounts.length }
-
-  let totalSuccess = 0
-  let totalFail = 0
-  let accountsSkipped = 0
-
-  for (const account of allAccounts) {
-    try {
-      const candidateItems = []
-
-      // 路径1：通过绑定博主获取模板
-      const bloggers = await fetchAccountBloggers(account.id)
-      for (const blogger of bloggers) {
-        try {
-          const templates = await fetchTemplatesByBlogger(blogger.id, [])
-          for (const tpl of templates) {
-            if (mode === 'unused' ? !tpl.is_used : tpl.is_used) {
-              candidateItems.push({ tpl, accountId: account.id })
-            }
-          }
-        } catch { /* 单个博主失败不影响整体 */ }
-      }
-
-      // 路径2：未绑定博主时，通过账号绑定的标签获取模板
-      if (bloggers.length === 0) {
-        const tagIds = (account.bound_tags || []).map(t => t.id)
-        if (tagIds.length > 0) {
-          try {
-            const templates = await fetchTemplatesByTags(tagIds)
-            for (const tpl of templates) {
-              if (mode === 'unused' ? !tpl.is_used : tpl.is_used) {
-                candidateItems.push({ tpl, accountId: account.id })
-              }
-            }
-          } catch { /* 标签路径失败不影响整体 */ }
-        }
-      }
-
-      if (candidateItems.length === 0) {
-        accountsSkipped++
-      }
-
-      // 用过的模板随机打乱；未用过的按原顺序取前 n 个
-      const pool = mode === 'used' ? shuffleArray(candidateItems) : candidateItems
-      const itemsToUse = templateLimit > 0 ? pool.slice(0, templateLimit) : pool
-
-      for (const { tpl, accountId } of itemsToUse) {
-        try {
-          const duration = formatDuration(tpl.video_source?.duration)
-          const shots = (tpl.extracted_shots || []).map(({ image_base64, ...rest }) => rest)
-          await createVideoTask({
-            account_id: accountId,
-            template_id: tpl.id,
-            final_prompt: tpl.prompt_description || '',
-            duration,
-            shots,
-          })
-          totalSuccess++
-        } catch {
-          totalFail++
-        }
-      }
-    } catch { /* 单个账号异常跳过 */ }
-
-    bulkVideoGenProgress.value.current++
-  }
-
-  bulkVideoGenerating.value = false
-
-  const modeLabel = mode === 'unused' ? '未用' : '已用'
-  const skipMsg = accountsSkipped > 0 ? `，${accountsSkipped} 个账号无${modeLabel}模板已跳过` : ''
-  const failMsg = totalFail > 0 ? `，${totalFail} 个任务失败` : ''
-  const scopeLabel = isSelection ? `已选 ${allAccounts.length} 个账号` : '全部账号'
-  ElMessage.success(`已为${scopeLabel}创建 ${totalSuccess} 个生成任务${failMsg}${skipMsg}`)
 }
 
 // ── 一键定时 ────────────────────────────────────────────────────────────────
