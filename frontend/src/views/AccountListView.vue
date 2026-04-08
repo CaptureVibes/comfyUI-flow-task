@@ -261,6 +261,63 @@
       </template>
     </el-dialog>
 
+    <!-- 一键生成配置 dialog -->
+    <el-dialog
+      v-model="showBulkGenDialog"
+      title="一键生成"
+      width="480px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="al-supplement-body">
+        <!-- 操作范围提示 -->
+        <div class="al-supplement-scope">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span v-if="selectedMap.size > 0">将为已选 <b>{{ selectedMap.size }}</b> 个账号创建生成任务</span>
+          <span v-else>将为全部 <b>{{ total }}</b> 个账号创建生成任务</span>
+        </div>
+        <!-- 模式选择 -->
+        <div class="al-supplement-types">
+          <button
+            class="al-supplement-type-card"
+            :class="{ active: bulkGenForm.mode === 'unused' }"
+            @click="bulkGenForm.mode = 'unused'"
+          >
+            <div class="al-supplement-type-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </div>
+            <div class="al-supplement-type-name">未用过的</div>
+            <div class="al-supplement-type-desc">选择从未使用的模板，按顺序取前 N 个</div>
+          </button>
+          <button
+            class="al-supplement-type-card"
+            :class="{ active: bulkGenForm.mode === 'used' }"
+            @click="bulkGenForm.mode = 'used'"
+          >
+            <div class="al-supplement-type-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </div>
+            <div class="al-supplement-type-name">用过的</div>
+            <div class="al-supplement-type-desc">从已使用过的模板中随机抽取 N 个</div>
+          </button>
+        </div>
+        <!-- 数量配置 -->
+        <div class="al-supplement-config">
+          <div class="al-supplement-config-label">每账号最多使用模板数（0 = 不限制）</div>
+          <div class="al-supplement-config-row">
+            <button class="al-supplement-minus" @click="bulkGenForm.limit = Math.max(0, bulkGenForm.limit - 1)">−</button>
+            <span class="al-supplement-num">{{ bulkGenForm.limit }}</span>
+            <button class="al-supplement-plus" @click="bulkGenForm.limit = Math.min(99, bulkGenForm.limit + 1)">+</button>
+            <span class="al-supplement-num-hint">个</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showBulkGenDialog = false">取消</el-button>
+        <el-button type="primary" :loading="bulkVideoGenerating" @click="startBulkVideoGenerate">开始生成</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 补充模板弹窗 -->
     <el-dialog
       v-model="showSupplementDialog"
@@ -1263,6 +1320,8 @@ async function handleDelete(item) {
 
 const bulkVideoGenerating = ref(false)
 const bulkVideoGenProgress = ref({ current: 0, total: 0 })
+const showBulkGenDialog = ref(false)
+const bulkGenForm = ref({ mode: 'unused', limit: 0 })
 
 function formatDuration(seconds) {
   if (!seconds) return '0s'
@@ -1271,30 +1330,27 @@ function formatDuration(seconds) {
   return `${s}s`
 }
 
-async function handleBulkVideoGenerate() {
+function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
+  bulkGenForm.value = { mode: 'unused', limit: 0 }
+  showBulkGenDialog.value = true
+}
+
+function shuffleArray(arr) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+async function startBulkVideoGenerate() {
+  const { mode, limit: templateLimit } = bulkGenForm.value
+  showBulkGenDialog.value = false
+  bulkVideoGenerating.value = true
 
   const isSelection = selectedMap.value.size > 0
-  const scopeCount = isSelection ? selectedMap.value.size : total.value
-
-  let templateLimit = 0
-  try {
-    const { value } = await ElMessageBox.prompt(
-      `将为${isSelection ? `已选 ${scopeCount}` : `全部 ${scopeCount}`} 个账号自动选择未用模板并创建生成任务。\n请输入每个账号最多使用的模板数量（0 = 不限制）：`,
-      '一键生成',
-      {
-        confirmButtonText: '开始生成',
-        cancelButtonText: '取消',
-        inputValue: '0',
-        inputPattern: /^\d+$/,
-        inputErrorMessage: '请输入非负整数',
-        type: 'warning',
-      }
-    )
-    templateLimit = parseInt(value) || 0
-  } catch { return }
-
-  bulkVideoGenerating.value = true
 
   // 使用已选账号或拉取全部账号
   let allAccounts = []
@@ -1319,7 +1375,7 @@ async function handleBulkVideoGenerate() {
 
   for (const account of allAccounts) {
     try {
-      const unusedItems = []
+      const candidateItems = []
 
       // 路径1：通过绑定博主获取模板
       const bloggers = await fetchAccountBloggers(account.id)
@@ -1327,7 +1383,9 @@ async function handleBulkVideoGenerate() {
         try {
           const templates = await fetchTemplatesByBlogger(blogger.id, [])
           for (const tpl of templates) {
-            if (!tpl.is_used) unusedItems.push({ tpl, accountId: account.id })
+            if (mode === 'unused' ? !tpl.is_used : tpl.is_used) {
+              candidateItems.push({ tpl, accountId: account.id })
+            }
           }
         } catch { /* 单个博主失败不影响整体 */ }
       }
@@ -1339,17 +1397,22 @@ async function handleBulkVideoGenerate() {
           try {
             const templates = await fetchTemplatesByTags(tagIds)
             for (const tpl of templates) {
-              if (!tpl.is_used) unusedItems.push({ tpl, accountId: account.id })
+              if (mode === 'unused' ? !tpl.is_used : tpl.is_used) {
+                candidateItems.push({ tpl, accountId: account.id })
+              }
             }
           } catch { /* 标签路径失败不影响整体 */ }
         }
       }
 
-      if (unusedItems.length === 0) {
+      if (candidateItems.length === 0) {
         accountsSkipped++
       }
 
-      const itemsToUse = templateLimit > 0 ? unusedItems.slice(0, templateLimit) : unusedItems
+      // 用过的模板随机打乱；未用过的按原顺序取前 n 个
+      const pool = mode === 'used' ? shuffleArray(candidateItems) : candidateItems
+      const itemsToUse = templateLimit > 0 ? pool.slice(0, templateLimit) : pool
+
       for (const { tpl, accountId } of itemsToUse) {
         try {
           const duration = formatDuration(tpl.video_source?.duration)
@@ -1373,7 +1436,8 @@ async function handleBulkVideoGenerate() {
 
   bulkVideoGenerating.value = false
 
-  const skipMsg = accountsSkipped > 0 ? `，${accountsSkipped} 个账号无未用模板已跳过` : ''
+  const modeLabel = mode === 'unused' ? '未用' : '已用'
+  const skipMsg = accountsSkipped > 0 ? `，${accountsSkipped} 个账号无${modeLabel}模板已跳过` : ''
   const failMsg = totalFail > 0 ? `，${totalFail} 个任务失败` : ''
   const scopeLabel = isSelection ? `已选 ${allAccounts.length} 个账号` : '全部账号'
   ElMessage.success(`已为${scopeLabel}创建 ${totalSuccess} 个生成任务${failMsg}${skipMsg}`)
