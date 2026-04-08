@@ -701,8 +701,7 @@ async function handleReject(sub) {
   try {
     await patchSubTaskStatus(sub.id, { status: 'decision_rejected' })
     ElMessage.success('已标记为决策未通过')
-    sub.status = 'decision_rejected'
-    task.value.status = 'decision_rejected'
+    await loadTask()
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   } finally {

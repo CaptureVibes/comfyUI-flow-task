@@ -304,40 +304,50 @@ async def _generate_publish_metadata(
   "hashtag": ["标签1", "标签2", "标签3"]
 }}
 其中 hashtag 为字符串数组，每个元素不含 # 号。只输出 JSON，不要任何解释。"""
-    try:
-        raw = await call_gemini_api(
-            model_name=ai_config["model"],
-            video_url=video_url,
-            prompt=prompt,
-            temperature=0.5,
-        )
-        logger.info("【AI生成标题】原始响应：%s", raw[:1000])
+    retry_delay = 30.0
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            raw = await call_gemini_api(
+                model_name=ai_config["model"],
+                video_url=video_url,
+                prompt=prompt,
+                temperature=0.5,
+            )
+            logger.info("【AI生成标题】原始响应（第%d次）：%s", attempt, raw[:1000])
 
-        # 提取 JSON（兼容 markdown 代码块包裹）
-        json_str = raw.strip()
-        match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
-        if match:
-            logger.debug("【AI生成标题】检测到 markdown 代码块，提取 JSON 内容")
-            json_str = match.group(1)
+            # 提取 JSON（兼容 markdown 代码块包裹）
+            json_str = raw.strip()
+            match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
+            if match:
+                logger.debug("【AI生成标题】检测到 markdown 代码块，提取 JSON 内容")
+                json_str = match.group(1)
 
-        data = _json.loads(json_str)
-        title = str(data.get("title", "") or fallback_title)[:100]
-        desc = str(data.get("desc", "") or data.get("description", "") or "")
-        hashtags_raw = data.get("hashtag", data.get("hashtags", []))
-        if isinstance(hashtags_raw, str):
-            hashtags = [t.strip().lstrip("#") for t in hashtags_raw.split() if t.strip()]
-        else:
-            hashtags = [str(t).strip().lstrip("#") for t in hashtags_raw if t]
+            data = _json.loads(json_str)
 
-        logger.info(
-            "【AI生成标题】生成成功 → 标题：%r，描述长度：%d 字，标签：%s",
-            title, len(desc), hashtags,
-        )
-        return title, desc, hashtags
+            # 校验必须包含 title 字段且非空
+            title = str(data.get("title", "") or "").strip()
+            if not title:
+                raise ValueError("AI 返回的 JSON 缺少有效 title 字段")
 
-    except Exception as e:
-        logger.error("【AI生成标题】生成失败：%s，使用兜底标题：%r", e, fallback_title)
-        return fallback_title, "", []
+            title = title[:100]
+            desc = str(data.get("desc", "") or data.get("description", "") or "")
+            hashtags_raw = data.get("hashtag", data.get("hashtags", []))
+            if isinstance(hashtags_raw, str):
+                hashtags = [t.strip().lstrip("#") for t in hashtags_raw.split() if t.strip()]
+            else:
+                hashtags = [str(t).strip().lstrip("#") for t in hashtags_raw if t]
+
+            logger.info(
+                "【AI生成标题】生成成功（第%d次） → 标题：%r，描述长度：%d 字，标签：%s",
+                attempt, title, len(desc), hashtags,
+            )
+            return title, desc, hashtags
+
+        except Exception as e:
+            logger.warning("【AI生成标题】第%d次失败：%s，%.0fs后重试", attempt, e, retry_delay)
+            await asyncio.sleep(retry_delay)
 
 
 async def _publish_sub_task(

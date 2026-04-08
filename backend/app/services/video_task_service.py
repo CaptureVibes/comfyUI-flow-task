@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import logging
 import os
@@ -60,6 +61,9 @@ def _compute_parent_status(sub_tasks: list[VideoSubTask]) -> str:
     active = [st for st in sub_tasks if st.status not in ("abandoned", "decision_rejected")]
     statuses = {st.status for st in active}
     if not statuses:
+        # 所有子任务都是 abandoned/decision_rejected；只有全部 decision_rejected 才返回 decision_rejected
+        if all(st.status == "decision_rejected" for st in sub_tasks):
+            return "decision_rejected"
         return "abandoned"
     if "publishing" in statuses:
         return "publishing"

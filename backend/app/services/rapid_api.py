@@ -142,6 +142,8 @@ async def search_videos(
         "search_id": 0,
     }
 
+    max_retries = 30
+    retries = 0
     while True:
         try:
             async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
@@ -163,10 +165,18 @@ async def search_videos(
             return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
 
         except httpx.HTTPStatusError as exc:
-            logger.warning("【RapidAPI】搜索 HTTP 错误 %d，keyword=%s，%.0fs后重试: %s", exc.response.status_code, keyword, retry_delay, exc)
+            retries += 1
+            if retries >= max_retries:
+                logger.error("【RapidAPI】搜索已重试%d次仍失败，keyword=%s，放弃: %s", max_retries, keyword, exc)
+                raise
+            logger.warning("【RapidAPI】搜索 HTTP 错误 %d，keyword=%s，%.0fs后重试(%d/%d): %s", exc.response.status_code, keyword, retry_delay, retries, max_retries, exc)
             await asyncio.sleep(retry_delay)
         except Exception as exc:
-            logger.warning("【RapidAPI】搜索网络异常，keyword=%s，%.0fs后重试: %s", keyword, retry_delay, exc)
+            retries += 1
+            if retries >= max_retries:
+                logger.error("【RapidAPI】搜索已重试%d次仍失败，keyword=%s，放弃: %s", max_retries, keyword, exc)
+                raise
+            logger.warning("【RapidAPI】搜索网络异常，keyword=%s，%.0fs后重试(%d/%d): %s", keyword, retry_delay, retries, max_retries, exc)
             await asyncio.sleep(retry_delay)
 
 
