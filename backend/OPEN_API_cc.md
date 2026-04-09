@@ -163,6 +163,11 @@ print(requests.get(f"{BASE}/channels", params=params).json())
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | video_url | string | 是 | 视频 URL |
+| original_video_url | string | 否 | 原始视频 URL |
+| video_type | string | 否 | 视频类型，例如 `persona/traffic` |
+| product_info | object | 否 | 商品信息对象 |
+| product_info.product_code | string | 否 | 商品编码 |
+| product_info.sku_code | string | 否 | SKU 编码 |
 | title | string | 是 | 视频标题，1-500 字符 |
 | description | string | 否 | 视频描述 |
 | tags | string[] | 否 | 标签列表 |
@@ -189,7 +194,9 @@ CLIENT_SECRET="your_client_secret"
 TIMESTAMP=$(date +%s)
 SIGNATURE=$(python3 -c "
 import hmac, hashlib, json
-body = {'video_url': 'https://example.com/video.mp4', 'title': '测试视频', 'description': '视频描述',
+body = {'video_url': 'https://example.com/video.mp4', 'original_video_url': 'https://cdn.example.com/raw/video.mp4',
+  'video_type': 'persona/traffic', 'product_info': {'product_code': 'P001', 'sku_code': 'SKU001'},
+  'title': '测试视频', 'description': '视频描述',
   'tags': ['tag1', 'tag2'], 'channels': [{'platform': 'tiktok', 'channel_id': 'user_123'}, {'platform': 'youtube', 'channel_id': 'channel_456'}],
   'external_id': 'ext_001', 'client_id': '$CLIENT_ID', 'timestamp': $TIMESTAMP}
 def _v(v):
@@ -203,7 +210,9 @@ s = '&'.join(f\"{k}={_v(v)}\" for k, v in sorted(f.items()))
 print(hmac.new('$CLIENT_SECRET'.encode(), f\"{s}&timestamp=$TIMESTAMP\".encode(), hashlib.sha256).hexdigest())
 ")
 curl -X POST "http://localhost:8000/open-api/v1/upload/task" -H "Content-Type: application/json" -d "{
-  \"video_url\": \"https://example.com/video.mp4\", \"title\": \"测试视频\", \"description\": \"视频描述\",
+  \"video_url\": \"https://example.com/video.mp4\", \"original_video_url\": \"https://cdn.example.com/raw/video.mp4\",
+  \"video_type\": \"persona/traffic\", \"product_info\": {\"product_code\": \"P001\", \"sku_code\": \"SKU001\"},
+  \"title\": \"测试视频\", \"description\": \"视频描述\",
   \"tags\": [\"tag1\", \"tag2\"], \"channels\": [{\"platform\": \"tiktok\", \"channel_id\": \"user_123\"}, {\"platform\": \"youtube\", \"channel_id\": \"channel_456\"}],
   \"external_id\": \"ext_001\", \"client_id\": \"$CLIENT_ID\", \"timestamp\": $TIMESTAMP, \"signature\": \"$SIGNATURE\"
 }"
@@ -228,7 +237,9 @@ def generate_signature(params, secret, timestamp):
     return hmac.new(secret.encode(), f"{param_str}&timestamp={timestamp}".encode(), hashlib.sha256).hexdigest()
 
 BASE, CLIENT_ID, CLIENT_SECRET = "http://localhost:8000/open-api/v1", "default_client", "your_client_secret"
-payload = {"video_url": "https://example.com/video.mp4", "title": "测试视频", "description": "视频描述",
+payload = {"video_url": "https://example.com/video.mp4", "original_video_url": "https://cdn.example.com/raw/video.mp4",
+  "video_type": "persona/traffic", "product_info": {"product_code": "P001", "sku_code": "SKU001"},
+  "title": "测试视频", "description": "视频描述",
   "tags": ["tag1", "tag2"], "channels": [{"platform": "tiktok", "channel_id": "user_123"}, {"platform": "youtube", "channel_id": "channel_456"}],
   "external_id": "ext_001", "client_id": CLIENT_ID, "timestamp": int(time.time())}
 payload["signature"] = generate_signature(payload, CLIENT_SECRET, payload["timestamp"])
@@ -246,6 +257,12 @@ print(requests.post(f"{BASE}/upload/task", json=payload).json())
     "client_id": "default_client",
     "external_id": "ext_123",
     "video_url": "https://example.com/video.mp4",
+    "original_video_url": "https://cdn.example.com/raw/video.mp4",
+    "video_type": "persona/traffic",
+    "product_info": {
+      "product_code": "P001",
+      "sku_code": "SKU001"
+    },
     "title": "视频标题",
     "description": "视频描述",
     "tags": ["tag1", "tag2"],
@@ -602,6 +619,6 @@ print(generate_signature(params, "your_client_secret", params["timestamp"]))
 
 1. 联系管理员创建客户端，获取 `client_id` 和 `client_secret`
 2. 调用 `GET /channels?platform=tiktok` 获取可用的渠道列表
-3. 调用 `POST /upload/task` 创建上传任务，传入 `video_url`、`title`、`channels`
+3. 调用 `POST /upload/task` 创建上传任务，传入 `video_url`、`title`、`channels`（可选 `original_video_url`、`video_type`、`product_info`）
 4. 通过 `task_id` 调用 `GET /upload/status` 轮询状态，或配置 `callback_url` 接收回调
 5. 任务完成后，调用 `GET /upload/metrics` 查询各渠道视频数据指标（播放量、点赞、评论等）

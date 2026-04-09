@@ -595,8 +595,11 @@ async def _download_video(source_url: str, out_path: str) -> str:
 
 
 async def _do_download_and_upload(vs_id: UUID) -> None:
-    """Background coroutine: download + upload, then persist result. Infinite retry."""
-    while True:
+    """Background coroutine: download + upload, then persist result. Retries up to 15 times."""
+    _MAX_ATTEMPTS = 15
+    attempt = 0
+    while attempt < _MAX_ATTEMPTS:
+        attempt += 1
         try:
             async with SessionLocal() as session:
                 vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
@@ -623,16 +626,20 @@ async def _do_download_and_upload(vs_id: UUID) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("Video %s 下载上传失败，5秒后重试: %s", vs_id, exc)
-            try:
-                async with SessionLocal() as session:
-                    vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
-                    if vs:
-                        vs.download_status = "failed"
-                        await session.commit()
-            except Exception:
-                pass
-            await asyncio.sleep(5)
+            delay = min(attempt * 5, 60)
+            if attempt >= _MAX_ATTEMPTS:
+                logger.error("Video %s 下载上传达到最大重试次数 %d，放弃: %s", vs_id, _MAX_ATTEMPTS, exc)
+                try:
+                    async with SessionLocal() as session:
+                        vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
+                        if vs:
+                            vs.download_status = "failed"
+                            await session.commit()
+                except Exception:
+                    pass
+            else:
+                logger.warning("Video %s 下载上传失败 (attempt %d/%d, %ds后重试): %s", vs_id, attempt, _MAX_ATTEMPTS, delay, exc)
+                await asyncio.sleep(delay)
 
 
 async def trigger_download_and_upload(

@@ -26,4 +26,5 @@ dependencies = [
   "playwright>=1.58.0",
   "google-genai>=1.47.0",
   "volcengine-python-sdk[ark]>=5.0.21",
+  "apify-client>=1.12.2",
 ]

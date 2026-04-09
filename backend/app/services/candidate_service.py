@@ -23,6 +23,7 @@ import httpx
 
 from app.models.candidate_video import CandidateVideo, CandidateVideoStatus
 from app.services import rapid_api
+from app.utils.apify import TikTokApifyClient, TikTokFilter, DateRange, SortOrder
 from app.core.config import settings as app_settings
 from app.services.image_upload_service import image_upload_service
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
@@ -68,42 +69,50 @@ async def _collect_bloggers(
     exclude_bloggers: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    翻页搜索关键词，收集 max_bloggers 个唯一博主（按出现顺序）。
+    用 Apify 关键词搜索，收集 max_bloggers 个唯一博主。
+    结果不够时重新调用一次（每次结果不同），直到收够或连续两轮无新增为止。
     exclude_bloggers: 已在库中的博主 unique_id 集合，搜索时跳过。
     返回 list[{"unique_id", "nickname", "follower_count"}]，follower_count 可能为 None（待补全）。
     """
     seen: dict[str, dict[str, Any]] = {}  # unique_id -> blogger info
     excluded = exclude_bloggers or set()
-    cursor = 0
 
     logger.info("【候选库】开始收集博主，keyword=%s，目标博主数=%d，排除已有博主数=%d",
                 keyword, max_bloggers, len(excluded))
 
+    apify = TikTokApifyClient()
+    round_num = 0
+
     while len(seen) < max_bloggers:
-        result = await rapid_api.search_videos(keyword, cursor=cursor, retry_delay=retry_delay)
-        items = result["items"]
+        round_num += 1
+        prev_count = len(seen)
 
-        for item in items:
-            uid = item["unique_id"]
-            if uid in excluded:
-                continue  # 跳过已入库的博主
-            if uid not in seen:
-                seen[uid] = {
-                    "unique_id": uid,
-                    "nickname": item["nickname"],
-                    "follower_count": item.get("follower_count"),
-                }
-                if len(seen) >= max_bloggers:
-                    break
+        videos = await asyncio.to_thread(
+            apify.search,
+            search_queries=[keyword],
+            results_per_page=max(200, max_bloggers * 10),
+        )
 
-        logger.info("【候选库】已收集 %d/%d 个博主，cursor=%d", len(seen), max_bloggers, cursor)
+        for v in videos:
+            uid = v.author.name.lstrip("@")
+            if uid in excluded or uid in seen:
+                continue
+            seen[uid] = {
+                "unique_id": uid,
+                "nickname": v.author.nick_name or uid,
+                "follower_count": v.author.fans or None,
+            }
+            if len(seen) >= max_bloggers:
+                break
+
+        logger.info("【候选库】第%d轮 已收集 %d/%d 个博主", round_num, len(seen), max_bloggers)
 
         if len(seen) >= max_bloggers:
             break
-        if not result["has_more"]:
-            logger.info("【候选库】搜索结果已无更多，停止翻页，共收集 %d 个博主", len(seen))
+        # 连续一轮无新增，停止
+        if len(seen) == prev_count:
+            logger.info("【候选库】连续一轮无新增，停止，共收集 %d 个博主", len(seen))
             break
-        cursor = result["next_cursor"]
 
     return list(seen.values())
 
@@ -150,61 +159,84 @@ async def _search_blogger_videos(
     cfg: _SearchConfig,
 ) -> list[dict[str, Any]]:
     """
-    用 [keyword + blogger_unique_id] 搜索，收集最多 max_videos 条，
+    用 Apify profiles 直接搜博主视频，不够时重搜一次。
     过滤掉时长 > max_duration / 播放量 < min_play_count / 发布超过 max_publish_days 天的视频。
-    返回属于该博主且满足条件的视频列表。
+    返回满足条件的视频列表（格式兼容旧 rapid_api 字段）。
     """
-    search_keyword = f"{keyword} {blogger['unique_id']}"
-    unique_id = blogger["unique_id"]
-    collected: list[dict[str, Any]] = []
-    total_fetched = 0
-    cursor = 0
-
-    # 计算发布时间截止 Unix 时间戳（0 表示不限制）
     import calendar
+    unique_id = blogger["unique_id"]
+
+    # 计算发布时间截止 Unix 时间戳
     cutoff_ts = 0
+    oldest_date: str | None = None
     if cfg.publish_after_date:
         try:
             from datetime import datetime as _dt
             d = _dt.strptime(cfg.publish_after_date, "%Y-%m-%d")
             cutoff_ts = int(calendar.timegm(d.timetuple()))
+            oldest_date = cfg.publish_after_date
         except ValueError:
-            cutoff_ts = 0
+            pass
 
-    logger.info("【候选库】开始精搜博主 %s，搜索词=%s，max_videos=%d，max_dur=%ds，min_play=%d，publish_after=%s",
-                unique_id, search_keyword, cfg.max_videos_per_blogger, cfg.max_duration_seconds,
+    logger.info("【候选库】开始精搜博主 %s，max_videos=%d，max_dur=%ds，min_play=%d，publish_after=%s",
+                unique_id, cfg.max_videos_per_blogger, cfg.max_duration_seconds,
                 cfg.min_play_count, cfg.publish_after_date or "不限")
 
-    while total_fetched < cfg.max_videos_per_blogger:
-        result = await rapid_api.search_videos(search_keyword, cursor=cursor, retry_delay=cfg.retry_delay)
-        items = result["items"]
+    apify = TikTokApifyClient()
+    seen_urls: set[str] = set()
+    collected: list[dict[str, Any]] = []
+    round_num = 0
 
-        for item in items:
-            if total_fetched >= cfg.max_videos_per_blogger:
-                break
-            total_fetched += 1
+    while len(collected) < cfg.max_videos_per_blogger:
+        round_num += 1
+        prev_count = len(collected)
 
-            # 只保留属于当前博主的视频
-            if item["unique_id"] != unique_id:
+        videos = await asyncio.to_thread(
+            apify.search,
+            profiles=[unique_id],
+            results_per_page=30,
+            oldest_date=oldest_date,
+            filter_params=TikTokFilter(
+                min_play=cfg.min_play_count if cfg.min_play_count > 0 else None,
+                sort_by=SortOrder.play_count,
+                sort_descending=True,
+            ),
+        )
+
+        for v in videos:
+            url = v.web_video_url
+            if not url or url in seen_urls:
                 continue
+            seen_urls.add(url)
             # 时长过滤
-            if item["duration"] > cfg.max_duration_seconds:
-                continue
-            # 播放量过滤
-            if cfg.min_play_count > 0 and (item.get("play_count") or 0) < cfg.min_play_count:
+            if v.video_meta.duration > cfg.max_duration_seconds:
                 continue
             # 发布日期过滤
-            if cutoff_ts > 0 and (item.get("create_time") or 0) < cutoff_ts:
+            if cutoff_ts > 0 and v.create_time < cutoff_ts:
                 continue
+            collected.append({
+                "unique_id":    unique_id,
+                "nickname":     v.author.nick_name or unique_id,
+                "video_url":    url,
+                "video_id":     v.id,
+                "duration":     v.video_meta.duration,
+                "play_count":   v.play_count,
+                "like_count":   v.digg_count,
+                "cover_url":    v.video_meta.cover_url,
+                "video_title":  v.text,
+                "create_time":  v.create_time,
+                "follower_count": v.author.fans or None,
+            })
+            if len(collected) >= cfg.max_videos_per_blogger:
+                break
 
-            collected.append(item)
+        logger.info("【候选库】博主 %s 第%d轮，合规视频数=%d", unique_id, round_num, len(collected))
 
-        if not result["has_more"] or not items:
+        # 连续一轮无新增，停止
+        if len(collected) == prev_count:
             break
-        cursor = result["next_cursor"]
 
-    logger.info("【候选库】博主 %s 精搜完成，搜索总量=%d，合规视频数=%d",
-                unique_id, total_fetched, len(collected))
+    logger.info("【候选库】博主 %s 精搜完成，合规视频数=%d", unique_id, len(collected))
     return collected
 
 
@@ -1272,46 +1304,45 @@ async def supplement_templates_for_account(
 
     imported = 0
     skipped = 0
-    cursor = 0
-    retry_delay = 5.0
-    seen_video_ids: set[str] = set()
-    # 已尝试过的 URL（无论成功失败），避免重复处理
-    attempted_urls: set[str] = set()
-    # 搜索一页的候选队列（本页未处理完的留着，不必马上翻页）
+    seen_urls: set[str] = set()       # 跨轮去重（web_video_url）
+    attempted_urls: set[str] = set()  # 已尝试过（无论成功失败）
     pending_urls: list[str] = []
-    has_more = True
+    apify = TikTokApifyClient()
+    results_per_page = max_new_videos * 3
+    round_num = 0
 
     while imported < max_new_videos:
-        # 当前页候选耗尽时翻页
+        # 当前批候选耗尽时重新搜索
         if not pending_urls:
-            if not has_more:
-                logger.info("【补充模板】搜索结果已耗尽，停止 keyword=%s imported=%d", tag_name, imported)
-                break
+            round_num += 1
+            prev_seen = len(seen_urls)
 
             try:
-                search_result = await rapid_api.search_videos(tag_name, cursor=cursor, retry_delay=retry_delay)
+                videos = await asyncio.to_thread(
+                    apify.search,
+                    search_queries=[tag_name],
+                    results_per_page=results_per_page,
+                )
             except Exception as exc:
-                logger.warning("【补充模板】搜索失败 keyword=%s cursor=%d: %s", tag_name, cursor, exc)
+                logger.warning("【补充模板】Apify搜索失败 keyword=%s round=%d: %s", tag_name, round_num, exc)
                 break
 
-            items = search_result.get("items", [])
-            has_more = bool(search_result.get("has_more"))
-            cursor = int(search_result.get("next_cursor") or 0)
-
-            if not items:
-                break
-
-            # 过滤已见过 / 已尝试过的
+            # 过滤已见过 / 已尝试过的，web_video_url 去重
             batch_urls = []
-            for v in items:
-                vid = v.get("video_id", "")
-                url = v.get("video_url", "")
-                if not url or vid in seen_video_ids or url in attempted_urls:
+            for v in videos:
+                url = v.web_video_url
+                if not url or url in seen_urls or url in attempted_urls:
                     continue
-                seen_video_ids.add(vid)
+                seen_urls.add(url)
                 batch_urls.append(url)
 
+            logger.info("【补充模板】第%d轮搜索 keyword=%s 新URL=%d条", round_num, tag_name, len(batch_urls))
+
             if not batch_urls:
+                # 连续一轮无新 URL，停止
+                if len(seen_urls) == prev_seen:
+                    logger.info("【补充模板】连续一轮无新URL，停止 keyword=%s imported=%d", tag_name, imported)
+                    break
                 continue
 
             # 批量过滤已在库内的
