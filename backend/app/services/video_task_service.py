@@ -797,26 +797,26 @@ class VideoTaskService:
             )
             template_map = {r.id: r.title for r in rows}
 
-        # Single aggregation query for sub_tasks_done (avoids loading all sub_tasks objects)
-        done_rows = await self.db.execute(
-            select(
-                VideoSubTask.task_id,
-                func.count(
-                    case((VideoSubTask.result_video_url.isnot(None), 1))
-                ).label("done"),
-            )
+        # Batch-fetch all sub_tasks in one query
+        sub_rows = await self.db.execute(
+            select(VideoSubTask)
             .where(VideoSubTask.task_id.in_(task_ids))
-            .group_by(VideoSubTask.task_id)
+            .order_by(VideoSubTask.created_at.asc())
         )
-        done_map: dict[uuid.UUID, int] = {r.task_id: r.done for r in done_rows}
+        all_subs = sub_rows.scalars().all()
+        sub_map: dict[uuid.UUID, list[VideoSubTask]] = {tid: [] for tid in task_ids}
+        for sub in all_subs:
+            sub_map[sub.task_id].append(sub)
 
         result = []
         for task in tasks:
+            subs = sub_map.get(task.id, [])
             item = {
                 "task": task,
                 "account_name": account_map.get(task.account_id) if task.account_id else None,
                 "template_title": template_map.get(task.template_id) if task.template_id else None,
-                "sub_tasks_done": done_map.get(task.id, 0),
+                "sub_tasks_done": sum(1 for s in subs if s.result_video_url),
+                "sub_tasks": subs,
             }
             result.append(item)
         return result, total

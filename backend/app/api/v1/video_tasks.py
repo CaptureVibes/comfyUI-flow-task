@@ -121,7 +121,7 @@ async def list_video_tasks(
         task = item["task"]
         data = VideoTaskListItem.model_validate({
             **VideoTaskRead.model_validate(task).model_dump(),
-            "sub_tasks": [],
+            "sub_tasks": [VideoSubTaskRead.model_validate(s) for s in item["sub_tasks"]],
             "sub_tasks_done": item["sub_tasks_done"],
             "account_name": item["account_name"],
             "template_title": item["template_title"],
