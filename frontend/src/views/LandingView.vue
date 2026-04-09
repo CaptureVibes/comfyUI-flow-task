@@ -5,7 +5,27 @@
     <!-- Nav -->
     <nav class="clean-nav gsap-nav">
       <div class="brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-4px;margin-right:6px"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <svg width="24" height="24" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-5px;margin-right:7px;border-radius:6px">
+          <defs>
+            <linearGradient id="nav-bg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#4f46e5"/>
+            </linearGradient>
+          </defs>
+          <rect width="48" height="48" rx="12" fill="url(#nav-bg)"/>
+          <path d="M 9 24 Q 9 9 24 9" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.3" fill="none"/>
+          <path d="M 6 24 Q 6 6 24 6" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.15" fill="none"/>
+          <circle cx="29" cy="29" r="2.2" fill="white" opacity="0.9"/>
+          <circle cx="36.5" cy="29" r="2.2" fill="white" opacity="0.9"/>
+          <circle cx="44" cy="29" r="2.2" fill="white" opacity="0.45"/>
+          <circle cx="29" cy="36.5" r="2.2" fill="white" opacity="0.9"/>
+          <circle cx="36.5" cy="36.5" r="2.2" fill="#10b981"/>
+          <circle cx="44" cy="36.5" r="2.2" fill="white" opacity="0.45"/>
+          <circle cx="29" cy="44" r="2.2" fill="white" opacity="0.45"/>
+          <circle cx="36.5" cy="44" r="2.2" fill="white" opacity="0.45"/>
+          <circle cx="44" cy="44" r="2.2" fill="white" opacity="0.25"/>
+          <text x="7" y="31" font-family="'SF Pro Display','Inter',system-ui,sans-serif" font-size="24" font-weight="900" fill="white" letter-spacing="-1">E</text>
+        </svg>
         EchoMatrix
       </div>
       <button class="primary-btn" @click="enterDashboard">登录控制台</button>
