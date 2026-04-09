@@ -322,9 +322,10 @@ async def _run_imagegen_stage(
     logger.info("[%s] Image gen returned %d bytes, uploading to CDN", template_id, len(img_bytes))
 
     # 4. 上传结果图到我们的 CDN
-    from app.services.upload_service import UpstreamImageUploadService
+    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
     svc = UpstreamImageUploadService()
-    upload_result = await svc.upload_image(img_bytes, "image/png", "imagegen_result.png")
+    _ct, _ext = detect_image_content_type(img_bytes)
+    upload_result = await svc.upload_image(img_bytes, _ct, f"imagegen_result{_ext}")
     cdn_url = upload_result.url
     logger.info("[%s] Imagegen result uploaded to CDN: %s", template_id, cdn_url[:80])
 
@@ -346,7 +347,7 @@ async def _run_splitting_stage(
     最多重试 3 次。
     """
     from app.core.config import settings
-    from app.services.upload_service import UpstreamImageUploadService
+    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
 
     base_url = splitting_api_url or settings.splitting_api_base_url
     api_url = f"{base_url.rstrip('/')}/api/segment-models"
@@ -381,7 +382,8 @@ async def _run_splitting_stage(
                     continue
                 try:
                     content = base64.b64decode(b64)
-                    result = await svc.upload_image(content, "image/png", f"segment_{seg.get('index', 0)}.png")
+                    _ct, _ext = detect_image_content_type(content)
+                    result = await svc.upload_image(content, _ct, f"segment_{seg.get('index', 0)}{_ext}")
                     shots.append({
                         "image_url": result.url,
                         "description": "",
@@ -422,7 +424,7 @@ async def _run_face_removing_stage(
     api_url = f"{base_url.rstrip('/')}/api/v1/style-outfits/processBodyShape"
     logger.info("[%s] Face-removing: processing %d shots, api=%s", template_id, len(shots), api_url)
 
-    from app.services.upload_service import UpstreamImageUploadService
+    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
     upload_svc = UpstreamImageUploadService()
 
     result_shots = []
@@ -468,7 +470,8 @@ async def _run_face_removing_stage(
                     # 下载处理后图片并上传到我们的 CDN
                     dl2 = await client.get(processed_url)
                     dl2.raise_for_status()
-                    upload_result = await upload_svc.upload_image(dl2.content, "image/png", f"face_removed_{i}.png")
+                    _ct, _ext = detect_image_content_type(dl2.content)
+                    upload_result = await upload_svc.upload_image(dl2.content, _ct, f"face_removed_{i}{_ext}")
                     cdn_url = upload_result.url
                     logger.info("[%s] Face-removing shot[%d] uploaded to CDN: %s", template_id, i, cdn_url[:80])
                     last_exc = None

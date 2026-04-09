@@ -31,6 +31,19 @@ def ensure_image_constraints(content: bytes, content_type: str) -> None:
         raise ValidationError("Only image content is allowed")
 
 
+def detect_image_content_type(data: bytes) -> tuple[str, str]:
+    """通过魔数检测图片格式，返回 (content_type, extension)。"""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", ".png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    return "image/jpeg", ".jpg"
+
+
 def decode_base64_image(data: str) -> tuple[bytes, str]:
     content_type = "image/png"
     raw_data = data
@@ -43,6 +56,10 @@ def decode_base64_image(data: str) -> tuple[bytes, str]:
         decoded = base64.b64decode(raw_data, validate=True)
     except binascii.Error as exc:
         raise ValidationError("Invalid base64 image") from exc
+
+    # 如果没有 data URI 头，用魔数检测实际格式
+    if not data.startswith("data:"):
+        content_type, _ = detect_image_content_type(decoded)
 
     return decoded, content_type
 
