@@ -4,38 +4,26 @@
     <div class="sidebar-brand">
       <router-link to="/" class="brand-link">
         <div class="brand-icon">
-          <svg width="28" height="28" viewBox="0 0 512 512" fill="none">
-            <!-- White background -->
-            <rect x="0" y="0" width="512" height="512" rx="96" fill="#ffffff" />
-            <!-- Lightbulb shape -->
-            <path d="M -80 -140
-                     C -140 -140, -140 -60, -80 -35
-                     L -80 60
-                     C -80 110, -35 135, 35 135
-                     L 80 60
-                     C 140 -60, 140 -140, 80 -140
-                     Z" fill="none" stroke="url(#brandGrad)" stroke-width="14" stroke-linecap="round"
-              stroke-linejoin="round" transform="translate(256, 280) scale(1.15)" />
-            <!-- Filament -->
-            <line x1="-40" y1="-55" x2="-15" y2="55" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round"
-              opacity="0.8" transform="translate(256, 280) scale(1.15)" />
-            <line x1="15" y1="-55" x2="40" y2="55" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round"
-              opacity="0.8" transform="translate(256, 280) scale(1.15)" />
-            <line x1="-65" y1="25" x2="65" y2="25" stroke="url(#brandGrad)" stroke-width="7" stroke-linecap="round"
-              opacity="0.5" transform="translate(256, 280) scale(1.15)" />
-            <!-- Light rays -->
-            <line x1="0" y1="-210" x2="0" y2="-250" stroke="url(#brandGrad)" stroke-width="10" stroke-linecap="round"
-              opacity="0.7" transform="translate(256, 280) scale(1.15)" />
-            <line x1="-200" y1="-120" x2="-230" y2="-140" stroke="url(#brandGrad)" stroke-width="8"
-              stroke-linecap="round" opacity="0.7" transform="translate(256, 280) scale(1.15)" />
-            <line x1="200" y1="-120" x2="230" y2="-140" stroke="url(#brandGrad)" stroke-width="8" stroke-linecap="round"
-              opacity="0.7" transform="translate(256, 280) scale(1.15)" />
+          <svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="border-radius:7px">
             <defs>
-              <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#f97316" />
-                <stop offset="100%" stop-color="#8b5cf6" />
+              <linearGradient id="sb-bg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#6366f1"/>
+                <stop offset="100%" stop-color="#4f46e5"/>
               </linearGradient>
             </defs>
+            <rect width="48" height="48" rx="12" fill="url(#sb-bg)"/>
+            <path d="M 9 24 Q 9 9 24 9" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.3" fill="none"/>
+            <path d="M 6 24 Q 6 6 24 6" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.15" fill="none"/>
+            <circle cx="29" cy="29" r="2.2" fill="white" opacity="0.9"/>
+            <circle cx="36.5" cy="29" r="2.2" fill="white" opacity="0.9"/>
+            <circle cx="44" cy="29" r="2.2" fill="white" opacity="0.45"/>
+            <circle cx="29" cy="36.5" r="2.2" fill="white" opacity="0.9"/>
+            <circle cx="36.5" cy="36.5" r="2.2" fill="#10b981"/>
+            <circle cx="44" cy="36.5" r="2.2" fill="white" opacity="0.45"/>
+            <circle cx="29" cy="44" r="2.2" fill="white" opacity="0.45"/>
+            <circle cx="36.5" cy="44" r="2.2" fill="white" opacity="0.45"/>
+            <circle cx="44" cy="44" r="2.2" fill="white" opacity="0.25"/>
+            <text x="7" y="31" font-family="'SF Pro Display','Inter',system-ui,sans-serif" font-size="24" font-weight="900" fill="white" letter-spacing="-1">E</text>
           </svg>
         </div>
         <transition name="sidebar-text">
