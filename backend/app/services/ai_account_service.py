@@ -75,11 +75,30 @@ async def _upload_remote_image_to_cdn(image_url: str, filename: str) -> str:
     return upload_result.url
 
 
+def _detect_image_content_type(data: bytes) -> tuple[str, str]:
+    """从文件头魔数检测图片格式，返回 (content_type, extension)。"""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", ".png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    # 默认当 jpeg 处理
+    return "image/jpeg", ".jpg"
+
+
 async def _upload_image_bytes_to_cdn(img_bytes: bytes, filename: str) -> str:
     """Upload raw image bytes directly to our CDN, returning the CDN URL."""
     from app.services.upload_service import UpstreamImageUploadService
+    import os
+    content_type, ext = _detect_image_content_type(img_bytes)
+    # 替换文件名中的扩展名为实际格式
+    base = os.path.splitext(filename)[0]
+    actual_filename = base + ext
     svc = UpstreamImageUploadService()
-    upload_result = await svc.upload_image(img_bytes, "image/png", filename)
+    upload_result = await svc.upload_image(img_bytes, content_type, actual_filename)
     return upload_result.url
 
 
