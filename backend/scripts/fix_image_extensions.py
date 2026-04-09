@@ -1,16 +1,22 @@
 """
-迁移脚本：修复 accounts 和 video_tasks 中图片 URL 的错误扩展名（.png → .jpg）
+迁移脚本：修复 accounts 和 video_tasks 中图片 URL 的错误扩展名
 
 背景：之前上传图片时 content_type 硬编码为 image/png，导致实际为 JPEG 的图片
-以 .png 扩展名存储到 CDN。本脚本通过下载文件头（只取前 12 字节）检测实际格式，
-若检测为 JPEG 则将 URL 中的 .png 后缀改为 .jpg。
+以 .png / .jpeg 扩展名存储到 CDN。
+
+修复流程（每张图片）：
+  1. URL 扩展名为 .png / .jpeg 才处理，其他跳过
+  2. 完整下载原图
+  3. 检测魔数确认实际格式
+  4. 用正确扩展名重新上传到 CDN
+  5. 用新 CDN URL 更新数据库
 
 用法：
     cd backend
     uv run python scripts/fix_image_extensions.py [--dry-run]
 
 选项：
-    --dry-run   只打印变更，不写入数据库
+    --dry-run   只打印变更，不写入数据库（仍会下载+上传以验证可行性）
 """
 from __future__ import annotations
 
@@ -23,65 +29,88 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("fix_image_ext")
 
 DRY_RUN = "--dry-run" in sys.argv
-
-# 只取前 12 字节判断魔数，省流量
-_HEAD_BYTES = 12
-_SEMAPHORE = asyncio.Semaphore(20)  # 最大并发下载数
+_SEMAPHORE = asyncio.Semaphore(5)  # 并发限制（下载+上传都占用）
 
 
-def _is_jpeg(data: bytes) -> bool:
-    return data[:3] == b"\xff\xd8\xff"
-
-
-def _fix_url(url: str) -> str | None:
-    """将错误扩展名统一为 .jpg：
-    - .png → 下载验证魔数后决定是否改
-    - .jpeg → 直接改为 .jpg（同格式，无需验证）
-    返回修正后的 URL，若不需要修改则返回 None。
-    """
+def _needs_fix(url: str) -> bool:
+    """只处理扩展名为 .png 或 .jpeg 的 URL。"""
     if not url:
-        return None
+        return False
     lower = url.lower()
-    if lower.endswith(".jpeg"):
-        return url[:-5] + ".jpg"
-    if lower.endswith(".png"):
-        return url[:-4] + ".jpg"   # 仍需魔数验证，在调用方处理
+    return lower.endswith(".png") or lower.endswith(".jpeg")
+
+
+def _detect_content_type(data: bytes) -> tuple[str, str] | None:
+    """检测图片格式，返回 (content_type, extension)，无法识别返回 None。"""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", ".png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", ".webp"
     return None
 
 
-async def _fetch_head(client: httpx.AsyncClient, url: str) -> bytes:
+def _base_filename(url: str) -> str:
+    """从 URL 取文件名（去掉扩展名）。"""
+    name = url.rstrip("/").split("/")[-1].split("?")[0]
+    base, _ = os.path.splitext(name)
+    return base or "image"
+
+
+async def _download_and_reupload(client: httpx.AsyncClient, url: str) -> str | None:
+    """
+    下载 url，检测实际格式，若扩展名有误则重新上传到 CDN，返回新 URL。
+    若格式已正确或出错则返回 None。
+    """
     async with _SEMAPHORE:
+        # 1. 下载完整图片
         try:
-            async with client.stream("GET", url, timeout=15.0) as resp:
-                resp.raise_for_status()
-                data = b""
-                async for chunk in resp.aiter_bytes(chunk_size=_HEAD_BYTES):
-                    data += chunk
-                    if len(data) >= _HEAD_BYTES:
-                        break
-                return data
+            resp = await client.get(url, timeout=60.0)
+            resp.raise_for_status()
+            data = resp.content
         except Exception as exc:
-            logger.warning("下载头部失败 %s: %s", url[:80], exc)
-            return b""
+            logger.warning("下载失败 %s: %s", url[:80], exc)
+            return None
 
+        # 2. 检测格式
+        detected = _detect_content_type(data)
+        if detected is None:
+            logger.warning("无法识别格式 %s，跳过", url[:80])
+            return None
 
-async def _check_and_fix_url(client: httpx.AsyncClient, url: str) -> str | None:
-    """返回修正后的 URL，若不需要修改或无法判断则返回 None。"""
-    candidate = _fix_url(url)
-    if candidate is None:
-        return None  # 不是 .png，跳过
-    head = await _fetch_head(client, url)
-    if not head:
-        return None
-    if _is_jpeg(head):
-        return candidate
-    return None  # 虽然扩展名 .png 但确实是 PNG，不改
+        content_type, correct_ext = detected
+        current_lower = url.lower()
+
+        # 3. 判断是否需要修正
+        already_correct = current_lower.endswith(correct_ext)
+        if already_correct:
+            logger.debug("格式已正确 %s，跳过", url[:80])
+            return None
+
+        # 4. 重新上传
+        filename = _base_filename(url) + correct_ext
+        if DRY_RUN:
+            logger.info("[DRY RUN] 需重传 %s → %s (格式: %s)", url[:80], filename, content_type)
+            return f"<would_upload:{filename}>"
+
+        try:
+            from app.services.upload_service import UpstreamImageUploadService
+            svc = UpstreamImageUploadService()
+            result = await svc.upload_image(data, content_type, filename)
+            logger.info("重传完成 %s → %s", url[:80], result.url[:80])
+            return result.url
+        except Exception as exc:
+            logger.error("上传失败 %s: %s", url[:80], exc)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -92,34 +121,35 @@ async def fix_accounts(session, client: httpx.AsyncClient) -> int:
     from app.models.account import Account
 
     rows = (await session.execute(select(Account))).scalars().all()
+    # 只处理有需要修复的字段的账号
+    candidates = [
+        acc for acc in rows
+        if any(_needs_fix(getattr(acc, f) or "") for f in ("avatar_url", "photo_url", "painting_url"))
+    ]
+    logger.info("accounts: 共 %d 条，需检查 %d 条", len(rows), len(candidates))
+
     changed = 0
 
     async def _fix_one(acc: Account) -> None:
         nonlocal changed
-        fields = {"avatar_url", "photo_url", "painting_url"}
-        updates: dict[str, str] = {}
-        tasks = {
-            f: asyncio.create_task(_check_and_fix_url(client, getattr(acc, f) or ""))
-            for f in fields
-            if getattr(acc, f)
-        }
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        for field, result in zip(tasks.keys(), results):
-            if isinstance(result, str) and result:
-                updates[field] = result
+        fields = [f for f in ("avatar_url", "photo_url", "painting_url") if _needs_fix(getattr(acc, f) or "")]
+        tasks = {f: asyncio.create_task(_download_and_reupload(client, getattr(acc, f))) for f in fields}
+        results = {f: await t for f, t in tasks.items()}
 
+        updates = {f: url for f, url in results.items() if url and not url.startswith("<would_upload")}
         if updates:
-            log_parts = [f"{k}: {getattr(acc, k)[:60]} → {v[:60]}" for k, v in updates.items()]
-            logger.info("Account %s: %s", acc.id, " | ".join(log_parts))
             if not DRY_RUN:
                 for k, v in updates.items():
                     setattr(acc, k, v)
+            log_parts = [f"{k}: ...{getattr(acc, k)[-40:]} → ...{v[-40:]}" for k, v in updates.items()]
+            logger.info("Account %s 更新: %s", acc.id, " | ".join(log_parts))
             changed += 1
 
-    await asyncio.gather(*[_fix_one(acc) for acc in rows])
+    await asyncio.gather(*[_fix_one(acc) for acc in candidates])
 
     if not DRY_RUN and changed:
         await session.commit()
+        logger.info("accounts: 已 commit %d 条变更", changed)
 
     return changed
 
@@ -134,34 +164,32 @@ async def fix_video_tasks(session, client: httpx.AsyncClient) -> int:
     rows = (await session.execute(
         select(VideoTask).where(VideoTask.shots.isnot(None))
     )).scalars().all()
+
+    candidates = [
+        t for t in rows
+        if any(_needs_fix(s.get("image_url", "")) for s in (t.shots or []))
+    ]
+    logger.info("video_tasks: 共 %d 条有 shots，需检查 %d 条", len(rows), len(candidates))
+
     changed = 0
 
     async def _fix_task(task: VideoTask) -> None:
         nonlocal changed
         shots: list[dict[str, Any]] = task.shots or []
-        if not shots:
-            return
-
-        # 并发检测所有 shot 的 image_url
-        indices_to_check = [
-            i for i, s in enumerate(shots)
-            if isinstance(s.get("image_url"), str) and s["image_url"].lower().endswith(".png")
-        ]
-        if not indices_to_check:
-            return
+        indices = [i for i, s in enumerate(shots) if _needs_fix(s.get("image_url", ""))]
 
         results = await asyncio.gather(*[
-            _check_and_fix_url(client, shots[i]["image_url"])
-            for i in indices_to_check
+            _download_and_reupload(client, shots[i]["image_url"])
+            for i in indices
         ])
 
         new_shots = [s.copy() for s in shots]
         task_changed = False
-        for idx, new_url in zip(indices_to_check, results):
-            if new_url:
-                logger.info("VideoTask %s shot[%d]: %s → %s",
-                            task.id, idx, shots[idx]["image_url"][:60], new_url[:60])
-                new_shots[idx]["image_url"] = new_url
+        for i, new_url in zip(indices, results):
+            if new_url and not new_url.startswith("<would_upload"):
+                new_shots[i]["image_url"] = new_url
+                task_changed = True
+            elif new_url:  # dry run placeholder
                 task_changed = True
 
         if task_changed:
@@ -169,10 +197,11 @@ async def fix_video_tasks(session, client: httpx.AsyncClient) -> int:
                 task.shots = new_shots
             changed += 1
 
-    await asyncio.gather(*[_fix_task(t) for t in rows])
+    await asyncio.gather(*[_fix_task(t) for t in candidates])
 
     if not DRY_RUN and changed:
         await session.commit()
+        logger.info("video_tasks: 已 commit %d 条变更", changed)
 
     return changed
 
@@ -185,19 +214,19 @@ async def main() -> None:
     from app.db.session import SessionLocal
 
     if DRY_RUN:
-        logger.info("=== DRY RUN 模式，不写入数据库 ===")
+        logger.info("=== DRY RUN 模式（下载+检测，但不写入数据库）===")
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         async with SessionLocal() as session:
             logger.info("--- 处理 accounts 表 ---")
             acc_changed = await fix_accounts(session, client)
-            logger.info("accounts 完成：%d 条记录需要修正", acc_changed)
+            logger.info("accounts 完成：%d 条记录已修正", acc_changed)
 
             logger.info("--- 处理 video_tasks.shots ---")
             task_changed = await fix_video_tasks(session, client)
-            logger.info("video_tasks 完成：%d 个任务需要修正", task_changed)
+            logger.info("video_tasks 完成：%d 个任务已修正", task_changed)
 
-    logger.info("全部完成。%s", "（DRY RUN，未实际写入）" if DRY_RUN else "已写入数据库。")
+    logger.info("全部完成。%s", "（DRY RUN，未写入数据库）" if DRY_RUN else "已写入数据库。")
 
 
 if __name__ == "__main__":
