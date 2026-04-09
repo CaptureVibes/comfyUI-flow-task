@@ -69,7 +69,14 @@ class UpstreamImageUploadService:
     async def upload_image(self, content: bytes, content_type: str, filename: str | None = None) -> UploadResult:
         ensure_image_constraints(content, content_type)
 
-        extension = mimetypes.guess_extension(content_type) or ".png"
+        _EXT_MAP = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+            "image/bmp": ".bmp",
+        }
+        extension = _EXT_MAP.get(content_type) or mimetypes.guess_extension(content_type) or ".jpg"
         safe_name = filename or f"upload-{uuid.uuid4().hex}{extension}"
 
         response = None
