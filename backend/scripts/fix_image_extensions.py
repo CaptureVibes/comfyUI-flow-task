@@ -40,11 +40,18 @@ def _is_jpeg(data: bytes) -> bool:
 
 
 def _fix_url(url: str) -> str | None:
-    """如果 URL 以 .png 结尾，返回替换后的 .jpg URL，否则返回 None。"""
+    """将错误扩展名统一为 .jpg：
+    - .png → 下载验证魔数后决定是否改
+    - .jpeg → 直接改为 .jpg（同格式，无需验证）
+    返回修正后的 URL，若不需要修改则返回 None。
+    """
     if not url:
         return None
-    if url.lower().endswith(".png"):
-        return url[:-4] + ".jpg"
+    lower = url.lower()
+    if lower.endswith(".jpeg"):
+        return url[:-5] + ".jpg"
+    if lower.endswith(".png"):
+        return url[:-4] + ".jpg"   # 仍需魔数验证，在调用方处理
     return None
 
 
