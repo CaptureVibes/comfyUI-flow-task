@@ -119,11 +119,15 @@ async def list_video_tasks(
     items = []
     for item in enriched:
         task = item["task"]
-        data = VideoTaskListItem.model_validate(task)
-        data.account_name = item["account_name"]
-        data.template_title = item["template_title"]
-        data.sub_tasks_done = item["sub_tasks_done"]
-        data.tags = tags_map.get(task.template_id, []) if task.template_id else []
+        data = VideoTaskListItem.model_validate({
+            **VideoTaskRead.model_validate(task).model_dump(),
+            "sub_tasks": [],
+            "sub_tasks_done": item["sub_tasks_done"],
+            "account_name": item["account_name"],
+            "template_title": item["template_title"],
+            "tags": tags_map.get(task.template_id, []) if task.template_id else [],
+            "original_video": None,
+        })
         items.append(data)
     return VideoTaskListPage(items=items, total=total, page=page, page_size=page_size)
 
