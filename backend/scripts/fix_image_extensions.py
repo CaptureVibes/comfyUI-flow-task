@@ -136,12 +136,14 @@ async def fix_accounts(session, client: httpx.AsyncClient) -> int:
         tasks = {f: asyncio.create_task(_download_and_reupload(client, getattr(acc, f))) for f in fields}
         results = {f: await t for f, t in tasks.items()}
 
-        updates = {f: url for f, url in results.items() if url and not url.startswith("<would_upload")}
-        if updates:
-            if not DRY_RUN:
+        any_changes = {f: url for f, url in results.items() if url}
+        updates = {f: url for f, url in any_changes.items() if not url.startswith("<would_upload")}
+        if any_changes:
+            if not DRY_RUN and updates:
                 for k, v in updates.items():
                     setattr(acc, k, v)
-            log_parts = [f"{k}: ...{getattr(acc, k)[-40:]} → ...{v[-40:]}" for k, v in updates.items()]
+            display = updates if updates else any_changes
+            log_parts = [f"{k}: ...{getattr(acc, k)[-40:]} → ...{v[-40:]}" for k, v in display.items()]
             logger.info("Account %s 更新: %s", acc.id, " | ".join(log_parts))
             changed += 1
 
@@ -226,7 +228,11 @@ async def main() -> None:
             task_changed = await fix_video_tasks(session, client)
             logger.info("video_tasks 完成：%d 个任务已修正", task_changed)
 
-    logger.info("全部完成。%s", "（DRY RUN，未写入数据库）" if DRY_RUN else "已写入数据库。")
+    suffix = "（DRY RUN，未写入数据库）" if DRY_RUN else "已写入数据库。"
+    logger.info(
+        "=== 汇总 %s: accounts 需修正 %d 条，video_tasks 需修正 %d 个任务 ===",
+        suffix, acc_changed, task_changed,
+    )
 
 
 if __name__ == "__main__":
