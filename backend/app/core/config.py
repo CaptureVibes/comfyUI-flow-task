@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     tikwm_api_key: str = ""       # tikwm.com API key（可选，不传也可访问）
     rapidapi_key: str = ""        # RapidAPI key，用于 tiktok-api23 fallback
 
+    # Lark 通知
+    lark_webhook_url: str = ""    # Lark 机器人 Webhook 地址（为空则不发通知）
+
     @property
     def max_image_size_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024
