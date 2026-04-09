@@ -5,7 +5,7 @@ import uuid
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -526,7 +526,6 @@ async def regenerate_publish_meta(
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     """重新触发 AI 预生成发布标题（仅限 queued 状态）"""
-    import asyncio
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
     from app.models.video_task import VideoSubTask, VideoTask
