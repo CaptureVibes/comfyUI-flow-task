@@ -252,102 +252,8 @@ async def _do_publish(account: Account) -> None:
 
 async def _load_auto_publish_config(account: Account) -> dict | None:
     """加载账号 owner 的自动发布 AI 配置，若未启用返回 None"""
-    from app.models.video_task_config import VideoTaskConfig
-    from app.services.google_api import get_google_api_key
-
-    # 查 owner_id：从账号的 owner_id 找到对应的 VideoTaskConfig
-    owner_id = account.owner_id
-    if owner_id is None:
-        # admin 账号没有 owner_id，尝试找任意一个 config
-        return None
-
-    async with SessionLocal() as session:
-        cfg = await session.get(VideoTaskConfig, owner_id)
-        if cfg is None or not cfg.auto_publish_enabled:
-            return None
-        if not cfg.auto_publish_prompt.strip():
-            logger.warning("【定时发布】账号 %s（%s）已启用 AI 生成标题，但提示词为空，跳过 AI 生成", account.id, account.account_name)
-            return None
-
-        api_key = get_google_api_key()
-        if not api_key:
-            logger.warning("【定时发布】账号 %s（%s）已启用 AI 生成标题，但 GOOGLE_API_KEY 未配置，跳过 AI 生成", account.id, account.account_name)
-            return None
-
-        return {
-            "model": cfg.auto_publish_model or "gemini-3.1-pro-preview",
-            "prompt": cfg.auto_publish_prompt,
-        }
-
-
-async def _generate_publish_metadata(
-    video_url: str,
-    ai_config: dict,
-    fallback_title: str,
-) -> tuple[str, str, list[str]]:
-    """
-    调用 AI API 分析视频，生成 title/desc/hashtag。
-    返回 (title, description, hashtags)。失败时返回 fallback。
-    """
-    import json as _json
-    import re
-    from app.services.ai_api import call_gemini_api
-
-    user_prompt = ai_config["prompt"].strip()
-    prompt = f"""{user_prompt}
-
----
-请严格按照以下 JSON 格式输出，不要输出任何其他内容，不要有 markdown 代码块包裹：
-{{
-  "title": "视频标题（简洁吸引人，不超过100字符）",
-  "desc": "视频描述（详细介绍视频内容，可适当使用 emoji）",
-  "hashtag": ["标签1", "标签2", "标签3"]
-}}
-其中 hashtag 为字符串数组，每个元素不含 # 号。只输出 JSON，不要任何解释。"""
-    retry_delay = 30.0
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            raw = await call_gemini_api(
-                model_name=ai_config["model"],
-                video_url=video_url,
-                prompt=prompt,
-                temperature=0.5,
-            )
-            logger.info("【AI生成标题】原始响应（第%d次）：%s", attempt, raw[:1000])
-
-            # 提取 JSON（兼容 markdown 代码块包裹）
-            json_str = raw.strip()
-            match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
-            if match:
-                logger.debug("【AI生成标题】检测到 markdown 代码块，提取 JSON 内容")
-                json_str = match.group(1)
-
-            data = _json.loads(json_str)
-
-            # 校验必须包含 title 字段且非空
-            title = str(data.get("title", "") or "").strip()
-            if not title:
-                raise ValueError("AI 返回的 JSON 缺少有效 title 字段")
-
-            title = title[:100]
-            desc = str(data.get("desc", "") or data.get("description", "") or "")
-            hashtags_raw = data.get("hashtag", data.get("hashtags", []))
-            if isinstance(hashtags_raw, str):
-                hashtags = [t.strip().lstrip("#") for t in hashtags_raw.split() if t.strip()]
-            else:
-                hashtags = [str(t).strip().lstrip("#") for t in hashtags_raw if t]
-
-            logger.info(
-                "【AI生成标题】生成成功（第%d次） → 标题：%r，描述长度：%d 字，标签：%s",
-                attempt, title, len(desc), hashtags,
-            )
-            return title, desc, hashtags
-
-        except Exception as e:
-            logger.warning("【AI生成标题】第%d次失败：%s，%.0fs后重试", attempt, e, retry_delay)
-            await asyncio.sleep(retry_delay)
+    from app.services.publish_meta_service import _load_auto_publish_config as _load_cfg
+    return await _load_cfg(account.owner_id)
 
 
 async def _publish_sub_task(
@@ -380,6 +286,7 @@ async def _publish_sub_task(
 
         task = sub.task
         fallback_title = (task.prompt or "")[:100] or "视频"
+        publish_meta = sub.publish_meta or {}
 
     original_video_url = sub.result_video_url
 
@@ -393,9 +300,16 @@ async def _publish_sub_task(
         logger.exception("【定时发布】子任务 %s logo 拼接失败，使用原视频发布", sub_task_id)
         publish_video_url = original_video_url
 
-    # ── AI 生成 title/desc/hashtag（在 session 外执行，避免长时间持有连接）──
-    if ai_config:
-        title, description, hashtags = await _generate_publish_metadata(
+    # ── 优先使用预生成的 publish_meta，否则实时 AI 生成 ──────────────────────
+    if publish_meta.get("status") == "done" and publish_meta.get("title"):
+        title = publish_meta["title"]
+        description = publish_meta.get("description", "")
+        hashtags = publish_meta.get("hashtags", [])
+        logger.info("【定时发布】子任务 %s 使用预生成标题：%r", sub_task_id, title)
+    elif ai_config:
+        logger.info("【定时发布】子任务 %s 无预生成标题，实时 AI 生成", sub_task_id)
+        from app.services.publish_meta_service import generate_publish_metadata
+        title, description, hashtags = await generate_publish_metadata(
             video_url=original_video_url,
             ai_config=ai_config,
             fallback_title=fallback_title,

@@ -24,6 +24,15 @@ from app.models.video_task_config import VideoTaskConfig
 
 logger = logging.getLogger(__name__)
 
+
+async def _trigger_publish_meta(sub_task_id: uuid.UUID) -> None:
+    """入队后后台触发 AI 预生成发布标题（fire-and-forget）。"""
+    try:
+        from app.services.publish_meta_service import trigger_publish_meta_generation
+        await trigger_publish_meta_generation(sub_task_id)
+    except Exception:
+        logger.exception("【AI预生成标题】子任务 %s 触发失败", sub_task_id)
+
 VALID_STATUSES = {"pending", "generating", "reviewing", "stashed", "decision_rejected", "queued", "publishing", "published", "publish_failed", "abandoned"}
 
 JOB = "jimeng/jobs"
@@ -722,6 +731,10 @@ class VideoTaskService:
         sub.task.status = _compute_parent_status(sub.task.sub_tasks)
         await self.db.commit()
         await self.db.refresh(sub)
+
+        # 异步预生成发布标题（不阻塞入队响应）
+        asyncio.create_task(_trigger_publish_meta(sub.id))
+
         return sub
 
     async def dequeue_sub_task(

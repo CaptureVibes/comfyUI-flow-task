@@ -88,6 +88,10 @@ class VideoSubTask(Base):
     # Queue order for manual sorting in publish queue (only used when status=queued)
     queue_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Pre-generated publish metadata (title, description, hashtags) produced when sub-task enters queued.
+    # Format: {"status": "pending"|"generating"|"done"|"failed", "title": "...", "description": "...", "hashtags": [...]}
+    publish_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

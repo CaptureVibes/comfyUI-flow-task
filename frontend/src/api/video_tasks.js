@@ -111,6 +111,11 @@ export async function dequeueSubTask(subTaskId) {
   return data
 }
 
+export async function regeneratePublishMeta(subTaskId) {
+  const { data } = await http.post(`/video-tasks/subtasks/${subTaskId}/regenerate-publish-meta`)
+  return data
+}
+
 export async function deleteSubTask(subTaskId) {
   const { data } = await http.delete(`/video-tasks/subtasks/${subTaskId}`)
   return data

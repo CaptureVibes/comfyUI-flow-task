@@ -248,6 +248,21 @@
               </div>
             </div>
 
+            <!-- Publish meta chip (queued tab) -->
+            <div v-if="item.sub.publish_meta" class="ad-publish-meta-chip" @click.stop="openMetaDialog(item.sub)">
+              <span class="ad-meta-dot" :class="`ad-meta-dot-${item.sub.publish_meta.status}`"></span>
+              <span class="ad-meta-chip-text">
+                <template v-if="item.sub.publish_meta.status === 'done' && item.sub.publish_meta.title">
+                  {{ item.sub.publish_meta.title }}
+                </template>
+                <template v-else-if="item.sub.publish_meta.status === 'generating'">AI 生成中…</template>
+                <template v-else-if="item.sub.publish_meta.status === 'pending'">等待生成标题</template>
+                <template v-else-if="item.sub.publish_meta.status === 'failed'">标题生成失败</template>
+                <template v-else>AI 标题</template>
+              </span>
+              <svg v-if="item.sub.publish_meta.status === 'done'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+
             <!-- Scoring error message -->
             <div v-if="item.sub.scoring_error" class="ad-card-error">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -303,6 +318,19 @@
                 :loading="dequeuing === item.sub.id"
                 @click="handleDequeue(item.sub)"
               >移出队列</el-button>
+
+              <!-- 发布队列：重新生成标题按钮 -->
+              <el-button
+                v-if="item.sub.status === 'queued'"
+                size="small"
+                plain
+                :loading="regeneratingMeta === item.sub.id"
+                :disabled="item.sub.publish_meta?.status === 'generating'"
+                @click="handleRegenerateMeta(item.sub)"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:3px"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                重新生成标题
+              </el-button>
 
               <!-- 发布队列：直接发布按钮 -->
               <el-button
@@ -542,6 +570,70 @@
       </template>
     </el-dialog>
 
+    <!-- AI 发布标题弹窗 -->
+    <el-dialog
+      v-model="metaDialogVisible"
+      title="AI 发布标题"
+      width="520px"
+      align-center
+      destroy-on-close
+    >
+      <div v-if="metaDialogSub" class="ad-meta-dialog-body">
+        <!-- 状态行 -->
+        <div class="ad-meta-dialog-status-row">
+          <span class="ad-meta-dialog-dot" :class="`ad-meta-dot-${metaDialogSub.publish_meta?.status}`"></span>
+          <span class="ad-meta-dialog-status-text">
+            {{ { pending: '等待生成', generating: 'AI 生成中…', done: '已生成', failed: '生成失败' }[metaDialogSub.publish_meta?.status] || metaDialogSub.publish_meta?.status }}
+          </span>
+        </div>
+
+        <template v-if="metaDialogSub.publish_meta?.status === 'done'">
+          <!-- 标题 -->
+          <div class="ad-meta-dialog-section">
+            <div class="ad-meta-dialog-label">标题</div>
+            <div class="ad-meta-dialog-title">{{ metaDialogSub.publish_meta.title }}</div>
+          </div>
+
+          <!-- 描述 -->
+          <div v-if="metaDialogSub.publish_meta.description" class="ad-meta-dialog-section">
+            <div class="ad-meta-dialog-label">描述</div>
+            <div class="ad-meta-dialog-desc">{{ metaDialogSub.publish_meta.description }}</div>
+          </div>
+
+          <!-- 标签 -->
+          <div v-if="metaDialogSub.publish_meta.hashtags?.length" class="ad-meta-dialog-section">
+            <div class="ad-meta-dialog-label">标签</div>
+            <div class="ad-meta-dialog-tags">
+              <span v-for="tag in metaDialogSub.publish_meta.hashtags" :key="tag" class="ad-meta-dialog-tag">#{{ tag }}</span>
+            </div>
+          </div>
+        </template>
+
+        <div v-else-if="metaDialogSub.publish_meta?.status === 'generating'" class="ad-meta-dialog-placeholder">
+          <div class="ad-meta-generating-spinner"></div>
+          <span>AI 正在分析视频内容并生成标题，请稍等…</span>
+        </div>
+
+        <div v-else-if="metaDialogSub.publish_meta?.status === 'failed'" class="ad-meta-dialog-placeholder ad-meta-dialog-failed">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span>生成失败，可点击「重新生成标题」重试</span>
+        </div>
+
+        <div v-else class="ad-meta-dialog-placeholder">
+          <span>尚未开始生成，入队后会自动触发</span>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button
+          :loading="regeneratingMeta === metaDialogSub?.id"
+          :disabled="metaDialogSub?.publish_meta?.status === 'generating'"
+          @click="handleRegenerateMeta(metaDialogSub)"
+        >重新生成</el-button>
+        <el-button type="primary" @click="metaDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 数据指标弹窗 -->
     <el-dialog
       v-model="metricsVisible"
@@ -634,7 +726,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish } from '../api/accounts'
-import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask } from '../api/video_tasks'
+import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask, regeneratePublishMeta } from '../api/video_tasks'
 import { fetchSubTaskPublications, fetchUploadMetrics } from '../api/video_publications'
 import http from '../api/http'
 
@@ -688,6 +780,9 @@ const retrying = ref(null)
 const deleting = ref(null)
 const enqueuing = ref(null)
 const dequeuing = ref(null)
+const regeneratingMeta = ref(null)
+const metaDialogVisible = ref(false)
+const metaDialogSub = ref(null)
 const previewVisible = ref(false)
 const previewImage = ref({ url: '', title: '' })
 const showAIDialog = ref(false)
@@ -927,6 +1022,31 @@ async function handleEnqueue(sub) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   } finally {
     enqueuing.value = null
+  }
+}
+
+// 打开 AI 标题弹窗
+function openMetaDialog(sub) {
+  metaDialogSub.value = sub
+  metaDialogVisible.value = true
+}
+
+// 重新生成发布标题
+async function handleRegenerateMeta(sub) {
+  if (!sub) return
+  regeneratingMeta.value = sub.id
+  try {
+    const updated = await regeneratePublishMeta(sub.id)
+    // 更新本地数据
+    const item = tabSubTasks.value.find(s => s.id === sub.id)
+    if (item) item.publish_meta = updated.publish_meta
+    // 同步弹窗内数据
+    if (metaDialogSub.value?.id === sub.id) metaDialogSub.value = { ...metaDialogSub.value, publish_meta: updated.publish_meta }
+    ElMessage.success('已触发重新生成，请稍后刷新查看')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    regeneratingMeta.value = null
   }
 }
 
@@ -1728,6 +1848,77 @@ onUnmounted(() => {
 .ad-card-actions {
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
 }
+
+/* ── Publish meta chip（卡片内） ───────────────────────────── */
+.ad-publish-meta-chip {
+  display: flex; align-items: center; gap: 7px;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px;
+  padding: 7px 10px; margin-bottom: 8px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  font-size: 12px; color: #334155;
+  min-width: 0;
+}
+.ad-publish-meta-chip:hover { background: #f1f5f9; border-color: #c7d2fe; }
+.ad-meta-chip-text {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500;
+}
+.ad-meta-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.ad-meta-dot-done      { background: #22c55e; }
+.ad-meta-dot-generating { background: #3b82f6; animation: meta-pulse 1.2s ease-in-out infinite; }
+.ad-meta-dot-pending   { background: #94a3b8; }
+.ad-meta-dot-failed    { background: #ef4444; }
+
+@keyframes meta-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+/* ── Publish meta dialog（弹窗内） ─────────────────────────── */
+.ad-meta-dialog-body { display: flex; flex-direction: column; gap: 16px; }
+
+.ad-meta-dialog-status-row {
+  display: flex; align-items: center; gap: 8px;
+  padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;
+}
+.ad-meta-dialog-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+}
+.ad-meta-dialog-status-text { font-size: 13px; color: #64748b; font-weight: 500; }
+
+.ad-meta-dialog-section { display: flex; flex-direction: column; gap: 6px; }
+.ad-meta-dialog-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: #94a3b8;
+}
+.ad-meta-dialog-title {
+  font-size: 15px; font-weight: 600; color: #1e293b; line-height: 1.5;
+}
+.ad-meta-dialog-desc {
+  font-size: 13px; color: #475569; line-height: 1.65;
+  white-space: pre-wrap; word-break: break-word;
+}
+.ad-meta-dialog-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ad-meta-dialog-tag {
+  background: #ede9fe; color: #6d28d9; font-size: 12px;
+  padding: 3px 9px; border-radius: 999px; font-weight: 500;
+}
+
+.ad-meta-dialog-placeholder {
+  display: flex; align-items: center; gap: 10px;
+  color: #94a3b8; font-size: 13px; padding: 20px 0;
+}
+.ad-meta-dialog-failed { color: #ef4444; }
+
+.ad-meta-generating-spinner {
+  width: 16px; height: 16px; border: 2px solid #dbeafe;
+  border-top-color: #3b82f6; border-radius: 50%;
+  animation: meta-spin 0.8s linear infinite; flex-shrink: 0;
+}
+@keyframes meta-spin { to { transform: rotate(360deg); } }
 
 .ad-card-error {
   display: flex;

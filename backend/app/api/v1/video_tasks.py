@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import date
 from typing import Any
@@ -516,6 +517,42 @@ async def dequeue_sub_task(
     """将子任务从 queued 状态移回 stashed 状态"""
     svc = VideoTaskService(db=session)
     return await svc.dequeue_sub_task(sub_task_id, owner_id)
+
+
+@router.post("/subtasks/{sub_task_id}/regenerate-publish-meta", response_model=VideoSubTaskRead)
+async def regenerate_publish_meta(
+    sub_task_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """重新触发 AI 预生成发布标题（仅限 queued 状态）"""
+    import asyncio
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.video_task import VideoSubTask, VideoTask
+
+    result = await session.execute(
+        select(VideoSubTask)
+        .where(VideoSubTask.id == sub_task_id)
+        .options(selectinload(VideoSubTask.task))
+    )
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404, detail="子任务不存在")
+    if owner_id is not None and sub.task.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="子任务不存在")
+    if sub.status != "queued":
+        raise HTTPException(status_code=422, detail="只有队列中的子任务才能重新生成标题")
+
+    # 重置为 pending 状态，异步触发重新生成
+    sub.publish_meta = {"status": "pending"}
+    await session.commit()
+    await session.refresh(sub)
+
+    from app.services.publish_meta_service import trigger_publish_meta_generation
+    asyncio.create_task(trigger_publish_meta_generation(sub.id))
+
+    return VideoSubTaskRead.model_validate(sub)
 
 
 @router.patch("/subtasks/queue-order", status_code=status.HTTP_200_OK)

@@ -28,6 +28,7 @@ class VideoSubTaskRead(BaseModel):
     dimension_scores: dict | None = None
     weighted_total_score: float | None = None
     queue_order: int | None = None
+    publish_meta: dict | None = None   # {"status": "pending"|"generating"|"done"|"failed", "title": "...", "description": "...", "hashtags": [...]}
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
