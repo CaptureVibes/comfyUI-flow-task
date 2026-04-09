@@ -78,6 +78,27 @@ class VideoSubTaskListPage(BaseModel):
     page_size: int
 
 
+class TaskSummaryForSub(BaseModel):
+    id: uuid.UUID
+    target_date: date
+    prompt: str
+    template_title: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VideoSubTaskWithTaskRead(VideoSubTaskRead):
+    """Sub-task enriched with parent task info, for AccountDetailView per-tab pagination."""
+    task: TaskSummaryForSub
+
+
+class VideoSubTaskWithTaskPage(BaseModel):
+    items: list[VideoSubTaskWithTaskRead]
+    total: int
+    page: int
+    page_size: int
+
+
 class VideoSubTaskStatusUpdate(BaseModel):
     status: str
     result_video_url: str | None = None

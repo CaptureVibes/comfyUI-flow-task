@@ -126,6 +126,18 @@ export async function fetchReviewingSubtasks(page = 1, pageSize = 20) {
   return data
 }
 
+export async function fetchSubtasksByAccount(accountId, { status, page = 1, pageSize = 20 } = {}) {
+  const params = { account_id: accountId, page, page_size: pageSize }
+  if (status) params.status = status
+  const { data } = await http.get('/video-tasks/subtasks/by-account', { params })
+  return data  // { items, total, page, page_size }
+}
+
+export async function fetchSubtaskCountsByAccount(accountId) {
+  const { data } = await http.get('/video-tasks/subtasks/by-account/counts', { params: { account_id: accountId } })
+  return data  // { pending_publish: N, queued: N, ... }
+}
+
 export async function batchRouteStashed(targetDate) {
   const { data } = await http.post(`/video-tasks/daily/${targetDate}/route-stashed`)
   return data

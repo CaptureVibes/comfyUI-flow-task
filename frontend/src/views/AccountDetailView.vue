@@ -140,12 +140,12 @@
           :key="tab.key"
           class="ad-tab"
           :class="{ active: activeTab === tab.key, 'ad-tab-fail': tab.key === 'publish_failed', 'ad-tab-queue': tab.key === 'queued' }"
-          @click="activeTab = tab.key"
+          @click="switchTab(tab.key)"
         >
           {{ tab.label }}
           <span v-if="tabCounts[tab.key]" class="ad-tab-count" :class="{ 'ad-tab-count-fail': tab.key === 'publish_failed', 'ad-tab-count-queue': tab.key === 'queued' }">{{ tabCounts[tab.key] }}</span>
         </button>
-        <button class="ad-refresh-btn" :disabled="tasksLoading" @click="loadTasks">
+        <button class="ad-refresh-btn" :disabled="tasksLoading" @click="loadTab">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" :class="{ spinning: tasksLoading }"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
           刷新
         </button>
@@ -349,6 +349,13 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- 分页 -->
+      <div v-if="tabTotal > tabPageSize" class="ad-pagination">
+        <button class="ad-pg-btn" :disabled="tabPage <= 1" @click="goTabPage(tabPage - 1)">‹</button>
+        <span class="ad-pg-info">{{ tabPage }} / {{ Math.ceil(tabTotal / tabPageSize) }}</span>
+        <button class="ad-pg-btn" :disabled="tabPage >= Math.ceil(tabTotal / tabPageSize)" @click="goTabPage(tabPage + 1)">›</button>
       </div>
     </template>
 
@@ -627,7 +634,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish } from '../api/accounts'
-import { fetchAccountVideoTasks, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask } from '../api/video_tasks'
+import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask } from '../api/video_tasks'
 import { fetchSubTaskPublications, fetchUploadMetrics } from '../api/video_publications'
 import http from '../api/http'
 
@@ -669,7 +676,11 @@ const EMPTY_TEXTS = {
 
 const loading = ref(false)
 const account = ref(null)
-const tasks = ref([])
+const tabSubTasks = ref([])   // current tab's sub_tasks (with task info)
+const tabTotal = ref(0)
+const tabPage = ref(1)
+const tabPageSize = 20
+const tabCounts = ref({})
 const tasksLoading = ref(false)
 const activeTab = ref('pending_publish')
 const rollbacking = ref(null)
@@ -704,48 +715,10 @@ const metricsLoading = ref(false)
 const metricsData = ref(null)
 const metricsTitle = ref('')
 
-// Flatten all sub-tasks with parent task reference
-const allSubTasks = computed(() => {
-  const result = []
-  for (const task of tasks.value) {
-    for (const sub of (task.sub_tasks || [])) {
-      if (sub.status !== 'abandoned') {
-        result.push({ task, sub })
-      }
-    }
-  }
-  return result
-})
-
-const filteredSubTasks = computed(() => {
-  const items = allSubTasks.value.filter(item => item.sub.status === activeTab.value)
-  // 待发布按分数从高到低排序
-  if (activeTab.value === 'pending_publish') {
-    return [...items].sort((a, b) => {
-      const aScore = a.sub.ai_score ?? -1
-      const bScore = b.sub.ai_score ?? -1
-      return bScore - aScore
-    })
-  }
-  // 发布队列只按 queue_order 手动排序
-  if (activeTab.value === 'queued') {
-    return [...items].sort((a, b) => {
-      const aOrder = a.sub.queue_order ?? 99999
-      const bOrder = b.sub.queue_order ?? 99999
-      return aOrder - bOrder
-    })
-  }
-  return items
-})
-
-const tabCounts = computed(() => {
-  const counts = { pending_publish: 0, queued: 0, publishing: 0, publish_failed: 0, published: 0, generating: 0, pending: 0, all: 0 }
-  for (const { sub } of allSubTasks.value) {
-    if (counts[sub.status] !== undefined) counts[sub.status]++
-    counts.all++
-  }
-  return counts
-})
+// filteredSubTasks: 直接用当前 tab 从接口拿到的数据，格式 { task, sub }
+const filteredSubTasks = computed(() =>
+  tabSubTasks.value.map(item => ({ task: item.task, sub: item }))
+)
 
 const emptyText = computed(() => EMPTY_TEXTS[activeTab.value] || '暂无内容')
 
@@ -934,7 +907,7 @@ async function handleRetryPublish(_task, sub) {
     await patchSubTaskStatus(sub.id, { status: 'pending_publish' })
     ElMessage.success('已重置为待发布')
     activeTab.value = 'pending_publish'
-    await loadTasks()
+    // watch(activeTab) triggers loadTab
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '重置失败')
   } finally {
@@ -949,7 +922,7 @@ async function handleEnqueue(sub) {
     await enqueueSubTask(sub.id)
     ElMessage.success('已加入发布队列')
     activeTab.value = 'queued'
-    await loadTasks()
+    // watch(activeTab) triggers loadTab
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   } finally {
@@ -973,8 +946,8 @@ async function handleDequeue(sub) {
 
 // 加载已发布视频的渠道状态
 async function loadPublishedPublications() {
-  const publishedSubs = allSubTasks.value.filter(({ sub }) => sub.status === 'published')
-  for (const { sub } of publishedSubs) {
+  for (const item of tabSubTasks.value) {
+    const sub = item
     if (!publicationsMap.value[sub.id]) {
       try {
         const pubs = await fetchSubTaskPublications(sub.id)
@@ -1007,10 +980,9 @@ async function openMetrics(sub, taskTitle) {
   }
 }
 
-watch(activeTab, (tab) => {
-  if (tab === 'published') {
-    loadPublishedPublications()
-  }
+watch(activeTab, () => {
+  tabPage.value = 1
+  loadTab()
 })
 
 watch(showAIDialog, (visible) => {
@@ -1029,11 +1001,16 @@ async function loadAccount() {
   }
 }
 
-async function loadTasks() {
+async function loadTab() {
   tasksLoading.value = true
   try {
-    tasks.value = await fetchAccountVideoTasks(route.params.id)
-    // 如果当前在已发布 tab，重新加载渠道状态
+    const [pageData, counts] = await Promise.all([
+      fetchSubtasksByAccount(route.params.id, { status: activeTab.value, page: tabPage.value, pageSize: tabPageSize }),
+      fetchSubtaskCountsByAccount(route.params.id),
+    ])
+    tabSubTasks.value = pageData.items
+    tabTotal.value = pageData.total
+    tabCounts.value = counts
     if (activeTab.value === 'published') {
       publicationsMap.value = {}
       loadPublishedPublications()
@@ -1043,6 +1020,21 @@ async function loadTasks() {
   } finally {
     tasksLoading.value = false
   }
+}
+
+async function loadTasks() {
+  tabPage.value = 1
+  await loadTab()
+}
+
+function goTabPage(page) {
+  tabPage.value = page
+  loadTab()
+}
+
+function switchTab(key) {
+  activeTab.value = key
+  // watch(activeTab) 会触发 loadTab
 }
 
 async function handleDeleteSubTask(_task, sub) {
@@ -1107,19 +1099,17 @@ async function onDrop(_event) {
   if (draggingIndex.value === dragOverIndex.value) return
 
   // Reorder locally
-  const items = [...filteredSubTasks.value]
+  const items = [...tabSubTasks.value]
   const [moved] = items.splice(draggingIndex.value, 1)
   items.splice(dragOverIndex.value, 0, moved)
+  tabSubTasks.value = items
 
-  // Persist new order: PATCH queue_order for each item via sub-task status endpoint
-  // We use a dedicated endpoint: PATCH /video-tasks/subtasks/{id}/queue-order
-  // For now call the backend with the new order list
   try {
-    const orderPayload = items.map((item, idx) => ({ id: item.sub.id, queue_order: idx + 1 }))
+    const orderPayload = items.map((item, idx) => ({ id: item.id, queue_order: idx + 1 }))
     await http.patch('/video-tasks/subtasks/queue-order', orderPayload)
-    await loadTasks()
   } catch (e) {
     ElMessage.error('保存排序失败：' + (e?.response?.data?.detail || e.message))
+    await loadTab()  // 失败时重新拉取恢复真实顺序
   }
 }
 
@@ -1542,6 +1532,20 @@ onUnmounted(() => {
 }
 .ad-refresh-btn:hover:not(:disabled) { color: #6366f1; border-color: #c7d2fe; background: #eef2ff; }
 .ad-refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Pagination */
+.ad-pagination {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 16px 0 4px;
+}
+.ad-pg-btn {
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid #e2e8f0;
+  background: #f8fafc; color: #374151; font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.ad-pg-btn:hover:not(:disabled) { border-color: #6366f1; color: #6366f1; background: #eef2ff; }
+.ad-pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ad-pg-info { font-size: 13px; color: #64748b; min-width: 60px; text-align: center; }
 
 /* Queue hint */
 .ad-queue-hint {

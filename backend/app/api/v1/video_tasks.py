@@ -20,6 +20,8 @@ from app.schemas.video_task import (
     VideoSubTaskNoteUpdate,
     VideoSubTaskRead,
     VideoSubTaskStatusUpdate,
+    VideoSubTaskWithTaskPage,
+    VideoSubTaskWithTaskRead,
     VideoTaskCreate,
     VideoTaskDetailRead,
     VideoTaskListItem,
@@ -292,6 +294,104 @@ async def list_reviewing_subtasks(
         page=page,
         page_size=page_size,
     )
+
+@router.get("/subtasks/by-account", response_model=VideoSubTaskWithTaskPage)
+async def list_subtasks_by_account(
+    account_id: uuid.UUID = Query(...),
+    status: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """按账号+子任务状态分页查询 sub_tasks，附带父任务摘要信息。供 AccountDetailView 各 tab 独立分页使用。"""
+    from sqlalchemy import func, select
+    from app.models.video_task import VideoSubTask, VideoTask
+    from app.models.video_ai_template import VideoAITemplate
+    from app.schemas.video_task import TaskSummaryForSub
+
+    base = (
+        select(VideoSubTask)
+        .join(VideoTask, VideoSubTask.task_id == VideoTask.id)
+        .where(VideoTask.account_id == account_id)
+        .where(VideoSubTask.status != "abandoned")
+    )
+    if owner_id is not None:
+        base = base.where(VideoTask.owner_id == owner_id)
+    if status:
+        base = base.where(VideoSubTask.status == status)
+
+    # queued 按 queue_order 排序；其他按创建时间倒序
+    if status == "queued":
+        base = base.order_by(VideoSubTask.queue_order.asc().nulls_last())
+    elif status == "pending_publish":
+        base = base.order_by(VideoSubTask.weighted_total_score.desc().nulls_last())
+    else:
+        base = base.order_by(VideoSubTask.created_at.desc())
+
+    total: int = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    rows = (await session.execute(base.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+
+    # Batch-load parent tasks
+    task_ids = list({s.task_id for s in rows})
+    task_map: dict[uuid.UUID, VideoTask] = {}
+    if task_ids:
+        tpl_map: dict[uuid.UUID, str] = {}
+        tasks_rows = (await session.execute(select(VideoTask).where(VideoTask.id.in_(task_ids)))).scalars().all()
+        tpl_ids = list({t.template_id for t in tasks_rows if t.template_id})
+        if tpl_ids:
+            for tpl_id, title in (await session.execute(
+                select(VideoAITemplate.id, VideoAITemplate.title).where(VideoAITemplate.id.in_(tpl_ids))
+            )).all():
+                tpl_map[tpl_id] = title
+        for t in tasks_rows:
+            task_map[t.id] = t
+            t._template_title = tpl_map.get(t.template_id)  # type: ignore[attr-defined]
+
+    items = []
+    for sub in rows:
+        task = task_map.get(sub.task_id)
+        task_summary = TaskSummaryForSub(
+            id=task.id,
+            target_date=task.target_date,
+            prompt=task.prompt,
+            template_title=getattr(task, "_template_title", None),
+        ) if task else None
+        if task_summary is None:
+            continue
+        item = VideoSubTaskWithTaskRead(
+            **VideoSubTaskRead.model_validate(sub).model_dump(),
+            task=task_summary,
+        )
+        items.append(item)
+
+    return VideoSubTaskWithTaskPage(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/subtasks/by-account/counts", response_model=dict[str, int])
+async def count_subtasks_by_account(
+    account_id: uuid.UUID = Query(...),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """返回指定账号各 sub_task status 的数量（排除 abandoned）。"""
+    from sqlalchemy import func, select
+    from app.models.video_task import VideoSubTask, VideoTask
+
+    stmt = (
+        select(VideoSubTask.status, func.count(VideoSubTask.id).label("cnt"))
+        .join(VideoTask, VideoSubTask.task_id == VideoTask.id)
+        .where(VideoTask.account_id == account_id)
+        .where(VideoSubTask.status != "abandoned")
+        .group_by(VideoSubTask.status)
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoTask.owner_id == owner_id)
+
+    rows = (await session.execute(stmt)).all()
+    return {row.status: row.cnt for row in rows}
+
 
 @router.post("/daily/{target_date}/route-stashed", status_code=202)
 async def batch_route_stashed(
