@@ -130,6 +130,7 @@ class VideoTaskService:
         shots: list | None,
         user_id: uuid.UUID,
         target_date: date | None = None,
+        subtask_count: int = SUBTASK_COUNT,
     ) -> VideoTask:
         if target_date is None:
             target_date = date.today() + timedelta(days=1)
@@ -163,7 +164,7 @@ class VideoTaskService:
         if tpl and not tpl.is_used:
             tpl.is_used = True
 
-        for i in range(1, SUBTASK_COUNT + 1):
+        for i in range(1, subtask_count + 1):
             sub = VideoSubTask(
                 task_id=task.id,
                 sub_index=i,

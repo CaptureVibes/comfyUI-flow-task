@@ -689,8 +689,9 @@ class SupplementTemplatesBody(BaseModel):
 
 class BulkGenerateVideoTasksBody(BaseModel):
     account_ids: list[uuid.UUID]
-    mode: str = "unused"   # "unused" | "used"
-    limit: int = 0         # 每账号最多使用模板数，0 = 不限制
+    mode: str = "unused"         # "unused" | "used"
+    limit: int = 0               # 每账号最多使用模板数，0 = 不限制
+    subtask_count: int = 3       # 每个任务创建的子任务数量
 
 
 @router.post("/bulk-generate-video-tasks", status_code=200)
@@ -811,6 +812,7 @@ async def bulk_generate_video_tasks(
                         duration=duration,
                         shots=shots,
                         user_id=current_user.user_id,
+                        subtask_count=body.subtask_count,
                     )
                     total_created += 1
                 except Exception:

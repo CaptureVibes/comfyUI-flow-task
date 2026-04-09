@@ -311,6 +311,16 @@
             <span class="al-supplement-num-hint">个</span>
           </div>
         </div>
+        <!-- 子任务数量配置 -->
+        <div class="al-supplement-config">
+          <div class="al-supplement-config-label">每个任务生成子任务数</div>
+          <div class="al-supplement-config-row">
+            <button class="al-supplement-minus" @click="bulkGenForm.subtaskCount = Math.max(1, bulkGenForm.subtaskCount - 1)">−</button>
+            <span class="al-supplement-num">{{ bulkGenForm.subtaskCount }}</span>
+            <button class="al-supplement-plus" @click="bulkGenForm.subtaskCount = Math.min(20, bulkGenForm.subtaskCount + 1)">+</button>
+            <span class="al-supplement-num-hint">个</span>
+          </div>
+        </div>
       </div>
       <template #footer>
         <el-button @click="showBulkGenDialog = false">取消</el-button>
@@ -343,17 +353,18 @@
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             </div>
             <div class="al-supplement-type-name">补充共享</div>
-            <div class="al-supplement-type-desc">以标签名搜索视频，导入到公共库</div>
+            <div class="al-supplement-type-desc">以标签名搜索视频</div>
           </button>
           <button
-            class="al-supplement-type-card is-disabled"
-            @click="ElMessage.info('补充独享功能正在开发中...')"
+            class="al-supplement-type-card"
+            :class="{ active: supplementForm.templateType === 'exclusive' }"
+            @click="supplementForm.templateType = 'exclusive'"
           >
             <div class="al-supplement-type-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </div>
-            <div class="al-supplement-type-name">补充独享</div>
-            <div class="al-supplement-type-desc">即将推出</div>
+            <div class="al-supplement-type-name">补充人设</div>
+            <div class="al-supplement-type-desc">搜索绑定博主的视频</div>
           </button>
         </div>
         <!-- 数量配置 -->
@@ -1321,12 +1332,12 @@ async function handleDelete(item) {
 const bulkVideoGenerating = ref(false)
 const bulkVideoGenProgress = ref({ current: 0, total: 0 })
 const showBulkGenDialog = ref(false)
-const bulkGenForm = ref({ mode: 'unused', limit: 0 })
+const bulkGenForm = ref({ mode: 'unused', limit: 0, subtaskCount: 3 })
 
 
 function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
-  bulkGenForm.value = { mode: 'unused', limit: 0 }
+  bulkGenForm.value = { mode: 'unused', limit: 0, subtaskCount: 3 }
   showBulkGenDialog.value = true
 }
 
@@ -1351,7 +1362,7 @@ async function startBulkVideoGenerate() {
       return
     }
 
-    const result = await bulkGenerateVideoTasks(accountIds, mode, limit)
+    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount)
     const skipMsg = result.skipped > 0 ? `，${result.skipped} 个账号跳过` : ''
     const failMsg = result.failed > 0 ? `，${result.failed} 个失败` : ''
     ElMessage.success(`已创建 ${result.created} 个生成任务${failMsg}${skipMsg}`)
@@ -1457,10 +1468,6 @@ function openSupplementDialog() {
 
 async function handleSupplement() {
   if (supplementing.value) return
-  if (supplementForm.value.templateType !== 'shared') {
-    ElMessage.info('补充独享功能正在开发中...')
-    return
-  }
   supplementing.value = true
 
   const isSelection = selectedMap.value.size > 0

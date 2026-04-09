@@ -1275,7 +1275,9 @@ async def supplement_templates_for_account(
     """
     from app.db.session import SessionLocal
     from app.models.account_tag import AccountTag
+    from app.models.account_blogger_binding import AccountBloggerBinding
     from app.models.tag import Tag
+    from app.models.tiktok_blogger import TiktokBlogger
     from app.models.video_source import VideoSource
     from app.models.video_ai_template import VideoAITemplate
     from app.models.enums import VideoAIProcessStatus
@@ -1286,21 +1288,38 @@ async def supplement_templates_for_account(
         trigger_download_and_upload,
     )
 
-    async with SessionLocal() as session:
-        stmt = (
-            select(Tag.name)
-            .join(AccountTag, AccountTag.tag_id == Tag.id)
-            .where(AccountTag.account_id == account_id)
-            .order_by(AccountTag.created_at.asc())
-            .limit(1)
-        )
-        tag_name: str | None = await session.scalar(stmt)
-
-    if not tag_name:
-        logger.warning("【补充模板】account_id=%s 无绑定标签，跳过", account_id)
-        return {"account_id": str(account_id), "keyword": None, "imported": 0, "skipped": 0}
-
-    logger.info("【补充模板】account_id=%s keyword=%s template_type=%s 开始", account_id, tag_name, template_type)
+    # shared 模式：通过绑定标签的名称作为关键词搜索
+    # exclusive 模式：通过绑定的 tiktok 博主 handle 搜索该博主的视频
+    if template_type == "exclusive":
+        async with SessionLocal() as session:
+            blogger_handle: str | None = await session.scalar(
+                select(TiktokBlogger.blogger_handle)
+                .join(AccountBloggerBinding, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
+                .where(AccountBloggerBinding.account_id == account_id)
+                .where(TiktokBlogger.blogger_handle.is_not(None))
+                .order_by(AccountBloggerBinding.created_at.asc())
+                .limit(1)
+            )
+        if not blogger_handle:
+            logger.warning("【补充模板】account_id=%s exclusive 模式但无绑定博主 handle，跳过", account_id)
+            return {"account_id": str(account_id), "keyword": None, "imported": 0, "skipped": 0}
+        search_keyword = blogger_handle
+        logger.info("【补充模板】account_id=%s blogger_handle=%s template_type=exclusive 开始", account_id, blogger_handle)
+    else:
+        async with SessionLocal() as session:
+            stmt = (
+                select(Tag.name)
+                .join(AccountTag, AccountTag.tag_id == Tag.id)
+                .where(AccountTag.account_id == account_id)
+                .order_by(AccountTag.created_at.asc())
+                .limit(1)
+            )
+            tag_name: str | None = await session.scalar(stmt)
+        if not tag_name:
+            logger.warning("【补充模板】account_id=%s 无绑定标签，跳过", account_id)
+            return {"account_id": str(account_id), "keyword": None, "imported": 0, "skipped": 0}
+        search_keyword = tag_name
+        logger.info("【补充模板】account_id=%s keyword=%s template_type=shared 开始", account_id, tag_name)
 
     imported = 0
     skipped = 0
@@ -1318,13 +1337,20 @@ async def supplement_templates_for_account(
             prev_seen = len(seen_urls)
 
             try:
-                videos = await asyncio.to_thread(
-                    apify.search,
-                    search_queries=[tag_name],
-                    results_per_page=results_per_page,
-                )
+                if template_type == "exclusive":
+                    videos = await asyncio.to_thread(
+                        apify.search,
+                        profiles=[search_keyword],
+                        results_per_page=results_per_page,
+                    )
+                else:
+                    videos = await asyncio.to_thread(
+                        apify.search,
+                        search_queries=[search_keyword],
+                        results_per_page=results_per_page,
+                    )
             except Exception as exc:
-                logger.warning("【补充模板】Apify搜索失败 keyword=%s round=%d: %s", tag_name, round_num, exc)
+                logger.warning("【补充模板】Apify搜索失败 keyword=%s round=%d: %s", search_keyword, round_num, exc)
                 break
 
             # 过滤已见过 / 已尝试过的，web_video_url 去重
@@ -1336,12 +1362,12 @@ async def supplement_templates_for_account(
                 seen_urls.add(url)
                 batch_urls.append(url)
 
-            logger.info("【补充模板】第%d轮搜索 keyword=%s 新URL=%d条", round_num, tag_name, len(batch_urls))
+            logger.info("【补充模板】第%d轮搜索 keyword=%s 新URL=%d条", round_num, search_keyword, len(batch_urls))
 
             if not batch_urls:
                 # 连续一轮无新 URL，停止
                 if len(seen_urls) == prev_seen:
-                    logger.info("【补充模板】连续一轮无新URL，停止 keyword=%s imported=%d", tag_name, imported)
+                    logger.info("【补充模板】连续一轮无新URL，停止 keyword=%s imported=%d", search_keyword, imported)
                     break
                 continue
 
@@ -1427,7 +1453,7 @@ async def supplement_templates_for_account(
                     tpl_id=tpl_id,
                     owner_id=owner_id,
                     blogger_name=None,
-                    keyword_text=tag_name,
+                    keyword_text=search_keyword,
                     template_type=template_type,
                 )
             )
@@ -1438,8 +1464,8 @@ async def supplement_templates_for_account(
             # 导入失败：记录日志，继续尝试下一个
             logger.warning("【补充模板】导入失败，继续搜索下一个 video_url=%s: %s", video_url, exc)
 
-    logger.info("【补充模板】account_id=%s keyword=%s 完成：导入=%d 跳过=%d", account_id, tag_name, imported, skipped)
-    return {"account_id": str(account_id), "keyword": tag_name, "imported": imported, "skipped": skipped}
+    logger.info("【补充模板】account_id=%s keyword=%s 完成：导入=%d 跳过=%d", account_id, search_keyword, imported, skipped)
+    return {"account_id": str(account_id), "keyword": search_keyword, "imported": imported, "skipped": skipped}
 
 
 async def supplement_templates_for_accounts(
