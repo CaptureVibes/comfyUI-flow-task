@@ -444,7 +444,7 @@ class VideoTaskService:
         json_data = json.dumps(payload, ensure_ascii=False, indent=2)
 
         blob = self.bucket.blob(object_key)
-        blob.upload_from_string(json_data, content_type="application/json")
+        await asyncio.to_thread(blob.upload_from_string, json_data, content_type="application/json")
         logger.info(f"Uploaded {len(payload)} sub-task entries to gs://{self.bucket_name}/{object_key}")
 
         await self.db.commit()
