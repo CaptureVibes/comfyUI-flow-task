@@ -416,7 +416,17 @@ class VideoTaskService:
         Each sub-task gets one entry in the payload using its UUID as video_id.
         Returns (gcs_url, task_count, subtask_count).
         """
-        tasks, _ = await self.get_tasks(target_date, owner_id, status_filter="pending")
+        # 必须 eager load sub_tasks，否则访问 task.sub_tasks 触发懒加载导致 greenlet 错误
+        q = (
+            select(VideoTask)
+            .where(VideoTask.target_date == target_date)
+            .where(VideoTask.status == "pending")
+            .options(selectinload(VideoTask.sub_tasks))
+            .order_by(VideoTask.created_at.desc())
+        )
+        if owner_id is not None:
+            q = q.where(VideoTask.owner_id == owner_id)
+        tasks = list((await self.db.execute(q)).scalars().all())
         if not tasks:
             raise ValueError(f"No pending tasks found for {target_date}")
 
@@ -483,8 +493,16 @@ class VideoTaskService:
         Uploads are processed concurrently. Successfully uploaded videos are then enqueued
         into the background AI scoring queue.
         """
-        # Fetch all tasks for the date (regardless of parent status) and filter by sub-task status
-        tasks, _ = await self.get_tasks(target_date, owner_id)
+        # 必须 eager load sub_tasks，否则访问 task.sub_tasks 触发懒加载导致 greenlet 错误
+        q = (
+            select(VideoTask)
+            .where(VideoTask.target_date == target_date)
+            .options(selectinload(VideoTask.sub_tasks))
+            .order_by(VideoTask.created_at.desc())
+        )
+        if owner_id is not None:
+            q = q.where(VideoTask.owner_id == owner_id)
+        tasks = list((await self.db.execute(q)).scalars().all())
         valid_tasks = [t for t in tasks if any(s.status == "generating" for s in t.sub_tasks)]
         if not valid_tasks:
             return {"updated": 0, "skipped": 0, "errors": [], "message": f"当天没有 generating 状态的子任务"}
