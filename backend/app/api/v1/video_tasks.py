@@ -106,7 +106,7 @@ async def list_video_tasks(
     status: str | None = Query(default=None),
     tiktok_blogger_id: uuid.UUID | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=9999),
     owner_id: uuid.UUID | None = Depends(_resolve_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> Any:

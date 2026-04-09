@@ -18,7 +18,7 @@ export async function fetchVideoTasks(dateStr, { accountId, status, tiktokBlogge
   return data  // { items, total, page, page_size }
 }
 
-export async function fetchAccountVideoTasks(accountId, { status, page = 1, pageSize = 100 } = {}) {
+export async function fetchAccountVideoTasks(accountId, { status, page = 1, pageSize = 9999 } = {}) {
   const params = { account_id: accountId, page, page_size: pageSize }
   if (status) params.status = status
   const { data } = await http.get('/video-tasks', { params })
