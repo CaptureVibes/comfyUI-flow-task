@@ -551,6 +551,25 @@ async def bulk_generate_ai_bloggers(
         session.add(account)
         await session.flush()
         session.add(AccountTag(account_id=account.id, tag_id=tag.id))
+
+        # 通过 tag → video_source_tags → video_sources 找到 tiktok_blogger_id 并绑定
+        from app.models.video_source import VideoSource as _VS
+        blogger_id_row = (
+            await session.execute(
+                select(_VS.tiktok_blogger_id)
+                .join(VideoSourceTag, VideoSourceTag.video_source_id == _VS.id)
+                .where(VideoSourceTag.tag_id == tag.id)
+                .where(VideoSourceTag.video_source_id.is_not(None))
+                .where(_VS.tiktok_blogger_id.is_not(None))
+                .limit(1)
+            )
+        ).first()
+        if blogger_id_row:
+            session.add(AccountBloggerBinding(
+                account_id=account.id,
+                tiktok_blogger_id=blogger_id_row[0],
+            ))
+
         created_accounts.append(account)
         created_tag_ids.append(str(tag.id))
 
