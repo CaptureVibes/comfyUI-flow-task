@@ -318,9 +318,10 @@ async def _ai_review_single(
     # 下载视频并上传到 CDN，获取可供 Gemini 访问的 URL
     cdn_url = await _download_and_upload_video(video_url)
 
-    while True:
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
         try:
-            logger.info("【候选库AI审核】model=%s video=%s", model, cdn_url[:80])
+            logger.info("【候选库AI审核】attempt=%d/%d model=%s video=%s", attempt, max_attempts, model, cdn_url[:80])
             text = await call_gemini_api(
                 model_name=model,
                 video_url=cdn_url,
@@ -344,7 +345,10 @@ async def _ai_review_single(
             return passed
 
         except Exception as exc:
-            logger.warning("【候选库AI审核】请求异常，%.0fs后重试: %s", retry_delay, exc)
+            if attempt >= max_attempts:
+                logger.error("【候选库AI审核】已达最大重试次数 %d，放弃: %s", max_attempts, exc)
+                raise
+            logger.warning("【候选库AI审核】请求异常，%.0fs后重试 (%d/%d): %s", retry_delay, attempt, max_attempts, exc)
             await asyncio.sleep(retry_delay)
 
 
