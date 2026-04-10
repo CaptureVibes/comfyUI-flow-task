@@ -291,13 +291,17 @@ async def _publish_sub_task(
     original_video_url = sub.result_video_url
 
     # ── 拼接 logo 视频（traffic / persona 各用不同 logo）────────────────────
-    try:
-        from app.services.video_logo_service import concat_video_with_logo
-        logger.info("【定时发布】子任务 %s（账号：%s, %s）开始拼接 logo", sub_task_id, account_name, account_type)
-        publish_video_url = await concat_video_with_logo(original_video_url, account_type=account_type)
-        logger.info("【定时发布】子任务 %s logo 拼接完成: %s", sub_task_id, publish_video_url[:100])
-    except Exception:
-        logger.exception("【定时发布】子任务 %s logo 拼接失败，使用原视频发布", sub_task_id)
+    # 改为 if True 即可开启
+    if False:
+        try:
+            from app.services.video_logo_service import concat_video_with_logo
+            logger.info("【定时发布】子任务 %s（账号：%s, %s）开始拼接 logo", sub_task_id, account_name, account_type)
+            publish_video_url = await concat_video_with_logo(original_video_url, account_type=account_type)
+            logger.info("【定时发布】子任务 %s logo 拼接完成: %s", sub_task_id, publish_video_url[:100])
+        except Exception:
+            logger.exception("【定时发布】子任务 %s logo 拼接失败，使用原视频发布", sub_task_id)
+            publish_video_url = original_video_url
+    else:
         publish_video_url = original_video_url
 
     # ── 优先使用预生成的 publish_meta，否则实时 AI 生成 ──────────────────────
