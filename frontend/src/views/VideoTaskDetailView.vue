@@ -618,6 +618,7 @@ async function handleSaveNote(sub) {
     const dims = dimensionScores.value[sub.id] || {}
     const timestamps = ngTimestampsList.value[sub.id] || []
     const payload = {
+      status: 'stashed',
       manual_note: manualNotes.value[sub.id] || null,
       has_ng: hasNgFlags.value[sub.id] ?? null,
       ng_timestamps: timestamps.length > 0 ? timestamps : null,
@@ -699,7 +700,7 @@ function onPublishSuccess() {
 async function handleReject(sub) {
   rejecting.value = sub.id
   try {
-    await patchSubTaskStatus(sub.id, { status: 'decision_rejected' })
+    await saveSubTaskNote(sub.id, { status: 'decision_rejected' })
     ElMessage.success('已标记为决策未通过')
     await loadTask()
   } catch (e) {

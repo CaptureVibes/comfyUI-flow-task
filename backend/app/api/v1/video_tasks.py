@@ -469,6 +469,7 @@ async def update_sub_task_note(
         sub_task_id,
         owner_id,
         operator=operator,
+        target_status=payload.status,
         manual_note=payload.manual_note,
         has_ng=payload.has_ng,
         ng_timestamps=payload.ng_timestamps,

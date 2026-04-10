@@ -622,6 +622,7 @@ class VideoTaskService:
         sub_task_id: uuid.UUID,
         owner_id: uuid.UUID | None,
         operator: str,
+        target_status: str = "stashed",
         manual_note: str | None = None,
         has_ng: bool | None = None,
         ng_timestamps: list | None = None,
@@ -666,8 +667,10 @@ class VideoTaskService:
                     total += (score / 5) * weight
             sub.weighted_total_score = round(total, 1)
 
-        # Transition: reviewing → stashed (batch routing happens separately)
-        sub.status = "stashed"
+        # Transition: reviewing → stashed / decision_rejected
+        if target_status not in ("stashed", "decision_rejected"):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"不支持的目标状态: {target_status}")
+        sub.status = target_status
         sub.task.status = _compute_parent_status(sub.task.sub_tasks)
 
         await self.db.commit()

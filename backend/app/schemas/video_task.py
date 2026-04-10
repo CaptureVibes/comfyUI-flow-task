@@ -109,6 +109,7 @@ class VideoSubTaskStatusUpdate(BaseModel):
 
 class VideoSubTaskNoteUpdate(BaseModel):
     operator: str | None = None  # 无 token 时必须传；有 token 时忽略（取登录用户名）
+    status: str = "stashed"      # 目标状态：stashed（通过）或 decision_rejected（决策未通过）
     manual_note: str | None = None
     has_ng: bool | None = None
     ng_timestamps: list | None = None   # [{"second": 10, "frame": 5}, ...]
