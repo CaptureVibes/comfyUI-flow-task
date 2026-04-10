@@ -69,24 +69,32 @@ async def stop_lark_notify_scheduler() -> None:
 # ── 主循环 ───────────────────────────────────────────────────────────────────
 
 async def _scheduler_loop(stop_event: asyncio.Event) -> None:
-    last_triggered_date: date | None = None
     try:
         while not stop_event.is_set():
             now_utc = datetime.now(timezone.utc)
-            today = now_utc.date()
 
-            # 当前小时 == 触发小时，且今天还没触发过
-            if now_utc.hour == _NOTIFY_HOUR_UTC and last_triggered_date != today:
-                last_triggered_date = today
-                try:
-                    await _send_daily_report()
-                except Exception:
-                    logger.exception("【Lark通知】发送日报失败")
+            # 计算距离下一次触发时间（今天或明天的 _NOTIFY_HOUR_UTC:00 UTC）
+            next_trigger = now_utc.replace(hour=_NOTIFY_HOUR_UTC, minute=0, second=0, microsecond=0)
+            if now_utc >= next_trigger:
+                next_trigger += timedelta(days=1)
 
+            wait_seconds = (next_trigger - now_utc).total_seconds()
+            logger.info("【Lark通知】下次发送时间: %s（%.0f 秒后）", next_trigger.isoformat(), wait_seconds)
+
+            # 等到下次触发时间，期间可被 stop_event 打断
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=_POLL_INTERVAL)
+                await asyncio.wait_for(stop_event.wait(), timeout=wait_seconds)
+                # stop_event 被 set，退出
+                break
             except asyncio.TimeoutError:
                 pass
+
+            # 发送日报
+            try:
+                await _send_daily_report()
+            except Exception:
+                logger.exception("【Lark通知】发送日报失败")
+
     except asyncio.CancelledError:
         raise
 
