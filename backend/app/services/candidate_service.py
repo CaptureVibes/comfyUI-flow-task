@@ -318,7 +318,7 @@ async def _ai_review_single(
     # 下载视频并上传到 CDN，获取可供 Gemini 访问的 URL
     cdn_url = await _download_and_upload_video(video_url)
 
-    max_attempts = 3
+    max_attempts = 1
     for attempt in range(1, max_attempts + 1):
         try:
             logger.info("【候选库AI审核】attempt=%d/%d model=%s video=%s", attempt, max_attempts, model, cdn_url[:80])
