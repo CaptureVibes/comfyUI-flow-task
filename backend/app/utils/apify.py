@@ -307,11 +307,19 @@ class TikTokApifyClient:
             if filter_params.max_digg is not None:
                 run_input["mostDiggs"] = filter_params.max_digg
 
+        import logging
+        logger = logging.getLogger("app.apify")
+        logger.info(
+            "Apify search 开始: profiles=%s queries=%s hashtags=%s results_per_page=%d",
+            profiles, search_queries, hashtags, results_per_page,
+        )
+
         # 执行 actor
         run = self._client.actor(ACTOR_ID).call(run_input=run_input)
         raw_items = list(
             self._client.dataset(run["defaultDatasetId"]).iterate_items()
         )
+        logger.info("Apify search 完成: 原始结果 %d 条", len(raw_items))
 
         # 反序列化
         videos = [TikTokVideo.from_dict(item) for item in raw_items]
@@ -319,6 +327,7 @@ class TikTokApifyClient:
         # 客户端二次过滤 + 排序
         if filter_params:
             videos = self._apply_filter(videos, filter_params)
+            logger.info("Apify search 过滤后: %d 条", len(videos))
 
         return videos
 
