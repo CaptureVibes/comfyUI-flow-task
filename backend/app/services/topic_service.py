@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.db.session import SessionLocal
 from app.models.pipeline_setting import PipelineSetting
 from app.models.topic import Keyword, MotherKeyword, Topic
+from app.services.ai_api import call_gemini_api
 
 logger = logging.getLogger("app.topics")
 
