@@ -56,7 +56,7 @@ async def call_google_gemini_api(
     )
 
     attempt = 0
-    max_attempts = 10
+    max_attempts = 3
     while attempt < max_attempts:
         attempt += 1
         try:
