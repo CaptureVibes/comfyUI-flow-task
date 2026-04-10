@@ -56,7 +56,8 @@ async def call_google_gemini_api(
     )
 
     attempt = 0
-    while True:
+    max_attempts = 10
+    while attempt < max_attempts:
         attempt += 1
         try:
             response = await client.aio.models.generate_content(
@@ -79,8 +80,11 @@ async def call_google_gemini_api(
                     model_name, video_url, prompt[:300], exc,
                 )
                 raise
+            if attempt >= max_attempts:
+                logger.error("Google SDK text 已达最大重试次数 %d，放弃: model=%s %s", max_attempts, model_name, exc)
+                raise
             delay = min(attempt * 2, 30)
-            logger.warning("Google SDK text attempt %d failed (%ds后重试): %s", attempt, delay, exc)
+            logger.warning("Google SDK text attempt %d/%d failed (%ds后重试): %s", attempt, max_attempts, delay, exc)
             await asyncio.sleep(delay)
 
 
@@ -127,7 +131,8 @@ async def generate_image_google(
     )
 
     attempt = 0
-    while True:
+    max_attempts = 10
+    while attempt < max_attempts:
         attempt += 1
         try:
             response = await client.aio.models.generate_content(
@@ -159,6 +164,9 @@ async def generate_image_google(
             if any(code in exc_str for code in ["400", "401", "403", "404"]):
                 logger.error("Google SDK image gen 4xx (不重试): %s", exc)
                 raise
+            if attempt >= max_attempts:
+                logger.error("Google SDK image gen 已达最大重试次数 %d，放弃: %s", max_attempts, exc)
+                raise
             delay = min(attempt * 2, 30)
-            logger.warning("Google SDK image gen attempt %d failed (%ds后重试): %s", attempt, delay, exc)
+            logger.warning("Google SDK image gen attempt %d/%d failed (%ds后重试): %s", attempt, max_attempts, delay, exc)
             await asyncio.sleep(delay)
