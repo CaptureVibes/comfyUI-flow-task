@@ -133,7 +133,7 @@ async def export_publication_stats(
         dt = item.published_at or item.created_at
         if dt:
             date_set.add(dt.strftime("%Y-%m-%d"))
-    dates = sorted(date_set)
+    dates = sorted(date_set, reverse=True)
 
     # 按账号名分组：{ name -> { account_type, date -> [(views, likes)] } }
     blogger_map: dict[str, dict] = {}
