@@ -609,6 +609,18 @@ async def get_video_task(
     return data
 
 
+@router.delete("/batch", status_code=status.HTTP_200_OK)
+async def batch_delete_pending_generating(
+    target_date: date = Query(..., description="目标日期，格式 YYYY-MM-DD"),
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """删除指定日期下所有 pending / generating 状态的任务及其子任务。"""
+    svc = VideoTaskService(db=session)
+    deleted = await svc.batch_delete_pending_generating(target_date, owner_id)
+    return {"status": "success", "deleted": deleted, "message": f"已删除 {deleted} 个任务"}
+
+
 @router.delete("/{task_id}", status_code=status.HTTP_200_OK)
 async def delete_video_task(
     task_id: uuid.UUID,

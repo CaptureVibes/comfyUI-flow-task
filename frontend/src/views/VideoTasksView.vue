@@ -88,6 +88,16 @@
           批量进入候选池
         </button>
         <button
+          class="vt-btn vt-btn-danger"
+          :class="{ 'is-loading': batchDeleting }"
+          :disabled="batchDeleting || !(taskStats.pending > 0 || taskStats.generating > 0)"
+          @click="handleBatchDelete"
+        >
+          <svg v-if="!batchDeleting" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          一键清空({{ (taskStats.pending || 0) + (taskStats.generating || 0) }})
+        </button>
+        <button
           class="vt-btn vt-btn-primary"
           :class="{ 'is-loading': uploading }"
           :disabled="uploading"
@@ -385,7 +395,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed } from '../api/video_tasks.js'
+import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed, batchDeletePendingGenerating } from '../api/video_tasks.js'
 import { batchReanalyzeTemplates } from '../api/video_ai_templates.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
@@ -642,6 +652,30 @@ async function handleBatchReanalyze() {
     ElMessage.error(err?.response?.data?.detail || '触发批量重新分析失败')
   } finally {
     batchReanalyzing.value = false
+  }
+}
+
+const batchDeleting = ref(false)
+
+async function handleBatchDelete() {
+  if (!targetDate.value) return
+  const count = (taskStats.value.pending || 0) + (taskStats.value.generating || 0)
+  try {
+    await ElMessageBox.confirm(
+      `确定删除 ${targetDate.value} 当天所有「待处理」和「生成中」的任务（共 ${count} 个）及其子任务？此操作不可恢复。`,
+      '一键清空',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  batchDeleting.value = true
+  try {
+    const res = await batchDeletePendingGenerating(targetDate.value)
+    ElMessage.success(res.message || '删除成功')
+    await Promise.all([loadTasks(), loadStats()])
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
+  } finally {
+    batchDeleting.value = false
   }
 }
 
@@ -1095,6 +1129,17 @@ onMounted(async () => {
 
 .vt-btn-warning:hover:not(:disabled) {
   box-shadow: 0 6px 16px rgba(245, 158, 11, 0.35);
+  transform: translateY(-1px);
+}
+
+.vt-btn-danger {
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+}
+
+.vt-btn-danger:hover:not(:disabled) {
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.35);
   transform: translateY(-1px);
 }
 

@@ -357,6 +357,23 @@ class VideoTaskService:
             "account": account,
         }
 
+    async def batch_delete_pending_generating(
+        self, target_date: date, owner_id: uuid.UUID | None
+    ) -> int:
+        """删除指定日期下所有 pending / generating 状态的任务（及其级联子任务）。返回删除数量。"""
+        q = (
+            select(VideoTask)
+            .where(VideoTask.target_date == target_date)
+            .where(VideoTask.status.in_(["pending", "generating"]))
+        )
+        if owner_id is not None:
+            q = q.where(VideoTask.owner_id == owner_id)
+        tasks = (await self.db.execute(q)).scalars().all()
+        for task in tasks:
+            await self.db.delete(task)
+        await self.db.commit()
+        return len(tasks)
+
     async def delete_task(self, task_id: uuid.UUID, owner_id: uuid.UUID | None) -> bool:
         q = select(VideoTask).where(VideoTask.id == task_id)
         if owner_id is not None:
