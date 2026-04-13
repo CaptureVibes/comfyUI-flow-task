@@ -112,3 +112,11 @@ export async function healthCheck() {
   const { data } = await http.post('/open-api/health-check')
   return data
 }
+
+/**
+ * 获取外部发布 API 的平台账号列表（通过后端代理）
+ */
+export async function fetchExtPubPlatformAccounts() {
+  const { data } = await http.get('/ext-pub/platform-accounts')
+  return data
+}

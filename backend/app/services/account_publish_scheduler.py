@@ -363,8 +363,12 @@ async def _publish_sub_task(
 
 def _build_channels(account: Account) -> list[dict]:
     bindings = account.social_bindings or []
-    return [
-        {"platform": b.get("platform", ""), "channel_id": b["channel_id"]}
-        for b in bindings
-        if isinstance(b, dict) and b.get("channel_id")
-    ]
+    result = []
+    for b in bindings:
+        if not isinstance(b, dict) or not b.get("channel_id"):
+            continue
+        entry = {"platform": b.get("platform", ""), "channel_id": b["channel_id"]}
+        if b.get("channel_source"):
+            entry["channel_source"] = b["channel_source"]
+        result.append(entry)
+    return result

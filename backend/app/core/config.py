@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Lark 通知
     lark_webhook_url: str = ""    # Lark 机器人 Webhook 地址（为空则不发通知）
 
+    # 外部发布 API（独立维护的第三方频道发布服务）
+    ext_pub_api_base_url: str = "http://34.21.25.209:8000"
+    ext_pub_api_key: str = ""     # X-API-Key 认证
+
     @property
     def max_image_size_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024

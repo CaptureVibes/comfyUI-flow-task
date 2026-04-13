@@ -146,13 +146,24 @@
                   <el-option label="TikTok" value="tiktok" />
                   <el-option label="Instagram" value="instagram" />
                 </el-select>
+                <!-- 频道来源切换 -->
+                <el-select
+                  v-if="binding.platform"
+                  v-model="binding.channel_source"
+                  style="width: 130px"
+                  class="vtfd-beautiful-input"
+                  @change="handleChannelSourceChange(binding)"
+                >
+                  <el-option label="内部频道" value="openapi" />
+                  <el-option label="外部频道" value="ext_pub" />
+                </el-select>
                 <button class="ac-binding-del" @click.prevent="removeBinding(idx)">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
               </div>
 
-              <!-- 频道选择 (从 Open API 获取) -->
-              <template v-if="binding.platform && shouldShowChannelSelect(binding.platform)">
+              <!-- 内部频道选择 (从 Open API 获取) -->
+              <template v-if="binding.platform && binding.channel_source !== 'ext_pub' && shouldShowChannelSelect(binding.platform)">
                 <el-form-item :label="`${platformLabel(binding.platform)} 频道`">
                   <el-select
                     v-model="binding.channel_id"
@@ -190,8 +201,8 @@
                 </el-form-item>
               </template>
 
-              <!-- 手动输入 Channel ID (当没有从 API 获取到频道时) -->
-              <template v-if="binding.platform && shouldShowManualChannelInput(binding.platform)">
+              <!-- 内部频道：手动输入 (当没有从 API 获取到频道时) -->
+              <template v-if="binding.platform && binding.channel_source !== 'ext_pub' && shouldShowManualChannelInput(binding.platform)">
                 <el-form-item :label="`${platformLabel(binding.platform)} Channel ID`">
                   <el-input
                     v-model="binding.channel_id"
@@ -207,6 +218,49 @@
                     clearable
                     class="vtfd-beautiful-input"
                   />
+                </el-form-item>
+              </template>
+
+              <!-- 外部频道选择 (从外部发布 API 获取) -->
+              <template v-if="binding.platform && binding.channel_source === 'ext_pub'">
+                <el-form-item :label="`${platformLabel(binding.platform)} 外部频道`">
+                  <el-select
+                    v-model="binding.channel_id"
+                    placeholder="选择外部频道"
+                    class="vtfd-beautiful-input"
+                    filterable
+                    style="width: 100%"
+                    :loading="extPubAccountsLoading"
+                    @visible-change="visible => { if (visible) loadExtPubAccounts() }"
+                    @change="handleExtPubChannelSelect(binding)"
+                  >
+                    <el-option
+                      v-for="acc in extPubAccountsByPlatform(binding.platform)"
+                      :key="acc.id"
+                      :label="acc.nickname || acc.username"
+                      :value="acc.id"
+                    >
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>{{ acc.nickname || acc.username }}</span>
+                        <span style="color: #94a3b8; font-size: 12px;">(@{{ acc.username }})</span>
+                        <span v-if="acc.remark" style="color: #64748b; font-size: 11px;">{{ acc.remark }}</span>
+                      </div>
+                    </el-option>
+                    <el-option
+                      v-if="extPubAccountsLoading"
+                      key="__loading__"
+                      label="加载中..."
+                      value="__loading__"
+                      disabled
+                    />
+                    <el-option
+                      v-if="!extPubAccountsLoading && extPubAccountsByPlatform(binding.platform).length === 0"
+                      key="__empty__"
+                      :label="`暂无 ${platformLabel(binding.platform)} 外部频道`"
+                      value="__empty__"
+                      disabled
+                    />
+                  </el-select>
                 </el-form-item>
               </template>
             </div>
@@ -424,7 +478,7 @@ import { fetchTags, fetchTagsVideoCount } from '../api/tags'
 import { searchBloggers } from '../api/tiktok_bloggers'
 import { uploadImageByFile } from '../api/uploads'
 import { isDuplicateRequestError } from '../api/http'
-import { fetchChannels } from '../api/video_publications'
+import { fetchChannels, fetchExtPubPlatformAccounts } from '../api/video_publications'
 
 const route = useRoute()
 const router = useRouter()
@@ -447,6 +501,31 @@ const channelPageState = reactive({
   tiktok: { page: 0, total: 0, loading: false, loaded: false },
   instagram: { page: 0, total: 0, loading: false, loaded: false },
 })
+
+// 外部发布 API 频道数据
+const extPubAccounts = ref([])
+const extPubAccountsLoading = ref(false)
+const extPubAccountsLoaded = ref(false)
+
+function extPubAccountsByPlatform(platform) {
+  return extPubAccounts.value.filter(a => a.platform_type === platform)
+}
+
+async function loadExtPubAccounts() {
+  if (extPubAccountsLoaded.value || extPubAccountsLoading.value) return
+  extPubAccountsLoading.value = true
+  try {
+    const res = await fetchExtPubPlatformAccounts()
+    extPubAccounts.value = res?.data?.items || []
+    extPubAccountsLoaded.value = true
+  } catch (err) {
+    console.error('加载外部频道失败:', err)
+    extPubAccounts.value = []
+    extPubAccountsLoaded.value = true
+  } finally {
+    extPubAccountsLoading.value = false
+  }
+}
 
 const form = reactive({
   account_name: '',
@@ -583,7 +662,31 @@ async function handlePlatformChange(binding) {
 
   // 如果平台变了，加载新的频道列表
   if (newPlatform && newPlatform !== oldPlatform) {
-    await loadChannels(newPlatform, { reset: true })
+    if (binding.channel_source === 'ext_pub') {
+      await loadExtPubAccounts()
+    } else {
+      await loadChannels(newPlatform, { reset: true })
+    }
+  }
+}
+
+// 切换频道来源
+async function handleChannelSourceChange(binding) {
+  binding.channel_id = ''
+  binding.channel_name = ''
+  if (binding.channel_source === 'ext_pub') {
+    await loadExtPubAccounts()
+  } else if (binding.platform) {
+    await loadChannels(binding.platform, { reset: true })
+  }
+}
+
+// 处理外部频道选择
+function handleExtPubChannelSelect(binding) {
+  const acc = extPubAccounts.value.find(a => a.id === binding.channel_id)
+  if (acc) {
+    binding.channel_name = acc.nickname || acc.username || ''
+    binding.username = acc.username || ''
   }
 }
 
@@ -599,6 +702,7 @@ function handleChannelSelect(binding) {
 async function addBinding() {
   form.social_bindings.push({
     platform: 'youtube',
+    channel_source: 'openapi',
     _prevPlatform: '',
     channel_id: '',
     channel_name: '',
@@ -676,9 +780,14 @@ async function loadAccount() {
 
     // 加载已绑定平台的频道列表
     for (const binding of form.social_bindings) {
+      if (!binding.channel_source) binding.channel_source = 'openapi'
       if (binding.platform) {
         binding._prevPlatform = binding.platform
-        await loadChannels(binding.platform, { reset: true })
+        if (binding.channel_source === 'ext_pub') {
+          await loadExtPubAccounts()
+        } else {
+          await loadChannels(binding.platform, { reset: true })
+        }
       }
     }
   } catch (err) {
@@ -696,6 +805,7 @@ async function handleSave() {
     try {
       const normalizedBindings = form.social_bindings.map(binding => ({
         platform: binding.platform,
+        channel_source: binding.channel_source || 'openapi',
         channel_id: binding.channel_id || '',
         channel_name: binding.channel_name || '',
         username: binding.username || '',

@@ -268,16 +268,80 @@ class OpenAPIClient:
             return response.json()
 
 
+class ExtPubAPIClient:
+    """外部发布 API 客户端（独立维护的第三方频道发布服务）"""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
+        self.base_url = (base_url or getattr(settings, "ext_pub_api_base_url", "http://34.21.25.209:8000")).rstrip("/")
+        self.api_key = api_key or getattr(settings, "ext_pub_api_key", "")
+        self.timeout = 30.0
+
+    def _headers(self) -> dict:
+        return {"X-API-Key": self.api_key, "Content-Type": "application/json"}
+
+    async def fetch_platform_accounts(self) -> dict:
+        """获取平台账号列表（即外部频道列表）"""
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+            response = await client.get(
+                f"{self.base_url}/api/platform-accounts",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def create_post(self, payload: dict) -> dict:
+        """创建发布任务"""
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            response = await client.post(
+                f"{self.base_url}/api/posts",
+                json=payload,
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return response.json()
+
+
 class VideoPublicationService:
     """视频发布服务"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self.open_api = OpenAPIClient()
+        self.ext_pub = ExtPubAPIClient()
 
     async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
-        """创建发布任务"""
-        # 构建请求 payload
+        """创建发布任务。
+
+        channels 中每条可携带 channel_source 字段：
+          - "openapi"（默认）：走原 Open API 发布
+          - "ext_pub"：走外部发布 API（POST /api/posts）
+        同一次发布请求的所有 channels 必须使用同一来源；若混合则以第一条为准。
+        """
+        # 按 channel_source 分组
+        ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
+        openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
+
+        logger.info(
+            "create_publication routing: sub_task_id=%s all_channels=%s ext_channels=%s openapi_channels=%s",
+            data.sub_task_id,
+            data.channels,
+            ext_channels,
+            openapi_channels,
+        )
+
+        if ext_channels and not openapi_channels:
+            logger.info("create_publication -> ext_pub path")
+            return await self._create_ext_pub_publication(data, ext_channels)
+        else:
+            logger.info("create_publication -> openapi path")
+            return await self._create_openapi_publication(data, openapi_channels or data.channels)
+
+    async def _create_openapi_publication(self, data: VideoPublicationCreate, channels: list[dict]) -> VideoPublication:
+        """通过原 Open API 发布"""
         callback_url = data.callback_url or settings.open_api_callback_url or None
         request_payload = {
             "video_url": data.video_url,
@@ -286,13 +350,12 @@ class VideoPublicationService:
             "title": data.title,
             "description": data.description,
             "tags": data.tags or [],
-            "channels": data.channels,
+            "channels": [{"platform": c["platform"], "channel_id": c["channel_id"]} for c in channels],
             "external_id": str(data.sub_task_id),
         }
         if callback_url:
             request_payload["callback_url"] = callback_url
 
-        # 调用 Open API 创建任务
         try:
             response = await self.open_api.create_upload_task(request_payload)
 
@@ -301,7 +364,6 @@ class VideoPublicationService:
 
             response_data = response.get("data", {})
 
-            # 创建发布任务记录
             publication = VideoPublication(
                 sub_task_id=data.sub_task_id,
                 open_api_task_id=response_data.get("task_id"),
@@ -309,7 +371,7 @@ class VideoPublicationService:
                 status=response_data.get("status", "pending"),
                 request_payload=request_payload,
                 response_data=response_data,
-                total_channels=response_data.get("total_channels", len(data.channels)),
+                total_channels=response_data.get("total_channels", len(channels)),
                 completed_channels=response_data.get("completed_channels", 0),
                 failed_channels=response_data.get("failed_channels", 0),
                 channels_status=response_data.get("channels"),
@@ -318,18 +380,78 @@ class VideoPublicationService:
             self.db.add(publication)
             await self.db.commit()
             await self.db.refresh(publication)
-
             return publication
 
         except httpx.HTTPError as e:
-            # 网络错误，创建失败记录
             publication = VideoPublication(
                 sub_task_id=data.sub_task_id,
                 external_id=str(data.sub_task_id),
                 status="failed",
                 request_payload=request_payload,
-                total_channels=len(data.channels),
+                total_channels=len(channels),
                 error_message=f"Open API 请求失败: {str(e)}",
+            )
+            self.db.add(publication)
+            await self.db.commit()
+            await self.db.refresh(publication)
+            raise
+
+    async def _create_ext_pub_publication(self, data: VideoPublicationCreate, channels: list[dict]) -> VideoPublication:
+        """通过外部发布 API（POST /api/posts）发布"""
+        request_payload = {
+            "_channel_source": "ext_pub",
+            "post_type": "video",
+            "title": data.title,
+            "content": data.description or "",
+            "tags": data.tags or [],
+            "video_url": data.video_url,
+            "business_id": str(data.sub_task_id),
+            "channels": [
+                {"platform": c["platform"], "channel_id": c["channel_id"]}
+                for c in channels
+            ],
+        }
+        logger.info(
+            "ExtPubAPI create_post request: sub_task_id=%s payload=%s",
+            data.sub_task_id,
+            request_payload,
+        )
+
+        try:
+            response = await self.ext_pub.create_post(request_payload)
+            logger.info("ExtPubAPI create_post response: %s", response)
+            response_data = response if isinstance(response, dict) else {}
+
+            publication = VideoPublication(
+                sub_task_id=data.sub_task_id,
+                open_api_task_id=str(response_data.get("id") or response_data.get("task_id") or ""),
+                external_id=str(data.sub_task_id),
+                status="pending",
+                request_payload=request_payload,
+                response_data=response_data,
+                total_channels=len(channels),
+                completed_channels=0,
+                failed_channels=0,
+            )
+
+            self.db.add(publication)
+            await self.db.commit()
+            await self.db.refresh(publication)
+            return publication
+
+        except httpx.HTTPError as e:
+            resp_body = getattr(getattr(e, "response", None), "text", "")
+            logger.error(
+                "ExtPubAPI create_post failed: %s | response_body=%s | payload=%s",
+                e, resp_body, request_payload,
+            )
+            publication = VideoPublication(
+                sub_task_id=data.sub_task_id,
+                external_id=str(data.sub_task_id),
+                status="failed",
+                request_payload=request_payload,
+                total_channels=len(channels),
+                error_message=f"外部发布 API 请求失败: {str(e)}",
             )
             self.db.add(publication)
             await self.db.commit()
@@ -541,6 +663,11 @@ class VideoPublicationService:
         publication = await self.get_publication(publication_id)
         if not publication:
             raise ValueError("发布任务不存在")
+
+        # ext_pub 发布任务没有 Open API 任务 ID，无需轮询，直接跳过
+        if (publication.request_payload or {}).get("_channel_source") == "ext_pub":
+            logger.debug("sync_publication_status skip ext_pub publication %s", publication_id)
+            return publication
 
         if not publication.open_api_task_id:
             raise ValueError("Open API 任务 ID 不存在")

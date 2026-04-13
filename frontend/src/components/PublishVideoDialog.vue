@@ -185,6 +185,7 @@ function toggleChannel(binding) {
     channelConfigs.value[platform] = {
       platform,
       channel_id: binding.channel_id,
+      channel_source: binding.channel_source || 'openapi',
       title: '',
       description: '',
       tags: [],
@@ -209,6 +210,7 @@ async function handlePublish() {
       return {
         platform,
         channel_id: config.channel_id,
+        channel_source: config.channel_source || 'openapi',
         title: config.title || undefined,
         description: config.description || undefined,
         tags: config.tags?.length ? config.tags : undefined,

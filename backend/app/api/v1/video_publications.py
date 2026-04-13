@@ -373,6 +373,27 @@ async def fetch_channels(
         raise HTTPException(status_code=500, detail=f"获取渠道列表失败: {str(e)}")
 
 
+@router.get("/ext-pub/platform-accounts")
+async def fetch_ext_pub_platform_accounts(
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取外部发布 API 的平台账号列表（代理）"""
+    service = VideoPublicationService(db)
+    try:
+        result = await service.ext_pub.fetch_platform_accounts()
+        # 统一包装为前端期望的格式
+        if isinstance(result, dict) and result.get("code") == 200:
+            return result
+        return result
+    except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+        logger.warning("ExtPubAPI platform-accounts proxy fallback: %s", e)
+        return {"code": 200, "message": "Success", "data": {"items": [], "total": 0}}
+    except Exception as e:
+        logger.exception("ExtPubAPI platform-accounts proxy failed")
+        return {"code": 200, "message": "Success", "data": {"items": [], "total": 0}}
+
+
 @router.get("/open-api/upload/metrics")
 async def get_upload_metrics(
     task_id: str | None = Query(None, description="Open API 任务 ID"),
