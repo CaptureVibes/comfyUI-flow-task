@@ -174,6 +174,32 @@ def get_ai_account_state(account_id: str) -> dict[str, Any] | None:
 # =============================================================================
 
 
+async def _unique_account_name(
+    session: "AsyncSession",
+    base_name: str,
+    exclude_id: "UUID | None" = None,
+) -> str:
+    """返回不重复的账号名。若 base_name 已存在则追加 -1、-2 …"""
+    from sqlalchemy import select, func
+    from app.models.account import Account
+
+    def _build_stmt(name: str):
+        stmt = select(func.count()).select_from(Account).where(Account.account_name == name)
+        if exclude_id is not None:
+            stmt = stmt.where(Account.id != exclude_id)
+        return stmt
+
+    if not (await session.scalar(_build_stmt(base_name))):
+        return base_name
+
+    suffix = 1
+    while True:
+        candidate = f"{base_name}-{suffix}"
+        if not (await session.scalar(_build_stmt(candidate))):
+            return candidate
+        suffix += 1
+
+
 async def _persist_states(account_ids: list[str]) -> None:
     if not account_ids:
         return
@@ -196,7 +222,9 @@ async def _persist_states(account_ids: list[str]) -> None:
             acc.ai_generation_error = state.get("error_message") or None
             acc.ai_generation_state = state
             if state.get("generated_name"):
-                acc.account_name = state["generated_name"]
+                acc.account_name = await _unique_account_name(
+                    session, state["generated_name"], exclude_id=acc.id
+                )
             if state.get("generated_avatar_url"):
                 acc.avatar_url = state["generated_avatar_url"]
             if state.get("generated_photo_url"):
