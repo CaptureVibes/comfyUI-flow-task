@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
 

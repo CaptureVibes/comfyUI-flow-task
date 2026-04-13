@@ -1331,7 +1331,7 @@ async def supplement_templates_for_account(
     attempted_urls: set[str] = set()  # 已尝试过（无论成功失败）
     pending_urls: list[str] = []
     apify = TikTokApifyClient()
-    results_per_page = max_new_videos * 3
+    results_per_page = max_new_videos * 10
     round_num = 0
 
     while imported < max_new_videos:
