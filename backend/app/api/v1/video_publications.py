@@ -159,7 +159,7 @@ async def export_publication_stats(
         row = [name, info["account_type"]]
         for day in dates:
             entries = info["dates"].get(day, [])
-            row.append("\n".join(f"{v}/{l}" for v, l in entries))
+            row.append("\n".join(f"▶{v} ♥{l}" for v, l in entries))
         writer.writerow(row)
 
     filename = "数据统计"
