@@ -358,13 +358,16 @@ class VideoTaskService:
         }
 
     async def batch_delete_pending_generating(
-        self, target_date: date, owner_id: uuid.UUID | None
+        self, target_date: date, owner_id: uuid.UUID | None, status: str | None = None
     ) -> int:
-        """删除指定日期下所有 pending / generating 状态的任务（及其级联子任务）。返回删除数量。"""
+        """删除指定日期下 pending / generating 状态的任务（及其级联子任务）。
+        status 为 None 时删除两种状态，否则只删指定状态。返回删除数量。"""
+        allowed = {"pending", "generating"}
+        statuses = [status] if status in allowed else list(allowed)
         q = (
             select(VideoTask)
             .where(VideoTask.target_date == target_date)
-            .where(VideoTask.status.in_(["pending", "generating"]))
+            .where(VideoTask.status.in_(statuses))
         )
         if owner_id is not None:
             q = q.where(VideoTask.owner_id == owner_id)

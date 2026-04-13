@@ -90,12 +90,12 @@
         <button
           class="vt-btn vt-btn-danger"
           :class="{ 'is-loading': batchDeleting }"
-          :disabled="batchDeleting || !(activeFilter === 'pending' || activeFilter === 'generating')"
+          :disabled="batchDeleting || !(activeFilter === 'pending' || activeFilter === 'generating') || taskStats[activeFilter] === 0"
           @click="handleBatchDelete"
         >
           <svg v-if="!batchDeleting" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
           <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-          一键清空({{ (taskStats.pending || 0) + (taskStats.generating || 0) }})
+          一键清空({{ (activeFilter === 'pending' || activeFilter === 'generating') ? (taskStats[activeFilter] || 0) : 0 }})
         </button>
         <button
           class="vt-btn vt-btn-primary"
@@ -659,17 +659,19 @@ const batchDeleting = ref(false)
 
 async function handleBatchDelete() {
   if (!targetDate.value) return
-  const count = (taskStats.value.pending || 0) + (taskStats.value.generating || 0)
+  if (activeFilter.value !== 'pending' && activeFilter.value !== 'generating') return
+  const count = taskStats.value[activeFilter.value] || 0
+  const label = STATUS_LABELS[activeFilter.value] || activeFilter.value
   try {
     await ElMessageBox.confirm(
-      `确定删除 ${targetDate.value} 当天所有「待处理」和「生成中」的任务（共 ${count} 个）及其子任务？此操作不可恢复。`,
+      `确定删除 ${targetDate.value} 当天所有「${label}」任务（共 ${count} 个）及其子任务？此操作不可恢复。`,
       '一键清空',
       { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
   batchDeleting.value = true
   try {
-    const res = await batchDeletePendingGenerating(targetDate.value)
+    const res = await batchDeletePendingGenerating(targetDate.value, activeFilter.value)
     ElMessage.success(res.message || '删除成功')
     await Promise.all([loadTasks(), loadStats()])
   } catch (e) {

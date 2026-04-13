@@ -45,8 +45,10 @@ export async function deleteVideoTask(taskId) {
   return data
 }
 
-export async function batchDeletePendingGenerating(dateStr) {
-  const { data } = await http.delete('/video-tasks/batch', { params: { target_date: dateStr } })
+export async function batchDeletePendingGenerating(dateStr, taskStatus) {
+  const params = { target_date: dateStr }
+  if (taskStatus) params.task_status = taskStatus
+  const { data } = await http.delete('/video-tasks/batch', { params })
   return data
 }
 
