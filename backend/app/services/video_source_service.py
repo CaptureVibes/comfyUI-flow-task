@@ -516,6 +516,52 @@ async def delete_video_source(
     await session.commit()
 
 
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
+async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
+    """若文件超过 100MB，用 ffmpeg 压缩后返回新路径；否则原路返回。"""
+    size = os.path.getsize(file_path)
+    if size <= _MAX_UPLOAD_BYTES:
+        return file_path
+
+    logger.info(
+        "_compress_video_if_needed: %.1f MB > 100 MB，开始压缩 %s",
+        size / 1024 / 1024,
+        file_path,
+    )
+
+    compressed_path = os.path.join(tmpdir, "compressed.mp4")
+
+    def _run_ffmpeg() -> None:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", file_path,
+            "-vcodec", "libx264",
+            "-crf", "28",          # 画质：18=高质量 28=适中 35=较低，可调
+            "-preset", "fast",
+            "-vf", "scale='min(1280,iw)':-2",  # 最大 1280px 宽，保持比例
+            "-acodec", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            compressed_path,
+        ]
+        import subprocess
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg 压缩失败: {result.stderr[-500:]}")
+
+    await asyncio.to_thread(_run_ffmpeg)
+
+    compressed_size = os.path.getsize(compressed_path)
+    logger.info(
+        "_compress_video_if_needed: 压缩完成 %.1f MB → %.1f MB",
+        size / 1024 / 1024,
+        compressed_size / 1024 / 1024,
+    )
+    return compressed_path
+
+
 async def _upload_video_file(file_path: str, filename: str) -> str:
     """Upload a local video file to the storage API. Returns the permanent URL. Infinite retry."""
     attempt = 0
@@ -616,6 +662,7 @@ async def _do_download_and_upload(vs_id: UUID) -> None:
                         alt = out_template + ".mp4"
                         actual_path = alt if os.path.exists(alt) else actual_path
 
+                    actual_path = await _compress_video_if_needed(actual_path, tmpdir)
                     permanent_url = await _upload_video_file(actual_path, filename)
 
                 vs.local_video_url = permanent_url
