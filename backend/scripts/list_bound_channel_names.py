@@ -33,9 +33,9 @@ async def main() -> None:
         if not isinstance(bindings, list):
             continue
         for binding in bindings:
-            name = binding.get("channel_name") if isinstance(binding, dict) else None
-            if name:
-                channel_names.append(name)
+            cid = binding.get("channel_id") if isinstance(binding, dict) else None
+            if cid:
+                channel_names.append(cid)
 
     print(json.dumps(channel_names, ensure_ascii=False, indent=2))
 
