@@ -532,6 +532,54 @@ class VideoPublicationService:
         end = start + query.page_size
         return items[start:end], total
 
+    async def get_publication_stats_all(
+        self,
+        query: VideoPublicationStatsQuery,
+        owner_id: uuid.UUID | None = None,
+    ) -> list[VideoPublicationStatsListItem]:
+        """返回全量数据（不分页），用于导出。"""
+        from app.models.video_task import VideoSubTask, VideoTask
+
+        stmt = (
+            select(VideoPublication, VideoSubTask, VideoTask, Account)
+            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+            .outerjoin(Account, Account.id == VideoTask.account_id)
+            .where(VideoPublication.status.in_(["completed", "partial"]))
+            .order_by(
+                VideoPublication.completed_at.asc().nullslast(),
+                VideoPublication.created_at.asc(),
+            )
+        )
+
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+        if query.account_id is not None:
+            stmt = stmt.where(VideoTask.account_id == query.account_id)
+        if query.date_from is not None:
+            stmt = stmt.where(VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc))
+        if query.date_to is not None:
+            next_day = date.fromordinal(query.date_to.toordinal() + 1)
+            stmt = stmt.where(
+                VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
+            )
+
+        rows = (await self.db.execute(stmt)).all()
+        items = [
+            self._build_stats_item(publication, sub_task, task, account)
+            for publication, sub_task, task, account in rows
+        ]
+
+        platform = (query.platform or "").strip().lower()
+        if platform:
+            items = [item for item in items if self._matches_platform(item, platform)]
+
+        keyword = (query.keyword or "").strip().lower()
+        if keyword:
+            items = [item for item in items if self._matches_keyword(item, keyword)]
+
+        return items
+
     def _build_stats_item(
         self,
         publication: VideoPublication,
@@ -571,6 +619,7 @@ class VideoPublicationService:
             task_id=getattr(task, "id", None),
             account_id=getattr(task, "account_id", None),
             account_name=getattr(account, "account_name", None),
+            account_type=getattr(account, "account_type", None),
             status=publication.status,
             video_url=getattr(sub_task, "result_video_url", None),
             published_at=publication.completed_at,

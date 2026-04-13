@@ -1,9 +1,12 @@
+import csv
+import io
 import uuid
 from datetime import date
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
@@ -99,6 +102,77 @@ async def get_publication_stats(
     service = VideoPublicationService(db)
     items, total = await service.get_publication_stats_page(query, owner_id=owner_id)
     return VideoPublicationStatsListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/video-publications/stats/export")
+async def export_publication_stats(
+    platform: str | None = Query(None),
+    account_id: uuid.UUID | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    keyword: str | None = Query(None),
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """导出数据统计 CSV，按博主×日期透视表格式。"""
+    query = VideoPublicationStatsQuery(
+        platform=platform,
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+        keyword=keyword,
+    )
+    owner_id = None if current_user.is_admin else current_user.user_id
+    service = VideoPublicationService(db)
+    items = await service.get_publication_stats_all(query, owner_id=owner_id)
+
+    # 收集所有出现的日期（列），升序
+    date_set: set[str] = set()
+    for item in items:
+        dt = item.published_at or item.created_at
+        if dt:
+            date_set.add(dt.strftime("%Y-%m-%d"))
+    dates = sorted(date_set)
+
+    # 按账号名分组：{ name -> { account_type, date -> [(views, likes)] } }
+    blogger_map: dict[str, dict] = {}
+    for item in items:
+        name = item.account_name or "未知账号"
+        if name not in blogger_map:
+            account_type = "人设号" if item.account_type == "persona" else "流量号"
+            blogger_map[name] = {"account_type": account_type, "dates": {}}
+        dt = item.published_at or item.created_at
+        if not dt:
+            continue
+        day = dt.strftime("%Y-%m-%d")
+        blogger_map[name]["dates"].setdefault(day, []).append(
+            (item.total_views or 0, item.total_likes or 0)
+        )
+
+    # 构建 CSV（UTF-8 BOM，Excel 直接识别中文）
+    buf = io.StringIO()
+    buf.write("\ufeff")  # BOM
+    writer = csv.writer(buf)
+    writer.writerow(["博主名称", "账号类型", *dates])
+    for name, info in blogger_map.items():
+        row = [name, info["account_type"]]
+        for day in dates:
+            entries = info["dates"].get(day, [])
+            row.append("\n".join(f"{v}/{l}" for v, l in entries))
+        writer.writerow(row)
+
+    filename = "数据统计"
+    if date_from:
+        filename += f"_{date_from}"
+    if date_to and date_to != date_from:
+        filename += f"_{date_to}"
+    filename += ".csv"
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 @router.post("/video-publications/sync-metrics")

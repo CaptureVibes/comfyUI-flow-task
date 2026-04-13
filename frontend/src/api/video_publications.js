@@ -76,6 +76,14 @@ export async function fetchPublicationStats(params = {}) {
   return data
 }
 
+export async function exportPublicationStats(params = {}) {
+  const response = await http.get('/video-publications/stats/export', {
+    params,
+    responseType: 'blob',
+  })
+  return response
+}
+
 export async function syncPublicationMetrics(params = {}) {
   const { data } = await http.post('/video-publications/sync-metrics', null, { params })
   return data

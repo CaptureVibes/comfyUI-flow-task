@@ -9,6 +9,10 @@
           <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:5px;vertical-align:-2px;animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
           {{ syncing ? '同步中...' : '同步数据' }}
         </button>
+        <button class="ps-btn ps-btn-export" :disabled="exporting" @click="handleExport">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:5px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          {{ exporting ? '导出中...' : '导出Excel' }}
+        </button>
         <!-- Date mode -->
         <el-radio-group v-model="filters.date_mode" size="small" @change="handleDateModeChange">
           <el-radio-button label="day">某一天</el-radio-button>
@@ -284,7 +288,41 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccounts } from '../api/accounts'
-import { fetchPublicationStats, syncPublicationMetrics } from '../api/video_publications'
+import { exportPublicationStats, fetchPublicationStats, syncPublicationMetrics } from '../api/video_publications'
+
+const exporting = ref(false)
+
+async function handleExport() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    syncDateFiltersFromMode()
+    const response = await exportPublicationStats({
+      platform: filters.platform || undefined,
+      account_id: filters.account_id || undefined,
+      date_from: filters.date_from || undefined,
+      date_to: filters.date_to || undefined,
+      keyword: filters.keyword || undefined,
+    })
+    const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    // 优先用后端 Content-Disposition 里的文件名，fallback 用日期
+    const cd = response.headers?.['content-disposition'] || ''
+    const match = cd.match(/filename\*?=(?:UTF-8'')?([^;]+)/i)
+    const filename = match ? decodeURIComponent(match[1].trim()) : `数据统计_${filters.date_from || formatYmd(new Date())}.csv`
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    exporting.value = false
+  }
+}
 
 const route = useRoute()
 
@@ -634,6 +672,23 @@ onMounted(async () => {
   border: 1px solid #bbf7d0;
   display: inline-flex;
   align-items: center;
+}
+
+.ps-btn-export {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ps-btn-export:hover {
+  background: #dbeafe;
+}
+
+.ps-btn-export:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .ps-btn-sync:hover:not(:disabled) {

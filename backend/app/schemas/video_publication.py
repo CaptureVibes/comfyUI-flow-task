@@ -115,6 +115,7 @@ class VideoPublicationStatsListItem(BaseModel):
     task_id: uuid.UUID | None = None
     account_id: uuid.UUID | None = None
     account_name: str | None = None
+    account_type: str | None = None
     status: str
     video_url: str | None = None
     published_at: datetime | None = None
