@@ -2,6 +2,7 @@ import csv
 import io
 import uuid
 from datetime import date
+from urllib.parse import quote
 from typing import Any
 
 import httpx
@@ -171,7 +172,7 @@ async def export_publication_stats(
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
 
