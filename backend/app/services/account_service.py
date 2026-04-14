@@ -77,6 +77,10 @@ async def patch_account(
 ) -> Account:
     if payload.account_name is not None:
         account.account_name = payload.account_name
+    if payload.account_handle is not None:
+        account.account_handle = payload.account_handle
+    if payload.account_signature is not None:
+        account.account_signature = payload.account_signature
     if payload.account_type is not None:
         account.account_type = payload.account_type
     if payload.face_mode is not None:

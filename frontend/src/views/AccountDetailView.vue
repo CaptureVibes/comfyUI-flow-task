@@ -53,8 +53,8 @@
         <div class="ad-hero-info">
           <div class="ad-hero-name">
             {{ account.account_name }}
-            <span class="ad-type-badge" :class="`ad-type-${account.account_type || 'traffic'}`">
-              {{ account.account_type === 'persona' ? '人设号' : '流量号' }}
+            <span class="ad-type-badge" :class="`ad-type-${account.account_type || 'exclusive'}`">
+              {{ account.account_type === 'persona' ? '人设号' : account.account_type === 'exclusive' ? '独享号' : '共享号' }}
             </span>
             <span
               class="ad-type-badge"
@@ -72,6 +72,10 @@
             >
               {{ { male: '男', female: '女', unisex: '中性' }[account.gender || 'female'] }}
             </span>
+          </div>
+          <div v-if="account.account_handle || account.account_signature" class="ad-hero-handle-wrap">
+            <span v-if="account.account_handle" class="ad-hero-handle">@{{ account.account_handle }}</span>
+            <span v-if="account.account_signature" class="ad-hero-signature">{{ account.account_signature }}</span>
           </div>
           <div v-if="account.style_description" class="ad-hero-style">{{ account.style_description }}</div>
           <div class="ad-hero-meta">
@@ -1452,6 +1456,9 @@ onUnmounted(() => {
 .ad-hero-info { flex: 1; }
 
 .ad-hero-name { font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 4px; display: flex; align-items: center; }
+.ad-hero-handle-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ad-hero-handle { font-size: 14px; font-weight: 600; color: #6366f1; }
+.ad-hero-signature { font-size: 13px; color: #64748b; line-height: 1.5; }
 .ad-hero-style { font-size: 13px; color: #64748b; margin-bottom: 10px; line-height: 1.5; }
 
 .ad-hero-meta { display: flex; gap: 20px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -1543,9 +1550,15 @@ onUnmounted(() => {
   color: #6d28d9;
 }
 
-.ad-type-traffic {
+.ad-type-traffic,
+.ad-type-shared {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.ad-type-exclusive {
+  background: #fef3c7;
+  color: #d97706;
 }
 
 .ad-face-yes {

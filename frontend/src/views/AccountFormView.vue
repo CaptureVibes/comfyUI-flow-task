@@ -40,20 +40,29 @@
                   <button
                     type="button"
                     class="ac-type-btn"
+                    :class="{ active: form.account_type === 'shared' }"
+                    @click="form.account_type = 'shared'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    共享号
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.account_type === 'exclusive' }"
+                    @click="form.account_type = 'exclusive'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                    独享号
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
                     :class="{ active: form.account_type === 'persona' }"
                     @click="form.account_type = 'persona'"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
                     人设号
-                  </button>
-                  <button
-                    type="button"
-                    class="ac-type-btn"
-                    :class="{ active: form.account_type === 'traffic' }"
-                    @click="form.account_type = 'traffic'"
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                    流量号
                   </button>
                 </div>
               </el-form-item>
@@ -111,6 +120,25 @@
                     中性
                   </button>
                 </div>
+              </el-form-item>
+
+              <el-form-item label="Handle">
+                <el-input
+                  v-model="form.account_handle"
+                  placeholder="博主 handle（不含 @）"
+                  clearable
+                  class="vtfd-beautiful-input"
+                />
+              </el-form-item>
+
+              <el-form-item label="个性签名">
+                <el-input
+                  v-model="form.account_signature"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="博主个人签名 / bio"
+                  class="vtfd-beautiful-input"
+                />
               </el-form-item>
 
               <el-form-item label="风格描述">
@@ -584,7 +612,9 @@ async function loadExtPubAccounts() {
 
 const form = reactive({
   account_name: '',
-  account_type: 'traffic',
+  account_handle: '',
+  account_signature: '',
+  account_type: 'exclusive',
   face_mode: 'face',
   gender: 'female',
   style_description: '',
@@ -826,7 +856,9 @@ async function loadAccount() {
   try {
     const data = await fetchAccount(route.params.id)
     form.account_name = data.account_name || ''
-    form.account_type = data.account_type || 'traffic'
+    form.account_handle = data.account_handle || ''
+    form.account_signature = data.account_signature || ''
+    form.account_type = data.account_type || 'exclusive'
     form.face_mode = data.face_mode || 'face'
     form.gender = data.gender || 'female'
     form.style_description = data.style_description || ''
@@ -874,6 +906,8 @@ async function handleSave() {
         account_type: form.account_type,
         face_mode: form.face_mode,
         gender: form.gender,
+        account_handle: form.account_handle || null,
+        account_signature: form.account_signature || null,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
@@ -1034,6 +1068,8 @@ async function startAIGeneration() {
         account_type: form.account_type,
         face_mode: form.face_mode,
         gender: form.gender,
+        account_handle: form.account_handle || null,
+        account_signature: form.account_signature || null,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,

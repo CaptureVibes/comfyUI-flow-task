@@ -88,6 +88,8 @@ async def get_pipeline_settings(
         keyword_gen_temperature=row.keyword_gen_temperature,
         face_select_model=row.face_select_model,
         face_select_prompt=row.face_select_prompt,
+        ai_account_exclusive_name_prompt=row.ai_account_exclusive_name_prompt,
+        ai_account_shared_name_prompt=row.ai_account_shared_name_prompt,
     )
 
 
@@ -129,6 +131,8 @@ async def put_pipeline_settings(
         keyword_gen_temperature=row.keyword_gen_temperature,
         face_select_model=row.face_select_model,
         face_select_prompt=row.face_select_prompt,
+        ai_account_exclusive_name_prompt=row.ai_account_exclusive_name_prompt,
+        ai_account_shared_name_prompt=row.ai_account_shared_name_prompt,
     )
 
 

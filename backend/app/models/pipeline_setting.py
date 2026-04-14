@@ -52,6 +52,9 @@ class PipelineSetting(Base):
     ai_account_painting_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_name_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     ai_account_avatar_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")
+    # 批量生成名称/handle/签名 Prompt（两个分支）
+    ai_account_exclusive_name_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_account_shared_name_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_account_avatar_size: Mapped[str] = mapped_column(String(20), nullable=False, default="1:1")
     ai_account_avatar_quality: Mapped[str] = mapped_column(String(10), nullable=False, default="1K")
 

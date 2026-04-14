@@ -2,56 +2,38 @@
   <div class="al-page">
     <div class="al-header">
       <h1 class="al-title">AI博主</h1>
-      <div style="display: flex; gap: 12px; align-items: center;">
-        <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
-          <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          {{ downloading ? '下载中...' : selectedMap.size > 0 ? `下载视频 (${selectedMap.size})` : '下载视频' }}
-        </el-button>
+      <div class="al-header-actions">
         <el-button class="al-config-btn" @click="openAISettings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           AI博主配置
         </el-button>
-        <el-button
-          class="al-config-btn"
-          @click="handleBulkGenerateAIAccounts"
-          :loading="bulkGenerating"
-        >
+        <el-button class="al-config-btn" @click="handleBulkGenerateAIAccounts" :loading="bulkGenerating">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M4 4h16v16H4z" opacity=".2"/></svg>
           一键生成AI博主
         </el-button>
-        <el-button
-          class="al-restart-btn"
-          @click="openBulkContinueDialog"
-          :loading="bulkRestarting"
-          :disabled="items.length === 0"
-        >
+        <el-button class="al-restart-btn" @click="openBulkContinueDialog" :loading="bulkRestarting" :disabled="items.length === 0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-          {{ selectedMap.size > 0 ? `一键继续 (${selectedMap.size})` : '一键继续 AI 生成' }}
+          {{ selectedMap.size > 0 ? `一键继续 (${selectedMap.size})` : '一键继续' }}
         </el-button>
-        <el-button
-          class="al-gen-btn"
-          :loading="bulkVideoGenerating"
-          :disabled="total === 0"
-          @click="handleBulkVideoGenerate"
-        >
+        <el-button class="al-gen-btn" :loading="bulkVideoGenerating" :disabled="total === 0" @click="handleBulkVideoGenerate">
           <svg v-if="!bulkVideoGenerating" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          {{ bulkVideoGenerating ? `${bulkVideoGenProgress.current}/${bulkVideoGenProgress.total} 账号` : selectedMap.size > 0 ? `一键生成 (${selectedMap.size})` : '一键生成' }}
+          {{ bulkVideoGenerating ? `${bulkVideoGenProgress.current}/${bulkVideoGenProgress.total}` : selectedMap.size > 0 ? `一键生成 (${selectedMap.size})` : '一键生成' }}
         </el-button>
-        <el-button
-          class="al-schedule-btn"
-          :disabled="total === 0"
-          @click="openBulkScheduleDialog"
-        >
+        <el-button class="al-schedule-btn" :disabled="total === 0" @click="openBulkScheduleDialog">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           {{ selectedMap.size > 0 ? `一键定时 (${selectedMap.size})` : '一键定时' }}
         </el-button>
-        <el-button
-          class="al-supplement-btn"
-          :disabled="total === 0"
-          @click="openSupplementDialog"
-        >
+        <el-button class="al-supplement-btn" :disabled="total === 0" @click="openSupplementDialog">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           {{ selectedMap.size > 0 ? `补充模板 (${selectedMap.size})` : '补充模板' }}
+        </el-button>
+        <el-button class="al-namehandle-btn" :loading="bulkNameHandleLoading" :disabled="total === 0" @click="confirmBulkNameHandle">
+          <svg v-if="!bulkNameHandleLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          {{ selectedMap.size > 0 ? `生成Handle (${selectedMap.size})` : '生成Handle' }}
+        </el-button>
+        <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
+          <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          {{ downloading ? '下载中...' : selectedMap.size > 0 ? `下载 (${selectedMap.size})` : '下载视频' }}
         </el-button>
         <el-button type="primary" class="al-add-btn" @click="$router.push('/dashboard/accounts/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -152,6 +134,35 @@
               </el-select>
             </el-form-item>
           </div>
+        </div>
+
+        <!-- 批量生成名称/Handle/签名 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">批量生成：独享号 &amp; 人设号 Prompt</span>
+            <span class="ai-cfg-desc">
+              基于绑定的 TikTok 博主信息生成，可用占位符：
+              <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px">{blogger_name}</code>
+              <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px">{blogger_handle}</code>
+              <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px">{blogger_signature}</code>
+            </span>
+          </div>
+          <el-form-item label="独享号/人设号 Prompt">
+            <el-input v-model="aiSettingsForm.ai_account_exclusive_name_prompt" type="textarea" :rows="4" placeholder="例：参考博主 {blogger_name}（@{blogger_handle}）的简介「{blogger_signature}」，为新账号生成一个创意名称、handle 和个人签名..." />
+          </el-form-item>
+        </div>
+
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">批量生成：共享号 Prompt</span>
+            <span class="ai-cfg-desc">
+              基于绑定的标签关键词生成，可用占位符：
+              <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px">{keyword}</code>
+            </span>
+          </div>
+          <el-form-item label="共享号 Prompt">
+            <el-input v-model="aiSettingsForm.ai_account_shared_name_prompt" type="textarea" :rows="4" placeholder="例：根据关键词「{keyword}」，为一个共享账号生成博主名称、handle 和签名..." />
+          </el-form-item>
         </div>
 
       </div>
@@ -502,9 +513,13 @@
             <!-- 账号名称 -->
             <td class="al-td al-td-name">
               <div class="al-name-main">{{ item.account_name }}</div>
+              <div v-if="item.account_handle || item.account_signature" class="al-name-handle">
+                <span v-if="item.account_handle" class="al-handle">@{{ item.account_handle }}</span>
+                <span v-if="item.account_signature" class="al-signature">{{ item.account_signature }}</span>
+              </div>
               <div class="al-name-meta">
-                <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'traffic'}`">
-                  {{ item.account_type === 'persona' ? '人设号' : '流量号' }}
+                <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'exclusive'}`">
+                  {{ item.account_type === 'persona' ? '人设号' : item.account_type === 'exclusive' ? '独享号' : '共享号' }}
                 </span>
                 <span
                   class="ac-type-badge ac-face-badge"
@@ -786,12 +801,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
-import { fetchTemplatesByBlogger, fetchTemplatesByTags } from '../api/video_ai_templates'
 import { downloadLatestPublishedVideos } from '../api/video_tasks'
 
 const route = useRoute()
@@ -986,6 +1000,23 @@ const bulkFlagMode = ref('bind') // 'bind' | 'unbind'
 const bulkFlagSelectedIds = ref([])
 const bulkFlagSaving = ref(false)
 
+// 批量生成名称/Handle/签名
+const bulkNameHandleLoading = ref(false)
+
+async function confirmBulkNameHandle() {
+  if (bulkNameHandleLoading.value) return
+  bulkNameHandleLoading.value = true
+  try {
+    const ids = selectedMap.value.size > 0 ? [...selectedMap.value.keys()] : null
+    const result = await bulkGenerateNameHandle(ids)
+    ElMessage.success(`已入队 ${result.queued_count} 个账号，生成完成后请刷新列表查看`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败')
+  } finally {
+    bulkNameHandleLoading.value = false
+  }
+}
+
 function openBulkFlagDialog(mode) {
   if (selectedIds.value.size === 0) {
     ElMessage.warning('请先勾选账号')
@@ -1086,6 +1117,8 @@ const aiSettingsForm = ref({
   ai_account_avatar_quality: '1K',
   ai_account_photo_image_prompt: '',
   ai_account_painting_prompt: '',
+  ai_account_exclusive_name_prompt: '',
+  ai_account_shared_name_prompt: '',
 })
 
 async function openAISettings() {
@@ -1105,6 +1138,8 @@ async function openAISettings() {
     aiSettingsForm.value.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
     aiSettingsForm.value.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
     aiSettingsForm.value.ai_account_painting_prompt = data.ai_account_painting_prompt || ''
+    aiSettingsForm.value.ai_account_exclusive_name_prompt = data.ai_account_exclusive_name_prompt || ''
+    aiSettingsForm.value.ai_account_shared_name_prompt = data.ai_account_shared_name_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -1130,6 +1165,8 @@ async function saveAISettings() {
       ai_account_avatar_quality: aiSettingsForm.value.ai_account_avatar_quality,
       ai_account_photo_image_prompt: aiSettingsForm.value.ai_account_photo_image_prompt,
       ai_account_painting_prompt: aiSettingsForm.value.ai_account_painting_prompt,
+      ai_account_exclusive_name_prompt: aiSettingsForm.value.ai_account_exclusive_name_prompt,
+      ai_account_shared_name_prompt: aiSettingsForm.value.ai_account_shared_name_prompt,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')
@@ -1556,6 +1593,32 @@ onMounted(() => {
   gap: 12px;
 }
 
+.al-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.al-more-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid #e2e8f0 !important;
+  background: #f8fafc !important;
+  color: #475569 !important;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.al-more-btn:hover {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #1e293b !important;
+}
+
 .al-title {
   font-size: 26px;
   font-weight: 800;
@@ -1655,12 +1718,12 @@ onMounted(() => {
 
 .al-th-check    { width: 44px; text-align: center; left: 0; border-right: 1px solid #e8edf5; }
 .al-th-media    { width: 110px; left: 44px; border-right: 1px solid #e8edf5; }
-.al-th-name     { width: 220px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
-.al-th-platform { width: 140px; }
+.al-th-name     { width: 280px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
+.al-th-platform { width: 180px; }
 .al-th-stat     { width: 90px; text-align: right; }
 .al-th-date     { width: 130px; }
 .al-th-flags    { width: 160px; }
-.al-th-tags     { width: 180px; }
+.al-th-tags     { width: 220px; }
 .al-th-actions  { width: 160px; text-align: center; }
 
 .al-tr {
@@ -1695,7 +1758,7 @@ onMounted(() => {
 
 .al-td-check  { text-align: center; width: 44px; left: 0; border-right: 1px solid #f1f5f9; }
 .al-td-media  { width: 110px; left: 44px; border-right: 1px solid #f1f5f9; }
-.al-td-name   { width: 220px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
+.al-td-name   { width: 280px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
 .al-td-flags   { width: 160px; }
 .al-td-actions { text-align: center; width: 160px; }
 
@@ -1704,11 +1767,32 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   width: 100%;
+}
+.al-name-handle {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 4px;
+  min-width: 0;
+  width: 100%;
+}
+.al-handle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6366f1;
+}
+.al-signature {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .al-tr:hover .al-td.al-td-check,
 .al-tr:hover .al-td.al-td-media,
@@ -1990,9 +2074,15 @@ onMounted(() => {
   color: #6d28d9;
 }
 
-.ac-type-traffic {
+.ac-type-traffic,
+.ac-type-shared {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.ac-type-exclusive {
+  background: #fef3c7;
+  color: #d97706;
 }
 
 .ac-face-yes {
@@ -2443,6 +2533,28 @@ onMounted(() => {
 .al-supplement-btn:active { transform: translateY(1px); }
 .al-supplement-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
 
+.al-namehandle-btn {
+  font-weight: 600;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(124,58,237,0.2) !important;
+  background: rgba(124,58,237,0.06) !important;
+  color: #6d28d9 !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.al-namehandle-btn:hover:not(:disabled) {
+  background: rgba(124,58,237,0.12) !important;
+  border-color: rgba(124,58,237,0.4) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124,58,237,0.16);
+}
+.al-namehandle-btn:active { transform: translateY(1px); }
+.al-namehandle-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
 /* 补充模板弹窗 */
 .al-supplement-body {
   display: flex;
@@ -2787,6 +2899,18 @@ onMounted(() => {
   background: #ef4444;
   color: #fff;
   border-color: #ef4444;
+}
+
+.al-bulk-action-btn.is-generate {
+  border-color: #a78bfa;
+  background: #fff;
+  color: #7c3aed;
+}
+
+.al-bulk-action-btn.is-generate:hover {
+  background: #7c3aed;
+  color: #fff;
+  border-color: #7c3aed;
 }
 
 .al-bulk-clear-btn {

@@ -1,7 +1,7 @@
 """
 视频 Logo 拼接服务
 
-- traffic（流量号）：拼接 logo_traffic.mp4，原视频音频末尾 1s 淡出，logo 音频 +30dB 并 1s 淡入
+- shared（共享号）/ exclusive（独享号）：拼接 logo_traffic.mp4，原视频音频末尾 1s 淡出，logo 音频 +30dB 并 1s 淡入
 - persona（人设号）：拼接 logo_persona.mp4，不调整音量，不淡入
 """
 from __future__ import annotations
@@ -19,7 +19,9 @@ logger = logging.getLogger("app.video_logo_service")
 
 _APP_DIR = os.path.join(os.path.dirname(__file__), "..")
 _LOGO_PATHS = {
-    "traffic": os.path.join(_APP_DIR, "logo_traffic.mp4"),
+    "shared": os.path.join(_APP_DIR, "logo_traffic.mp4"),
+    "exclusive": os.path.join(_APP_DIR, "logo_traffic.mp4"),
+    "traffic": os.path.join(_APP_DIR, "logo_traffic.mp4"),  # 兼容旧数据
     "persona": os.path.join(_APP_DIR, "logo_persona.mp4"),
 }
 
@@ -28,7 +30,7 @@ async def concat_video_with_logo(source_video_url: str, account_type: str = "tra
     """
     下载源视频，根据 account_type 拼接对应 logo，上传并返回拼接后的 CDN URL。
     """
-    logo_path = os.path.abspath(_LOGO_PATHS.get(account_type, _LOGO_PATHS["traffic"]))
+    logo_path = os.path.abspath(_LOGO_PATHS.get(account_type, _LOGO_PATHS["shared"]))
     if not os.path.isfile(logo_path):
         raise RuntimeError(f"Logo 文件不存在: {logo_path}")
 
@@ -114,7 +116,7 @@ async def _ffmpeg_concat(
     """
     用 ffmpeg 拼接视频。
 
-    traffic: 源音频末尾 1s 淡出，logo 音频 +30dB 并 1s 淡入
+    shared/exclusive: 源音频末尾 1s 淡出，logo 音频 +30dB 并 1s 淡入
     persona: 源音频末尾 1s 淡出，logo 音频原样直接拼接
     """
     fade_out_start = max(0, src_duration - 1.0)
@@ -137,7 +139,7 @@ async def _ffmpeg_concat(
     src_audio = f"[0:a]afade=t=out:st={fade_out_start}:d=1[a0];"
 
     # logo 音频处理
-    if account_type == "traffic":
+    if account_type in ("traffic", "shared", "exclusive"):
         logo_audio = f"[1:a]volume=30dB,afade=t=in:st=0:d=1[a1];"
     else:
         logo_audio = f"[1:a]anull[a1];"

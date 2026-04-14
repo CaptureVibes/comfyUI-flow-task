@@ -95,6 +95,9 @@ class PipelineSettingsPayload(BaseModel):
     # 人脸选择配置
     face_select_model: str = "gemini-3.1-pro-preview"
     face_select_prompt: str = ""
+    # 批量生成名称/handle/签名 Prompt
+    ai_account_exclusive_name_prompt: str = ""
+    ai_account_shared_name_prompt: str = ""
 
 
 class CandidateBatchAIReviewRequest(BaseModel):

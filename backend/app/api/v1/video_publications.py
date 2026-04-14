@@ -141,7 +141,8 @@ async def export_publication_stats(
     for item in items:
         name = item.account_name or "未知账号"
         if name not in blogger_map:
-            account_type = "人设号" if item.account_type == "persona" else "流量号"
+            _type_map = {"persona": "人设号", "shared": "共享号", "exclusive": "独享号"}
+            account_type = _type_map.get(item.account_type or "", "共享号")
             blogger_map[name] = {"account_type": account_type, "dates": {}}
         dt = item.published_at or item.created_at
         if not dt:

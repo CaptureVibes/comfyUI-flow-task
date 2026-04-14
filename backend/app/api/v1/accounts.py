@@ -26,6 +26,7 @@ from app.schemas.account import (
     BoundBloggerRead, BoundFlagRead, BoundTagRead, ScheduledPublishConfig,
     AIGenerateBody, AIGenerateStatusResponse, BindTagBody, BulkGenerateAIAccountsResponse,
     BulkResumeAIAccountsResponse, ResumeAIGenerationBody, SelectPhotoCandidateBody,
+    BulkGenerateNameHandleBody, BulkGenerateNameHandleResponse,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -614,6 +615,28 @@ async def bulk_restart_ai_generation(
             logger.error("Failed to restart account %s: %s", aid_str, e)
 
     return {"status": "restarted", "count": len(body.account_ids)}
+
+
+@router.post("/bulk-generate-name-handle", response_model=BulkGenerateNameHandleResponse, status_code=202)
+async def bulk_generate_name_handle(
+    body: BulkGenerateNameHandleBody,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> BulkGenerateNameHandleResponse:
+    """批量为账号 AI 生成名称/Handle/签名。"""
+    from app.services.name_handle_service import enqueue_name_handle_generation
+
+    owner_id = current_user.user_id
+    stmt = select(Account.id).where(Account.owner_id == owner_id)
+    if body.account_ids:
+        stmt = stmt.where(Account.id.in_(body.account_ids))
+
+    account_ids = [str(aid) for aid in (await session.execute(stmt)).scalars().all()]
+    if not account_ids:
+        return BulkGenerateNameHandleResponse(status="no_accounts", queued_count=0)
+
+    queued_count = await enqueue_name_handle_generation(account_ids)
+    return BulkGenerateNameHandleResponse(status="queued", queued_count=queued_count)
 
 
 # ── 账号-标签绑定 ──────────────────────────────────────────────────────────────

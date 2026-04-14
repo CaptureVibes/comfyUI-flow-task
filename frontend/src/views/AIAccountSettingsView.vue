@@ -136,6 +136,48 @@
         </div>
       </div>
 
+      <!-- 批量生成名称/Handle/签名 Prompt 配置 -->
+      <div class="aias-card">
+        <div class="aias-section">
+          <div class="aias-section-header">
+            <span class="aias-section-tag">批量生成：独享号 &amp; 人设号</span>
+            <span class="aias-section-desc">
+              基于绑定的 TikTok 博主信息生成名称/Handle/签名，可用占位符：
+              <code>{blogger_name}</code>、<code>{blogger_handle}</code>、<code>{blogger_signature}</code>
+            </span>
+          </div>
+          <el-form-item label="独享号/人设号 Prompt">
+            <el-input
+              v-model="form.ai_account_exclusive_name_prompt"
+              type="textarea"
+              :rows="5"
+              placeholder="例：参考博主 {blogger_name}（@{blogger_handle}）的简介「{blogger_signature}」，为新账号生成一个创意名称、handle 和个人签名..."
+              class="aias-input"
+            />
+          </el-form-item>
+        </div>
+      </div>
+
+      <div class="aias-card">
+        <div class="aias-section">
+          <div class="aias-section-header">
+            <span class="aias-section-tag">批量生成：共享号</span>
+            <span class="aias-section-desc">
+              基于绑定的标签关键词生成名称/Handle/签名，可用占位符：<code>{keyword}</code>
+            </span>
+          </div>
+          <el-form-item label="共享号 Prompt">
+            <el-input
+              v-model="form.ai_account_shared_name_prompt"
+              type="textarea"
+              :rows="5"
+              placeholder="例：根据关键词「{keyword}」，为一个共享账号生成博主名称、handle 和签名..."
+              class="aias-input"
+            />
+          </el-form-item>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
@@ -164,6 +206,9 @@ const form = reactive({
   ai_account_photo_image_prompt: '',
   // 彩绘图生成
   ai_account_painting_prompt: '',
+  // 批量生成名称/handle/签名
+  ai_account_exclusive_name_prompt: '',
+  ai_account_shared_name_prompt: '',
   // 保留其他字段，保存时透传
   _pipeline: null,
 })
@@ -183,6 +228,8 @@ async function loadSettings() {
     form.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
     form.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
     form.ai_account_painting_prompt = data.ai_account_painting_prompt || ''
+    form.ai_account_exclusive_name_prompt = data.ai_account_exclusive_name_prompt || ''
+    form.ai_account_shared_name_prompt = data.ai_account_shared_name_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -207,6 +254,8 @@ async function handleSave() {
       ai_account_avatar_quality: form.ai_account_avatar_quality,
       ai_account_photo_image_prompt: form.ai_account_photo_image_prompt,
       ai_account_painting_prompt: form.ai_account_painting_prompt,
+      ai_account_exclusive_name_prompt: form.ai_account_exclusive_name_prompt,
+      ai_account_shared_name_prompt: form.ai_account_shared_name_prompt,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')

@@ -121,3 +121,9 @@ export async function bulkGenerateVideoTasks(accountIds, mode = 'unused', limit 
   })
   return data
 }
+
+export async function bulkGenerateNameHandle(accountIds = null) {
+  const payload = accountIds && accountIds.length > 0 ? { account_ids: accountIds } : {}
+  const { data } = await http.post('/accounts/bulk-generate-name-handle', payload)
+  return data
+}

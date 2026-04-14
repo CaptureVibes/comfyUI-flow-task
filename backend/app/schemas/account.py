@@ -37,7 +37,7 @@ SocialBinding = Annotated[
 
 class AccountCreate(BaseModel):
     account_name: str = Field(min_length=1, max_length=200)
-    account_type: Literal["persona", "traffic"] = "traffic"
+    account_type: Literal["persona", "shared", "exclusive"] = "exclusive"
     face_mode: Literal["face", "no_face"] = "face"
     gender: Literal["male", "female", "unisex"] = "female"
     style_description: str | None = None
@@ -49,7 +49,9 @@ class AccountCreate(BaseModel):
 
 class AccountPatch(BaseModel):
     account_name: str | None = Field(default=None, min_length=1, max_length=200)
-    account_type: Literal["persona", "traffic"] | None = None
+    account_handle: str | None = None
+    account_signature: str | None = None
+    account_type: Literal["persona", "shared", "exclusive"] | None = None
     face_mode: Literal["face", "no_face"] | None = None
     gender: Literal["male", "female", "unisex"] | None = None  # None 表示不修改
     style_description: str | None = None
@@ -181,11 +183,22 @@ class AccountPerformanceSnapshot(BaseModel):
     latest_video_published_at: datetime | None = None
 
 
+class BulkGenerateNameHandleBody(BaseModel):
+    account_ids: list[uuid.UUID] | None = None
+
+
+class BulkGenerateNameHandleResponse(BaseModel):
+    status: str
+    queued_count: int = 0
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
     account_name: str
-    account_type: str = "traffic"
+    account_handle: str | None = None
+    account_signature: str | None = None
+    account_type: str = "exclusive"
     face_mode: str = "face"
     gender: str = "female"
     style_description: str | None
