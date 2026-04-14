@@ -121,6 +121,7 @@ class VideoPublicationStatsListItem(BaseModel):
     published_at: datetime | None = None
     title: str | None = None
     description: str | None = None
+    social_bindings: list | None = None
     channels_status: list[VideoPublicationChannelStatus] | None = None
     metrics_snapshot: VideoPublicationMetricsSnapshot | None = None
     metrics_channels: list[VideoPublicationStatsChannel] = Field(default_factory=list)

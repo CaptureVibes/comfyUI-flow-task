@@ -1,10 +1,10 @@
 import asyncio
 import hashlib
-
 import hmac
 import json
 import logging
 import uuid
+from abc import ABC, abstractmethod
 from datetime import datetime, date, timezone
 from typing import Any
 
@@ -24,7 +24,7 @@ from app.schemas.video_publication import (
 logger = logging.getLogger("app.video_publication_service")
 
 # ── 后台轮询器 ──────────────────────────────────────────────────────────────────
-_POLL_INTERVAL_SECONDS = 60.0
+_POLL_INTERVAL_SECONDS = 600.0
 _poller_task: asyncio.Task | None = None
 _poller_stop_event: asyncio.Event | None = None
 
@@ -83,7 +83,7 @@ async def _poll_once() -> None:
     async with SessionLocal() as db:
         result = await db.execute(
             select(VideoPublication).where(
-                VideoPublication.status.in_(["pending", "processing", "uploading"])
+                VideoPublication.status.in_(["pending", "processing", "uploading", "partial"])
             )
         )
         pub_ids: list[uuid.UUID] = [p.id for p in result.scalars().all()]
@@ -286,15 +286,42 @@ class ExtPubAPIClient:
     def _headers(self) -> dict:
         return {"X-API-Key": self.api_key, "Content-Type": "application/json"}
 
-    async def fetch_platform_accounts(self) -> dict:
-        """获取平台账号列表（即外部频道列表）"""
+    async def fetch_platform_accounts(self, platform: str | None = None) -> dict:
+        """获取平台账号列表（即外部频道列表），可按 platform 过滤"""
+        params: dict = {}
+        if platform:
+            params["platform"] = platform
         async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+            logger.info(
+                "ExtPubAPI platform-accounts request: url=%s params=%s",
+                f"{self.base_url}/api/platform-accounts",
+                params,
+            )
             response = await client.get(
                 f"{self.base_url}/api/platform-accounts",
+                params=params,
                 headers=self._headers(),
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            data = result.get("data") if isinstance(result, dict) else {}
+            items = data.get("items") if isinstance(data, dict) else []
+            platform_counts: dict[str, int] = {}
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    item_platform = str(item.get("platform_type") or "")
+                    platform_counts[item_platform] = platform_counts.get(item_platform, 0) + 1
+            logger.info(
+                "ExtPubAPI platform-accounts response: requested_platform=%s status_code=%s total=%s returned_items=%s platform_counts=%s",
+                platform,
+                response.status_code,
+                data.get("total") if isinstance(data, dict) else None,
+                len(items) if isinstance(items, list) else None,
+                platform_counts,
+            )
+            return result
 
     async def create_post(self, payload: dict) -> dict:
         """创建发布任务"""
@@ -307,46 +334,114 @@ class ExtPubAPIClient:
             response.raise_for_status()
             return response.json()
 
+    async def fetch_post_detail(self, business_id: str) -> dict:
+        """查询发布任务详情（用于轮询状态）"""
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            response = await client.get(
+                f"{self.base_url}/api/posts/detail",
+                params={"business_id": business_id},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return response.json()
 
-class VideoPublicationService:
-    """视频发布服务"""
 
-    def __init__(self, db: AsyncSession):
-        self.db = db
-        self.open_api = OpenAPIClient()
-        self.ext_pub = ExtPubAPIClient()
+# ── 发布适配器 ──────────────────────────────────────────────────────────────────
 
-    async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
-        """创建发布任务。
+# ── 频道级状态工具 ──────────────────────────────────────────────────────────────
 
-        channels 中每条可携带 channel_source 字段：
-          - "openapi"（默认）：走原 Open API 发布
-          - "ext_pub"：走外部发布 API（POST /api/posts）
-        同一次发布请求的所有 channels 必须使用同一来源；若混合则以第一条为准。
+# 每条 channel_status 的 _source 字段值
+_SOURCE_OPENAPI = "openapi"
+_SOURCE_EXT_PUB = "ext_pub"
+
+# 终态集合
+_TERMINAL_STATUSES = {"completed", "published", "failed"}
+_SUCCESS_STATUSES = {"completed", "published"}
+_FAILED_STATUSES = {"failed"}
+
+
+def _compute_publication_status(channels_status: list[dict]) -> str:
+    """根据全部平台频道级状态列表计算汇总发布状态。
+
+    规则：
+    - 全部为终态且全成功 → completed
+    - 全部为终态且全失败 → failed
+    - 全部为终态有成有败 → partial
+    - 有任何非终态 → processing
+    - 空列表 → pending
+    """
+    if not channels_status:
+        return "pending"
+
+    statuses = [c.get("status", "") for c in channels_status]
+    all_terminal = all(s in _TERMINAL_STATUSES for s in statuses)
+
+    if not all_terminal:
+        return "processing"
+
+    success = sum(1 for s in statuses if s in _SUCCESS_STATUSES)
+    failed = sum(1 for s in statuses if s in _FAILED_STATUSES)
+
+    if success > 0 and failed == 0:
+        return "completed"
+    if failed > 0 and success == 0:
+        return "failed"
+    return "partial"
+
+
+class PublishAdapter(ABC):
+    """发布适配器抽象基类。
+
+    适配器只负责与单侧外部 API 通信，不直接读写 VideoPublication：
+    - submit()    → 调用外部 API 提交发布，返回该侧的初始频道状态列表
+    - sync_status() → 轮询外部 API，返回该侧最新频道状态列表（覆盖对应 _source 条目）
+    """
+
+    @abstractmethod
+    async def submit(
+        self,
+        data: "VideoPublicationCreate",
+        channels: list[dict],
+    ) -> tuple[str | None, list[dict]]:
+        """提交发布，返回 (task_id_or_none, channel_status_list)。
+
+        channel_status_list 每条格式：
+        {
+          "platform": str,
+          "channel_id": str,
+          "channel_name": str,
+          "status": "pending"|"uploading"|"completed"|"failed",
+          "platform_video_id": str|None,
+          "platform_video_url": str|None,
+          "error_message": str|None,
+          "uploaded_at": str|None,
+          "_source": "openapi"|"ext_pub",   # 内部标记，用于区分来源
+        }
         """
-        # 按 channel_source 分组
-        ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
-        openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
 
-        logger.info(
-            "create_publication routing: sub_task_id=%s all_channels=%s ext_channels=%s openapi_channels=%s",
-            data.sub_task_id,
-            data.channels,
-            ext_channels,
-            openapi_channels,
-        )
+    @abstractmethod
+    async def sync_status(
+        self,
+        publication: "VideoPublication",
+    ) -> list[dict]:
+        """轮询外部 API，返回该侧最新频道状态列表（格式同 submit）。
+        若无更新或不适用，返回空列表。
+        """
 
-        if ext_channels and not openapi_channels:
-            logger.info("create_publication -> ext_pub path")
-            return await self._create_ext_pub_publication(data, ext_channels)
-        else:
-            logger.info("create_publication -> openapi path")
-            return await self._create_openapi_publication(data, openapi_channels or data.channels)
 
-    async def _create_openapi_publication(self, data: VideoPublicationCreate, channels: list[dict]) -> VideoPublication:
-        """通过原 Open API 发布"""
+class OpenAPIAdapter(PublishAdapter):
+    """通过内部 Open API 发布的适配器。"""
+
+    def __init__(self, client: OpenAPIClient):
+        self.client = client
+
+    async def submit(
+        self,
+        data: "VideoPublicationCreate",
+        channels: list[dict],
+    ) -> tuple[str | None, list[dict]]:
         callback_url = data.callback_url or settings.open_api_callback_url or None
-        request_payload = {
+        api_payload: dict = {
             "video_url": data.video_url,
             "original_video_url": data.original_video_url or data.video_url,
             "video_type": data.video_type or "traffic",
@@ -357,109 +452,312 @@ class VideoPublicationService:
             "external_id": str(data.sub_task_id),
         }
         if callback_url:
-            request_payload["callback_url"] = callback_url
+            api_payload["callback_url"] = callback_url
 
-        try:
-            response = await self.open_api.create_upload_task(request_payload)
+        response = await self.client.create_upload_task(api_payload)
+        if response.get("code") != 0:
+            raise ValueError(response.get("message", "Open API 返回错误"))
 
-            if response.get("code") != 0:
-                raise ValueError(response.get("message", "Open API 返回错误"))
+        response_data = response.get("data", {})
+        task_id: str | None = response_data.get("task_id")
 
-            response_data = response.get("data", {})
+        # 将 Open API 返回的 channels 列表规范化，补 _source 标记
+        raw_channels: list[dict] = response_data.get("channels") or []
+        if raw_channels:
+            channel_statuses = [
+                {**ch, "_source": _SOURCE_OPENAPI} for ch in raw_channels
+            ]
+        else:
+            # Open API 没返回 channels 时，用请求的 channels 构造 pending 条目
+            channel_statuses = [
+                {
+                    "platform": c["platform"],
+                    "channel_id": c["channel_id"],
+                    "channel_name": c.get("channel_name", ""),
+                    "status": "pending",
+                    "platform_video_id": None,
+                    "platform_video_url": None,
+                    "error_message": None,
+                    "uploaded_at": None,
+                    "_source": _SOURCE_OPENAPI,
+                }
+                for c in channels
+            ]
 
-            publication = VideoPublication(
-                sub_task_id=data.sub_task_id,
-                open_api_task_id=response_data.get("task_id"),
-                external_id=str(data.sub_task_id),
-                status=response_data.get("status", "pending"),
-                request_payload=request_payload,
-                response_data=response_data,
-                total_channels=response_data.get("total_channels", len(channels)),
-                completed_channels=response_data.get("completed_channels", 0),
-                failed_channels=response_data.get("failed_channels", 0),
-                channels_status=response_data.get("channels"),
-            )
+        logger.info(
+            "OpenAPIAdapter.submit: task_id=%s channels=%s",
+            task_id, channel_statuses,
+        )
+        return task_id, channel_statuses
 
-            self.db.add(publication)
-            await self.db.commit()
-            await self.db.refresh(publication)
-            return publication
+    async def sync_status(self, publication: "VideoPublication") -> list[dict]:
+        """调用 Open API 查询状态，返回 openapi 侧最新频道状态列表。"""
+        payload = publication.request_payload or {}
+        task_id = publication.open_api_task_id
+        if not task_id:
+            logger.debug("OpenAPIAdapter.sync_status: publication %s 无 open_api_task_id，跳过", publication.id)
+            return []
 
-        except httpx.HTTPError as e:
-            publication = VideoPublication(
-                sub_task_id=data.sub_task_id,
-                external_id=str(data.sub_task_id),
-                status="failed",
-                request_payload=request_payload,
-                total_channels=len(channels),
-                error_message=f"Open API 请求失败: {str(e)}",
-            )
-            self.db.add(publication)
-            await self.db.commit()
-            await self.db.refresh(publication)
-            raise
+        response = await self.client.fetch_upload_status(
+            task_id=task_id,
+            external_id=publication.external_id,
+        )
+        if response.get("code") != 0:
+            raise ValueError(response.get("message", "Open API 返回错误"))
 
-    async def _create_ext_pub_publication(self, data: VideoPublicationCreate, channels: list[dict]) -> VideoPublication:
-        """通过外部发布 API（POST /api/posts）发布"""
-        request_payload = {
-            "_channel_source": "ext_pub",
+        response_data = response.get("data", {})
+        raw_channels: list[dict] = response_data.get("channels") or []
+        result = [{**ch, "_source": _SOURCE_OPENAPI} for ch in raw_channels]
+        logger.info(
+            "OpenAPIAdapter.sync_status: publication=%s task_id=%s channels=%s",
+            publication.id, task_id, result,
+        )
+        return result
+
+
+class ExtPubAdapter(PublishAdapter):
+    """通过外部发布 API（POST /api/posts）发布的适配器。"""
+
+    # 外部 API 的 publish.status → 内部 channel status 映射
+    _CHANNEL_STATUS_MAP = {
+        "pending":    "pending",
+        "completed":  "completed",
+        "published":  "completed",   # 历史兼容值
+        "failed":     "failed",
+    }
+
+    def __init__(self, client: ExtPubAPIClient):
+        self.client = client
+
+    async def submit(
+        self,
+        data: "VideoPublicationCreate",
+        channels: list[dict],
+    ) -> tuple[str | None, list[dict]]:
+        api_payload: dict = {
             "post_type": "video",
             "title": data.title,
             "content": data.description or "",
             "tags": data.tags or [],
             "video_url": data.video_url,
             "business_id": str(data.sub_task_id),
-            "channels": [
-                {"platform": c["platform"], "channel_id": c["channel_id"]}
-                for c in channels
-            ],
+            "accounts": [{"id": c["channel_id"]} for c in channels],
         }
         logger.info(
-            "ExtPubAPI create_post request: sub_task_id=%s payload=%s",
-            data.sub_task_id,
-            request_payload,
+            "ExtPubAdapter.submit: sub_task_id=%s payload=%s",
+            data.sub_task_id, api_payload,
         )
 
+        response = await self.client.create_post(api_payload)
+        logger.info("ExtPubAdapter.submit response: %s", response)
+
+        response_data = response if isinstance(response, dict) else {}
+        # 外部 API 返回 {code, message, data: {id, ...}}
+        post_data = response_data.get("data") or {}
+        task_id: str | None = str(post_data.get("id")) if post_data.get("id") else None
+
+        # 提交时外部 API 不返回各频道状态，用请求的 channels 构造 pending 条目
+        # 频道名从请求的 binding 中取（ext_pub 的 channel_id 是 platform_account id）
+        channel_statuses = [
+            {
+                "platform": c.get("platform", ""),
+                "channel_id": c["channel_id"],
+                "channel_name": c.get("channel_name", ""),
+                "status": "pending",
+                "platform_video_id": None,
+                "platform_video_url": None,
+                "error_message": None,
+                "uploaded_at": None,
+                "_source": _SOURCE_EXT_PUB,
+            }
+            for c in channels
+        ]
+
+        logger.info(
+            "ExtPubAdapter.submit: task_id=%s channels=%s",
+            task_id, channel_statuses,
+        )
+        return task_id, channel_statuses
+
+    async def sync_status(self, publication: "VideoPublication") -> list[dict]:
+        """通过 GET /api/posts/detail?business_id= 轮询外部发布状态。"""
+        business_id = publication.external_id
+        if not business_id:
+            logger.warning("ExtPubAdapter.sync_status: publication %s 缺少 external_id，跳过", publication.id)
+            return []
+
         try:
-            response = await self.ext_pub.create_post(request_payload)
-            logger.info("ExtPubAPI create_post response: %s", response)
-            response_data = response if isinstance(response, dict) else {}
-
-            publication = VideoPublication(
-                sub_task_id=data.sub_task_id,
-                open_api_task_id=str(response_data.get("id") or response_data.get("task_id") or ""),
-                external_id=str(data.sub_task_id),
-                status="pending",
-                request_payload=request_payload,
-                response_data=response_data,
-                total_channels=len(channels),
-                completed_channels=0,
-                failed_channels=0,
-            )
-
-            self.db.add(publication)
-            await self.db.commit()
-            await self.db.refresh(publication)
-            return publication
-
-        except httpx.HTTPError as e:
-            resp_body = getattr(getattr(e, "response", None), "text", "")
-            logger.error(
-                "ExtPubAPI create_post failed: %s | response_body=%s | payload=%s",
-                e, resp_body, request_payload,
-            )
-            publication = VideoPublication(
-                sub_task_id=data.sub_task_id,
-                external_id=str(data.sub_task_id),
-                status="failed",
-                request_payload=request_payload,
-                total_channels=len(channels),
-                error_message=f"外部发布 API 请求失败: {str(e)}",
-            )
-            self.db.add(publication)
-            await self.db.commit()
-            await self.db.refresh(publication)
+            response = await self.client.fetch_post_detail(business_id)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.warning("ExtPubAdapter.sync_status: business_id=%s 在外部 API 中不存在", business_id)
+                return []
             raise
+
+        detail = response.get("data") if isinstance(response, dict) else None
+        if not detail:
+            logger.warning("ExtPubAdapter.sync_status: 外部 API 返回空 data, business_id=%s", business_id)
+            return []
+
+        publishes: list[dict] = detail.get("publishes") or []
+        result = [
+            {
+                "platform": p.get("platform_type", ""),
+                "channel_id": p.get("platform_account_id", ""),
+                "channel_name": p.get("nickname") or p.get("username") or "",
+                "status": self._CHANNEL_STATUS_MAP.get(p.get("status", ""), p.get("status", "pending")),
+                "platform_video_id": p.get("external_post_id"),
+                "platform_video_url": None,
+                "error_message": p.get("failed_reason"),
+                "uploaded_at": p.get("published_at"),
+                "_source": _SOURCE_EXT_PUB,
+            }
+            for p in publishes
+        ]
+        logger.info(
+            "ExtPubAdapter.sync_status: publication=%s business_id=%s channels=%s",
+            publication.id, business_id, result,
+        )
+        return result
+
+
+def _merge_channel_statuses(
+    existing: list[dict],
+    updated: list[dict],
+    source: str,
+) -> list[dict]:
+    """将 updated 中属于 source 侧的频道状态合并进 existing。
+
+    匹配键：platform + channel_id（_source 相同的条目才替换）。
+    existing 中属于其他 source 的条目保留不变。
+    updated 中有但 existing 中没有的条目追加进去。
+    """
+    # 先保留非本侧条目
+    result = [c for c in existing if c.get("_source") != source]
+    # 加入更新后的本侧条目
+    result.extend(updated)
+    return result
+
+
+class VideoPublicationService:
+    """视频发布服务"""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.open_api = OpenAPIClient()
+        self.ext_pub = ExtPubAPIClient()
+        self._openapi_adapter = OpenAPIAdapter(self.open_api)
+        self._ext_pub_adapter = ExtPubAdapter(self.ext_pub)
+
+    async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
+        """创建发布任务。
+
+        channels 中每条可携带 channel_source 字段：
+          - "openapi"（默认）：走原 Open API 发布
+          - "ext_pub"：走外部发布 API（POST /api/posts）
+
+        同一账号每个平台只能绑定一种来源，但同一次发布可以混合（如
+        YouTube 走内部、TikTok 走外部）。两侧并发提交，合并频道级状态
+        后写入一条 VideoPublication 记录。
+        """
+        ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
+        openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
+
+        logger.info(
+            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s",
+            data.sub_task_id, openapi_channels, ext_channels,
+        )
+
+        # 记录原始请求（用于 audit / 重试）
+        request_payload: dict = {
+            "video_url": data.video_url,
+            "original_video_url": data.original_video_url or data.video_url,
+            "video_type": data.video_type or "traffic",
+            "title": data.title,
+            "description": data.description,
+            "tags": data.tags or [],
+            "channels": data.channels,
+            "external_id": str(data.sub_task_id),
+            # 标记哪些来源被使用，供 sync_status 判断是否需要调用对应 adapter
+            "_has_openapi": bool(openapi_channels),
+            "_has_ext_pub": bool(ext_channels),
+        }
+
+        # 并发向两侧提交
+        open_api_task_id: str | None = None
+        all_channel_statuses: list[dict] = []
+        errors: list[str] = []
+
+        submit_tasks = []
+        if openapi_channels:
+            submit_tasks.append(("openapi", self._openapi_adapter.submit(data, openapi_channels)))
+        if ext_channels:
+            submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(data, ext_channels)))
+
+        results = await asyncio.gather(
+            *[t for _, t in submit_tasks],
+            return_exceptions=True,
+        )
+
+        for (source, _), result in zip(submit_tasks, results):
+            if isinstance(result, Exception):
+                logger.error("create_publication %s side failed: %s", source, result)
+                errors.append(f"{source}: {result}")
+                # 将该侧频道标记为 failed
+                failed_channels = ext_channels if source == "ext_pub" else openapi_channels
+                all_channel_statuses.extend([
+                    {
+                        "platform": c.get("platform", ""),
+                        "channel_id": c["channel_id"],
+                        "channel_name": c.get("channel_name", ""),
+                        "status": "failed",
+                        "platform_video_id": None,
+                        "platform_video_url": None,
+                        "error_message": str(result),
+                        "uploaded_at": None,
+                        "_source": _SOURCE_EXT_PUB if source == "ext_pub" else _SOURCE_OPENAPI,
+                    }
+                    for c in failed_channels
+                ])
+            else:
+                task_id, channel_statuses = result
+                if source == "openapi" and task_id:
+                    open_api_task_id = task_id
+                all_channel_statuses.extend(channel_statuses)
+
+        overall_status = _compute_publication_status(all_channel_statuses)
+        error_message = "; ".join(errors) if errors else None
+
+        publication = VideoPublication(
+            sub_task_id=data.sub_task_id,
+            open_api_task_id=open_api_task_id,
+            external_id=str(data.sub_task_id),
+            status=overall_status,
+            request_payload=request_payload,
+            response_data=None,
+            total_channels=len(all_channel_statuses),
+            completed_channels=sum(1 for c in all_channel_statuses if c.get("status") in _SUCCESS_STATUSES),
+            failed_channels=sum(1 for c in all_channel_statuses if c.get("status") in _FAILED_STATUSES),
+            channels_status=all_channel_statuses or None,
+            error_message=error_message,
+        )
+        if overall_status in ("completed", "partial", "failed"):
+            publication.completed_at = utcnow()
+
+        self.db.add(publication)
+        await self.db.commit()
+        await self.db.refresh(publication)
+
+        logger.info(
+            "create_publication done: sub_task_id=%s publication_id=%s status=%s",
+            data.sub_task_id, publication.id, overall_status,
+        )
+
+        # 若两侧全部提交失败则向上抛出，让调用方感知
+        if errors and len(errors) == len(submit_tasks):
+            raise RuntimeError(f"所有发布渠道提交失败: {error_message}")
+
+        return publication
 
     async def get_publication(self, publication_id: uuid.UUID) -> VideoPublication | None:
         """获取发布任务"""
@@ -623,6 +921,7 @@ class VideoPublicationService:
             account_id=getattr(task, "account_id", None),
             account_name=getattr(account, "account_name", None),
             account_type=getattr(account, "account_type", None),
+            social_bindings=getattr(account, "social_bindings", None),
             status=publication.status,
             video_url=getattr(sub_task, "result_video_url", None),
             published_at=publication.completed_at,
@@ -711,48 +1010,58 @@ class VideoPublicationService:
         return any(keyword in value.lower() for value in haystacks if value)
 
     async def sync_publication_status(self, publication_id: uuid.UUID) -> VideoPublication:
-        """从 Open API 同步发布任务状态，并同步更新 sub_task 状态"""
+        """从两侧外部 API 同步频道级状态，合并计算汇总状态，联动更新 sub_task。"""
         publication = await self.get_publication(publication_id)
         if not publication:
             raise ValueError("发布任务不存在")
 
-        # ext_pub 发布任务没有 Open API 任务 ID，无需轮询，直接跳过
-        if (publication.request_payload or {}).get("_channel_source") == "ext_pub":
-            logger.debug("sync_publication_status skip ext_pub publication %s", publication_id)
+        payload = publication.request_payload or {}
+        has_openapi = payload.get("_has_openapi", not payload.get("_has_ext_pub", False))
+        has_ext_pub = payload.get("_has_ext_pub", False)
+
+        existing_statuses: list[dict] = publication.channels_status or []
+
+        # 并发轮询两侧
+        sync_tasks = []
+        if has_openapi:
+            sync_tasks.append(("openapi", self._openapi_adapter.sync_status(publication)))
+        if has_ext_pub:
+            sync_tasks.append(("ext_pub", self._ext_pub_adapter.sync_status(publication)))
+
+        if not sync_tasks:
+            logger.debug("sync_publication_status: publication %s 无活跃适配器，跳过", publication_id)
             return publication
 
-        if not publication.open_api_task_id:
-            raise ValueError("Open API 任务 ID 不存在")
-
-        # 调用 Open API 查询状态
-        response = await self.open_api.fetch_upload_status(
-            task_id=publication.open_api_task_id,
-            external_id=publication.external_id,
+        results = await asyncio.gather(
+            *[t for _, t in sync_tasks],
+            return_exceptions=True,
         )
 
-        if response.get("code") != 0:
-            raise ValueError(response.get("message", "Open API 返回错误"))
+        merged = existing_statuses
+        for (source, _), result in zip(sync_tasks, results):
+            if isinstance(result, Exception):
+                logger.error("sync_publication_status %s side failed for %s: %s", source, publication_id, result)
+                continue
+            updated_channels: list[dict] = result
+            if updated_channels:
+                merged = _merge_channel_statuses(merged, updated_channels, source)
 
-        response_data = response.get("data", {})
-
-        # 更新发布任务状态
-        new_status = response_data.get("status", publication.status)
+        # 重新计算汇总状态
+        new_status = _compute_publication_status(merged)
         publication.status = new_status
-        publication.total_channels = response_data.get("total_channels", publication.total_channels)
-        publication.completed_channels = response_data.get("completed_channels", publication.completed_channels)
-        publication.failed_channels = response_data.get("failed_channels", publication.failed_channels)
-        publication.channels_status = response_data.get("channels")
-        publication.response_data = response_data
+        publication.channels_status = merged or None
+        publication.total_channels = len(merged)
+        publication.completed_channels = sum(1 for c in merged if c.get("status") in _SUCCESS_STATUSES)
+        publication.failed_channels = sum(1 for c in merged if c.get("status") in _FAILED_STATUSES)
 
-        if response_data.get("completed_at"):
-            from datetime import datetime
-            publication.completed_at = datetime.fromisoformat(response_data["completed_at"].replace("Z", "+00:00"))
+        if new_status in ("completed", "partial", "failed") and not publication.completed_at:
+            publication.completed_at = utcnow()
 
-        # 根据发布结果同步更新子任务状态
-        if new_status in ("completed", "partial"):
-            from sqlalchemy import select
+        # 根据终态联动更新子任务状态
+        if new_status in ("completed", "partial", "failed"):
             from sqlalchemy.orm import selectinload
             from app.models.video_task import VideoSubTask, VideoTask
+            from app.services.video_task_service import _compute_parent_status
 
             result = await self.db.execute(
                 select(VideoSubTask)
@@ -761,30 +1070,11 @@ class VideoPublicationService:
             )
             sub_task = result.scalar_one_or_none()
             if sub_task and sub_task.status == "publishing":
-                sub_task.status = "published"
-                from app.services.video_task_service import _compute_parent_status
-                sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
-
-        elif new_status == "failed":
-            from sqlalchemy import select
-            from sqlalchemy.orm import selectinload
-            from app.models.video_task import VideoSubTask, VideoTask
-
-            result = await self.db.execute(
-                select(VideoSubTask)
-                .where(VideoSubTask.id == publication.sub_task_id)
-                .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
-            )
-            sub_task = result.scalar_one_or_none()
-            if sub_task and sub_task.status == "publishing":
-                sub_task.status = "publish_failed"
-
-                from app.services.video_task_service import _compute_parent_status
+                sub_task.status = "published" if new_status in ("completed", "partial") else "publish_failed"
                 sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
 
         await self.db.commit()
         await self.db.refresh(publication)
-
         return publication
 
     async def sync_metrics_for_stats_page(
@@ -909,13 +1199,19 @@ class VideoPublicationService:
             )
             return None
 
-        # 更新 publication 状态
-        new_status = callback_data.get("status", publication.status)
-        publication.status = new_status
-        publication.total_channels = callback_data.get("total_channels", publication.total_channels)
-        publication.completed_channels = callback_data.get("completed_channels", publication.completed_channels)
-        publication.failed_channels = callback_data.get("failed_channels", publication.failed_channels)
-        publication.channels_status = callback_data.get("channels")
+        # 更新 publication 状态——只合并 openapi 侧频道状态
+        callback_channels_raw = callback_data.get("channels") or []
+        callback_channels = [{**ch, "_source": _SOURCE_OPENAPI} for ch in callback_channels_raw]
+        merged = _merge_channel_statuses(
+            publication.channels_status or [], callback_channels, _SOURCE_OPENAPI,
+        )
+
+        computed_status = _compute_publication_status(merged)
+        publication.status = computed_status
+        publication.total_channels = len(merged)
+        publication.completed_channels = sum(1 for c in merged if c.get("status") in _SUCCESS_STATUSES)
+        publication.failed_channels = sum(1 for c in merged if c.get("status") in _FAILED_STATUSES)
+        publication.channels_status = merged or None
         publication.callback_received = True
         publication.callback_received_at = utcnow()
 
@@ -928,12 +1224,12 @@ class VideoPublicationService:
                 publication.completed_at = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
 
         logger.info(
-            "handle_callback: updating publication %s to status=%s",
-            publication.id, new_status,
+            "handle_callback: updating publication %s openapi channels=%d → computed_status=%s",
+            publication.id, len(callback_channels), computed_status,
         )
 
         # 同步更新 sub_task 状态（与 sync_publication_status 保持一致）
-        if new_status in ("completed", "partial"):
+        if computed_status in ("completed", "partial", "failed"):
             from sqlalchemy.orm import selectinload
             from app.models.video_task import VideoSubTask, VideoTask
             from app.services.video_task_service import _compute_parent_status
@@ -945,26 +1241,9 @@ class VideoPublicationService:
             )
             sub_task = result.scalar_one_or_none()
             if sub_task and sub_task.status == "publishing":
-                sub_task.status = "published"
+                sub_task.status = "published" if computed_status in ("completed", "partial") else "publish_failed"
                 sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
-                logger.info("handle_callback: sub_task %s → published", sub_task.id)
-
-        elif new_status == "failed":
-            from sqlalchemy.orm import selectinload
-            from app.models.video_task import VideoSubTask, VideoTask
-            from app.services.video_task_service import _compute_parent_status
-
-            result = await self.db.execute(
-                select(VideoSubTask)
-                .where(VideoSubTask.id == publication.sub_task_id)
-                .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
-            )
-            sub_task = result.scalar_one_or_none()
-            if sub_task and sub_task.status == "publishing":
-                sub_task.status = "publish_failed"
-
-                sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
-                logger.info("handle_callback: sub_task %s → publish_failed", sub_task.id)
+                logger.info("handle_callback: sub_task %s → %s", sub_task.id, sub_task.status)
 
         await self.db.commit()
         await self.db.refresh(publication)

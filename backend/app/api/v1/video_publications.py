@@ -136,14 +136,43 @@ async def export_publication_stats(
             date_set.add(dt.strftime("%Y-%m-%d"))
     dates = sorted(date_set, reverse=True)
 
-    # 按账号名分组：{ name -> { account_type, date -> [(views, likes)] } }
+    # 收集每个 account_id 绑定的平台（优先从 social_bindings 提取）
+    _platform_labels = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}
+    account_platforms: dict[uuid.UUID | None, str] = {}
+    seen_ids: set[uuid.UUID | None] = set()
+    for item in items:
+        aid = item.account_id
+        if aid in seen_ids:
+            continue
+        seen_ids.add(aid)
+        platforms_set: set[str] = set()
+        # 优先从 account.social_bindings 提取
+        for binding in item.social_bindings or []:
+            if isinstance(binding, dict):
+                p = str(binding.get("platform") or "").lower()
+                if p:
+                    platforms_set.add(p)
+        # 兜底：从 metrics_channels 和 channels_status 补充
+        if not platforms_set:
+            for ch in item.metrics_channels:
+                p = str(ch.platform or "").lower()
+                if p:
+                    platforms_set.add(p)
+            for ch in item.channels_status or []:
+                p = str(ch.platform or "").lower()
+                if p:
+                    platforms_set.add(p)
+        account_platforms[aid] = "/".join(_platform_labels.get(p, p) for p in sorted(platforms_set))
+
+    # 按账号名分组：{ name -> { account_type, platforms, date -> [(views, likes)] } }
     blogger_map: dict[str, dict] = {}
     for item in items:
         name = item.account_name or "未知账号"
         if name not in blogger_map:
             _type_map = {"persona": "人设号", "shared": "共享号", "exclusive": "独享号"}
             account_type = _type_map.get(item.account_type or "", "共享号")
-            blogger_map[name] = {"account_type": account_type, "dates": {}}
+            platforms = account_platforms.get(item.account_id, "")
+            blogger_map[name] = {"account_type": account_type, "platforms": platforms, "dates": {}}
         dt = item.published_at or item.created_at
         if not dt:
             continue
@@ -156,9 +185,9 @@ async def export_publication_stats(
     buf = io.StringIO()
     buf.write("\ufeff")  # BOM
     writer = csv.writer(buf)
-    writer.writerow(["博主名称", "账号类型", *dates])
+    writer.writerow(["博主名称", "账号类型", "绑定平台", *dates])
     for name, info in blogger_map.items():
-        row = [name, info["account_type"]]
+        row = [name, info["account_type"], info["platforms"]]
         for day in dates:
             entries = info["dates"].get(day, [])
             row.append("\n".join(f"▶{v} ♥{l}" for v, l in entries))
@@ -454,14 +483,32 @@ async def fetch_channels(
 
 @router.get("/ext-pub/platform-accounts")
 async def fetch_ext_pub_platform_accounts(
+    platform: str | None = Query(None, description="平台过滤：tiktok/youtube/instagram"),
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取外部发布 API 的平台账号列表（代理）"""
+    """获取外部发布 API 的平台账号列表（代理，支持按平台过滤）"""
     service = VideoPublicationService(db)
     try:
-        result = await service.ext_pub.fetch_platform_accounts()
-        # 统一包装为前端期望的格式
+        logger.info("ExtPubAPI platform-accounts proxy request: platform=%s", platform)
+        result = await service.ext_pub.fetch_platform_accounts(platform=platform)
+        data = result.get("data") if isinstance(result, dict) else {}
+        items = data.get("items") if isinstance(data, dict) else []
+        platform_counts: dict[str, int] = {}
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_platform = str(item.get("platform_type") or "")
+                platform_counts[item_platform] = platform_counts.get(item_platform, 0) + 1
+        logger.info(
+            "ExtPubAPI platform-accounts proxy response: platform=%s code=%s total=%s returned_items=%s platform_counts=%s",
+            platform,
+            result.get("code") if isinstance(result, dict) else None,
+            data.get("total") if isinstance(data, dict) else None,
+            len(items) if isinstance(items, list) else None,
+            platform_counts,
+        )
         if isinstance(result, dict) and result.get("code") == 200:
             return result
         return result
