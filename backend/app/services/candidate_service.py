@@ -1304,6 +1304,14 @@ async def supplement_templates_for_account(
                 .order_by(AccountBloggerBinding.created_at.asc())
                 .limit(1)
             )
+            # 取账号绑定的标签名用于打标签（而非博主 handle）
+            exclusive_tag_name: str | None = await session.scalar(
+                select(Tag.name)
+                .join(AccountTag, AccountTag.tag_id == Tag.id)
+                .where(AccountTag.account_id == account_id)
+                .order_by(AccountTag.created_at.asc())
+                .limit(1)
+            )
         if not blogger_handle:
             logger.warning("【补充模板】account_id=%s exclusive 模式但无绑定博主 handle，跳过", account_id)
             return {"account_id": str(account_id), "keyword": None, "imported": 0, "skipped": 0}
@@ -1323,6 +1331,7 @@ async def supplement_templates_for_account(
             logger.warning("【补充模板】account_id=%s 无绑定标签，跳过", account_id)
             return {"account_id": str(account_id), "keyword": None, "imported": 0, "skipped": 0}
         search_keyword = tag_name
+        exclusive_tag_name = None
         logger.info("【补充模板】account_id=%s keyword=%s template_type=shared 开始", account_id, tag_name)
 
     imported = 0
@@ -1457,7 +1466,7 @@ async def supplement_templates_for_account(
                     tpl_id=tpl_id,
                     owner_id=owner_id,
                     blogger_name=None,
-                    keyword_text=search_keyword,
+                    keyword_text=exclusive_tag_name if template_type == "exclusive" else search_keyword,
                     template_type=template_type,
                 )
             )
