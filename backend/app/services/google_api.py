@@ -155,6 +155,12 @@ async def generate_image_google(
                             logger.info("Google SDK image gen success (b64): %d bytes", len(raw))
                             return raw
 
+            # 检查是否被内容安全策略拦截，拦截时无需重试
+            prompt_feedback = getattr(response, "prompt_feedback", None)
+            block_reason = getattr(prompt_feedback, "block_reason", None) if prompt_feedback else None
+            if block_reason:
+                logger.error("Google SDK image gen blocked (不重试): block_reason=%s", block_reason)
+                raise ValueError(f"Google SDK image gen: blocked by safety filter — block_reason={block_reason}")
             raise ValueError(f"Google SDK image gen: no image in response — {response}")
 
         except asyncio.CancelledError:
@@ -163,6 +169,8 @@ async def generate_image_google(
             exc_str = str(exc)
             if any(code in exc_str for code in ["400", "401", "403", "404"]):
                 logger.error("Google SDK image gen 4xx (不重试): %s", exc)
+                raise
+            if "blocked by safety filter" in exc_str:
                 raise
             if attempt >= max_attempts:
                 logger.error("Google SDK image gen 已达最大重试次数 %d，放弃: %s", max_attempts, exc)
