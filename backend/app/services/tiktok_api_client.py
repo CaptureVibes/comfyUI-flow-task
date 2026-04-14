@@ -251,6 +251,8 @@ def _normalize_video_from_rapidapi(data: dict) -> dict:
             "channel_url": f"https://www.tiktok.com/@{unique_id}" if unique_id else None,
             "_avatar_url": avatar or None,
             "_source": "rapidapi",
+            "_signature": author.get("signature") or None,
+            "_sec_uid": author.get("secUid") or author.get("sec_uid") or None,
         },
     }
 
@@ -296,6 +298,8 @@ def _normalize_blogger_from_rapidapi(data: dict) -> dict:
         "channel_url": f"https://www.tiktok.com/@{unique_id}" if unique_id else None,
         "_avatar_url": avatar or None,
         "_source": "rapidapi",
+        "_signature": user.get("signature") or None,
+        "_sec_uid": user.get("secUid") or user.get("sec_uid") or None,
         "_follower_count": stats.get("followerCount"),
         "_following_count": stats.get("followingCount"),
         "_video_count": stats.get("videoCount"),

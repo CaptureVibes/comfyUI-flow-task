@@ -106,6 +106,7 @@ def _new_state(account_id: str, status: str) -> dict[str, Any]:
         "video_descriptions": [],
         "combined_description": "",
         "generated_name": "",
+        "generated_gender": "",
         "photo_candidate_count": _PHOTO_CANDIDATE_COUNT,
         "photo_candidates": [],
         "selected_photo_candidate_id": None,
@@ -226,6 +227,8 @@ async def _persist_states(account_ids: list[str]) -> None:
                 acc.account_name = await _unique_account_name(
                     session, state["generated_name"], exclude_id=acc.id
                 )
+            if state.get("generated_gender"):
+                acc.gender = state["generated_gender"]
             if state.get("generated_avatar_url"):
                 acc.avatar_url = state["generated_avatar_url"]
             if state.get("generated_photo_url"):
@@ -488,21 +491,36 @@ async def _stage_name_generation(
         return state.get("generated_name", "")
 
     _set_status(account_id, "name_generating")
+    json_instruction = (
+        '\n\n请以 JSON 格式返回，格式为：{"name": "博主名字", "gender": "male/female/unisex"}，'
+        '其中 gender 根据博主内容风格判断，只能是 male、female、unisex 三者之一，不要输出其他内容。'
+    )
     full_prompt = (
-        f"{name_prompt}\n\n参考视频内容描述：\n{combined_description}"
+        f"{name_prompt}{json_instruction}\n\n参考视频内容描述：\n{combined_description}"
         if name_prompt
-        else f"根据以下视频内容描述，为这个博主取一个有吸引力的名字，直接输出名字即可：\n{combined_description}"
+        else f"根据以下视频内容描述，为这个博主取一个有吸引力的名字，并判断其受众性别定位。{json_instruction}\n\n视频内容描述：\n{combined_description}"
     )
 
     last_exc: Exception | None = None
     name = ""
+    gender = ""
     for attempt in range(1, 4):
         try:
-            name = await _call_gemini_text(
+            raw = await _call_gemini_text(
                 model_name=model_name,
                 prompt=full_prompt,
                 temperature=0.9,
             )
+            # 解析 JSON，兼容 Gemini 返回 markdown 代码块的情况
+            import json, re as _re
+            json_str = raw.strip()
+            m = _re.search(r"\{.*\}", json_str, _re.DOTALL)
+            if m:
+                json_str = m.group(0)
+            parsed = json.loads(json_str)
+            name = str(parsed.get("name") or "").strip()
+            raw_gender = str(parsed.get("gender") or "").strip().lower()
+            gender = raw_gender if raw_gender in ("male", "female", "unisex") else ""
             last_exc = None
             break
         except Exception as exc:
@@ -513,6 +531,7 @@ async def _stage_name_generation(
 
     state = ai_account_states[account_id]
     state["generated_name"] = name
+    state["generated_gender"] = gender
     _mark_stage_completed(state, "name_generating")
     ai_account_states[account_id] = state
     await _save_state(account_id)
@@ -1011,6 +1030,7 @@ async def enqueue_ai_account_generation(account_id: str, tag_ids: list[str]) -> 
     state["video_descriptions"] = []
     state["combined_description"] = ""
     state["generated_name"] = ""
+    state["generated_gender"] = ""
     state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
     state["photo_candidates"] = []
     state["selected_photo_candidate_id"] = None
@@ -1069,6 +1089,7 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         state["video_descriptions"] = []
         state["combined_description"] = ""
         state["generated_name"] = ""
+        state["generated_gender"] = ""
         state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
         state["photo_candidates"] = []
         state["selected_photo_candidate_id"] = None
@@ -1080,6 +1101,7 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         clear_flags["avatar"] = True
     elif from_stage == "name_generating":
         state["generated_name"] = ""
+        state["generated_gender"] = ""
         state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
         state["photo_candidates"] = []
         state["selected_photo_candidate_id"] = None
@@ -1178,6 +1200,7 @@ async def restart_ai_account_generation(account_id: str, tag_ids: list[str] | No
     state["video_descriptions"] = []
     state["combined_description"] = ""
     state["generated_name"] = ""
+    state["generated_gender"] = ""
     state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
     state["photo_candidates"] = []
     state["selected_photo_candidate_id"] = None

@@ -118,6 +118,8 @@ def _extract_blogger_fields(info: dict) -> dict | None:
         "blogger_url": blogger_url,
         "avatar_url": None,
         "_raw_avatar": raw_avatar,  # temporary field, not saved to DB
+        "_signature": info.get("_signature") or None,
+        "_sec_uid": info.get("_sec_uid") or info.get("channel_id") or None,
     }
 
 
@@ -132,8 +134,12 @@ async def upsert_blogger_from_info(
         return None
 
     raw_avatar = fields.pop("_raw_avatar", None)
-    # Remove internal key before passing to model
+    signature = fields.pop("_signature", None)
+    sec_uid = fields.pop("_sec_uid", None)
+    # Remove internal keys before passing to model
     db_fields = {k: v for k, v in fields.items()}
+    db_fields["signature"] = signature
+    db_fields["sec_uid"] = sec_uid
 
     # NULL-safe SELECT: PostgreSQL treats NULL != NULL in unique constraints
     if owner_id is None:
@@ -165,7 +171,7 @@ async def upsert_blogger_from_info(
     blogger = await session.scalar(stmt)
     if blogger:
         # Only update mutable fields when they have changed
-        for key in ("blogger_name", "blogger_handle", "blogger_url"):
+        for key in ("blogger_name", "blogger_handle", "blogger_url", "signature", "sec_uid"):
             new_val = db_fields.get(key)
             if new_val and getattr(blogger, key) != new_val:
                 setattr(blogger, key, new_val)

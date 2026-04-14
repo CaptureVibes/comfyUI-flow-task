@@ -22,6 +22,7 @@ class Account(Base):
     account_name: Mapped[str] = mapped_column(String(200), nullable=False)
     account_type: Mapped[str] = mapped_column(String(20), nullable=False, default="traffic")  # "persona" | "traffic"
     face_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="face")  # "face" | "no_face"
+    gender: Mapped[str] = mapped_column(String(20), nullable=False, default="female")  # "male" | "female" | "unisex"
     style_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_appearance: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)

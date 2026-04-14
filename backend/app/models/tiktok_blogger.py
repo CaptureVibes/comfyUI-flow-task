@@ -27,6 +27,8 @@ class TiktokBlogger(Base):
     blogger_handle: Mapped[str | None] = mapped_column(String(200), nullable=True)
     blogger_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signature: Mapped[str | None] = mapped_column(Text, nullable=True)   # TikTok bio/signature
+    sec_uid: Mapped[str | None] = mapped_column(String(200), nullable=True)  # TikTok secUid
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

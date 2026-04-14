@@ -64,6 +64,14 @@
             >
               {{ account.face_mode === 'no_face' ? '非人脸' : '人脸' }}
             </span>
+            <span
+              class="ad-type-badge"
+              :class="`ad-gender-${account.gender || 'female'}`"
+              style="cursor:pointer"
+              @click="cycleGender"
+            >
+              {{ { male: '男', female: '女', unisex: '中性' }[account.gender || 'female'] }}
+            </span>
           </div>
           <div v-if="account.style_description" class="ad-hero-style">{{ account.style_description }}</div>
           <div class="ad-hero-meta">
@@ -1140,6 +1148,19 @@ async function toggleFaceMode() {
   }
 }
 
+const GENDER_CYCLE = ['male', 'female', 'unisex']
+async function cycleGender() {
+  if (!account.value) return
+  const current = account.value.gender || 'female'
+  const next = GENDER_CYCLE[(GENDER_CYCLE.indexOf(current) + 1) % GENDER_CYCLE.length]
+  try {
+    await patchAccount(account.value.id, { gender: next })
+    account.value.gender = next
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '切换失败')
+  }
+}
+
 async function loadTab() {
   tasksLoading.value = true
   try {
@@ -1535,6 +1556,21 @@ onUnmounted(() => {
 .ad-face-no {
   background: #fef3c7;
   color: #b45309;
+}
+
+.ad-gender-male {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ad-gender-female {
+  background: #fce7f3;
+  color: #be185d;
+}
+
+.ad-gender-unisex {
+  background: #f3e8ff;
+  color: #7c3aed;
 }
 .ad-tag-badge {
   display: inline-flex;

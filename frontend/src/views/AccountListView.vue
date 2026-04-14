@@ -514,6 +514,14 @@
                 >
                   {{ item.face_mode === 'no_face' ? '非人脸' : '人脸' }}
                 </span>
+                <span
+                  class="ac-type-badge"
+                  :class="`ac-gender-${item.gender || 'female'}`"
+                  style="cursor:pointer"
+                  @click.stop="cycleGender(item)"
+                >
+                  {{ { male: '男', female: '女', unisex: '中性' }[item.gender || 'female'] }}
+                </span>
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
                 </span>
@@ -1345,6 +1353,18 @@ async function toggleFaceMode(item) {
   }
 }
 
+const GENDER_CYCLE = ['male', 'female', 'unisex']
+async function cycleGender(item) {
+  const current = item.gender || 'female'
+  const next = GENDER_CYCLE[(GENDER_CYCLE.indexOf(current) + 1) % GENDER_CYCLE.length]
+  try {
+    await patchAccount(item.id, { gender: next })
+    item.gender = next
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '切换失败')
+  }
+}
+
 // ── 一键生成 ────────────────────────────────────────────────────────────────
 
 const bulkVideoGenerating = ref(false)
@@ -1983,6 +2003,21 @@ onMounted(() => {
 .ac-face-no {
   background: #fef3c7;
   color: #b45309;
+}
+
+.ac-gender-male {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ac-gender-female {
+  background: #fce7f3;
+  color: #be185d;
+}
+
+.ac-gender-unisex {
+  background: #f3e8ff;
+  color: #7c3aed;
 }
 
 .ac-ai-status {

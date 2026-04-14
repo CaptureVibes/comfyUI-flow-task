@@ -81,6 +81,38 @@
                 </div>
               </el-form-item>
 
+              <el-form-item label="性别定位">
+                <div class="ac-type-toggle">
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.gender === 'male' }"
+                    @click="form.gender = 'male'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="14" r="5"/><line x1="19" y1="5" x2="14.14" y2="9.86"/><polyline points="15 5 19 5 19 9"/></svg>
+                    男
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.gender === 'female' }"
+                    @click="form.gender = 'female'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="9" r="5"/><line x1="12" y1="14" x2="12" y2="21"/><line x1="9" y1="18" x2="15" y2="18"/></svg>
+                    女
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.gender === 'unisex' }"
+                    @click="form.gender = 'unisex'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="9" y1="19" x2="15" y2="19"/><line x1="19" y1="5" x2="15.5" y2="8.5"/><polyline points="15 5 19 5 19 9"/></svg>
+                    中性
+                  </button>
+                </div>
+              </el-form-item>
+
               <el-form-item label="风格描述">
                 <el-input
                   v-model="form.style_description"
@@ -554,6 +586,7 @@ const form = reactive({
   account_name: '',
   account_type: 'traffic',
   face_mode: 'face',
+  gender: 'female',
   style_description: '',
   model_appearance: '',
   avatar_url: '',
@@ -795,6 +828,7 @@ async function loadAccount() {
     form.account_name = data.account_name || ''
     form.account_type = data.account_type || 'traffic'
     form.face_mode = data.face_mode || 'face'
+    form.gender = data.gender || 'female'
     form.style_description = data.style_description || ''
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
@@ -839,6 +873,7 @@ async function handleSave() {
         account_name: form.account_name.trim(),
         account_type: form.account_type,
         face_mode: form.face_mode,
+        gender: form.gender,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
@@ -998,6 +1033,7 @@ async function startAIGeneration() {
         account_name: form.account_name.trim() || '新建账号（AI生成中）',
         account_type: form.account_type,
         face_mode: form.face_mode,
+        gender: form.gender,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
