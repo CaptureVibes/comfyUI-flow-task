@@ -143,19 +143,22 @@ async def export_publication_stats(
         "instagram": "https://www.instagram.com/",
     }
     account_platforms: dict[uuid.UUID | None, str] = {}
+    account_channel_names: dict[uuid.UUID | None, str] = {}
     seen_ids: set[uuid.UUID | None] = set()
     for item in items:
         aid = item.account_id
         if aid in seen_ids:
             continue
         seen_ids.add(aid)
-        # 优先从 account.social_bindings 提取，生成完整 URL
+        # 优先从 account.social_bindings 提取，生成完整 URL 和 channel_name
         url_parts: list[str] = []
+        channel_name_parts: list[str] = []
         for binding in item.social_bindings or []:
             if not isinstance(binding, dict):
                 continue
             p = str(binding.get("platform") or "").lower()
             username = str(binding.get("username") or "").strip()
+            channel_name = str(binding.get("channel_name") or "").strip()
             if not p:
                 continue
             base = _platform_base.get(p)
@@ -163,6 +166,8 @@ async def export_publication_stats(
                 url_parts.append(f"{base}{username}")
             elif base:
                 url_parts.append(base.rstrip("/"))
+            if channel_name:
+                channel_name_parts.append(channel_name)
         # 兜底：从 metrics_channels 和 channels_status 补充平台名
         if not url_parts:
             platforms_set: set[str] = set()
@@ -176,6 +181,7 @@ async def export_publication_stats(
                     platforms_set.add(p)
             url_parts = [_platform_base.get(p, p).rstrip("/") for p in sorted(platforms_set)]
         account_platforms[aid] = "\n".join(url_parts)
+        account_channel_names[aid] = "\n".join(channel_name_parts)
 
     # 按账号名分组：{ name -> { account_type, platforms, date -> [(views, likes)] } }
     blogger_map: dict[str, dict] = {}
@@ -185,7 +191,8 @@ async def export_publication_stats(
             _type_map = {"persona": "人设号", "shared": "共享号", "exclusive": "独享号"}
             account_type = _type_map.get(item.account_type or "", "共享号")
             platforms = account_platforms.get(item.account_id, "")
-            blogger_map[name] = {"account_type": account_type, "platforms": platforms, "dates": {}}
+            channel_names = account_channel_names.get(item.account_id, "")
+            blogger_map[name] = {"account_type": account_type, "platforms": platforms, "channel_names": channel_names, "dates": {}}
         dt = item.published_at or item.created_at
         if not dt:
             continue
@@ -198,9 +205,9 @@ async def export_publication_stats(
     buf = io.StringIO()
     buf.write("\ufeff")  # BOM
     writer = csv.writer(buf)
-    writer.writerow(["博主名称", "账号类型", "绑定平台", *dates])
+    writer.writerow(["博主名称", "账号类型", "绑定平台", "频道名称", *dates])
     for name, info in blogger_map.items():
-        row = [name, info["account_type"], info["platforms"]]
+        row = [name, info["account_type"], info["platforms"], info["channel_names"]]
         for day in dates:
             entries = info["dates"].get(day, [])
             row.append("\n".join(f"▶{v} ♥{l}" for v, l in entries))
