@@ -136,8 +136,12 @@ async def export_publication_stats(
             date_set.add(dt.strftime("%Y-%m-%d"))
     dates = sorted(date_set, reverse=True)
 
-    # 收集每个 account_id 绑定的平台（优先从 social_bindings 提取）
-    _platform_labels = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}
+    # 收集每个 account_id 绑定的平台（优先从 social_bindings 提取，拼完整主页 URL）
+    _platform_base = {
+        "youtube": "https://www.youtube.com/",
+        "tiktok": "https://www.tiktok.com/",
+        "instagram": "https://www.instagram.com/",
+    }
     account_platforms: dict[uuid.UUID | None, str] = {}
     seen_ids: set[uuid.UUID | None] = set()
     for item in items:
@@ -145,15 +149,23 @@ async def export_publication_stats(
         if aid in seen_ids:
             continue
         seen_ids.add(aid)
-        platforms_set: set[str] = set()
-        # 优先从 account.social_bindings 提取
+        # 优先从 account.social_bindings 提取，生成完整 URL
+        url_parts: list[str] = []
         for binding in item.social_bindings or []:
-            if isinstance(binding, dict):
-                p = str(binding.get("platform") or "").lower()
-                if p:
-                    platforms_set.add(p)
-        # 兜底：从 metrics_channels 和 channels_status 补充
-        if not platforms_set:
+            if not isinstance(binding, dict):
+                continue
+            p = str(binding.get("platform") or "").lower()
+            username = str(binding.get("username") or "").strip()
+            if not p:
+                continue
+            base = _platform_base.get(p)
+            if base and username:
+                url_parts.append(f"{base}{username}")
+            elif base:
+                url_parts.append(base.rstrip("/"))
+        # 兜底：从 metrics_channels 和 channels_status 补充平台名
+        if not url_parts:
+            platforms_set: set[str] = set()
             for ch in item.metrics_channels:
                 p = str(ch.platform or "").lower()
                 if p:
@@ -162,7 +174,8 @@ async def export_publication_stats(
                 p = str(ch.platform or "").lower()
                 if p:
                     platforms_set.add(p)
-        account_platforms[aid] = "/".join(_platform_labels.get(p, p) for p in sorted(platforms_set))
+            url_parts = [_platform_base.get(p, p).rstrip("/") for p in sorted(platforms_set)]
+        account_platforms[aid] = "\n".join(url_parts)
 
     # 按账号名分组：{ name -> { account_type, platforms, date -> [(views, likes)] } }
     blogger_map: dict[str, dict] = {}
