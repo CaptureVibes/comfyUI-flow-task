@@ -79,6 +79,8 @@ async def patch_account(
         account.account_name = payload.account_name
     if payload.account_type is not None:
         account.account_type = payload.account_type
+    if payload.face_mode is not None:
+        account.face_mode = payload.face_mode
     if payload.style_description is not None:
         account.style_description = payload.style_description
     if payload.model_appearance is not None:

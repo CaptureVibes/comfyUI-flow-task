@@ -38,6 +38,7 @@ SocialBinding = Annotated[
 class AccountCreate(BaseModel):
     account_name: str = Field(min_length=1, max_length=200)
     account_type: Literal["persona", "traffic"] = "traffic"
+    face_mode: Literal["face", "no_face"] = "face"
     style_description: str | None = None
     model_appearance: str | None = None
     avatar_url: str | None = None
@@ -48,6 +49,7 @@ class AccountCreate(BaseModel):
 class AccountPatch(BaseModel):
     account_name: str | None = Field(default=None, min_length=1, max_length=200)
     account_type: Literal["persona", "traffic"] | None = None
+    face_mode: Literal["face", "no_face"] | None = None
     style_description: str | None = None
     model_appearance: str | None = None
     avatar_url: str | None = None
@@ -182,6 +184,7 @@ class AccountRead(BaseModel):
     owner_id: uuid.UUID | None
     account_name: str
     account_type: str = "traffic"
+    face_mode: str = "face"
     style_description: str | None
     model_appearance: str | None
     avatar_url: str | None

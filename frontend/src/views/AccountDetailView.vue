@@ -56,6 +56,14 @@
             <span class="ad-type-badge" :class="`ad-type-${account.account_type || 'traffic'}`">
               {{ account.account_type === 'persona' ? '人设号' : '流量号' }}
             </span>
+            <span
+              class="ad-type-badge"
+              :class="account.face_mode === 'no_face' ? 'ad-face-no' : 'ad-face-yes'"
+              style="cursor:pointer"
+              @click="toggleFaceMode"
+            >
+              {{ account.face_mode === 'no_face' ? '非人脸' : '人脸' }}
+            </span>
           </div>
           <div v-if="account.style_description" class="ad-hero-style">{{ account.style_description }}</div>
           <div class="ad-hero-meta">
@@ -725,7 +733,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish } from '../api/accounts'
+import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish, patchAccount } from '../api/accounts'
 import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask, regeneratePublishMeta } from '../api/video_tasks'
 import { fetchSubTaskPublications, fetchUploadMetrics } from '../api/video_publications'
 import http from '../api/http'
@@ -1121,6 +1129,17 @@ async function loadAccount() {
   }
 }
 
+async function toggleFaceMode() {
+  if (!account.value) return
+  const newMode = account.value.face_mode === 'no_face' ? 'face' : 'no_face'
+  try {
+    await patchAccount(account.value.id, { face_mode: newMode })
+    account.value.face_mode = newMode
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '切换失败')
+  }
+}
+
 async function loadTab() {
   tasksLoading.value = true
   try {
@@ -1506,6 +1525,16 @@ onUnmounted(() => {
 .ad-type-traffic {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.ad-face-yes {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.ad-face-no {
+  background: #fef3c7;
+  color: #b45309;
 }
 .ad-tag-badge {
   display: inline-flex;

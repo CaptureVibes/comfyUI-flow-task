@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # 外部发布 API（独立维护的第三方频道发布服务）
     ext_pub_api_base_url: str = "http://34.21.25.209:8000"
     ext_pub_api_key: str = ""     # X-API-Key 认证
+    open_api_channel_usage_types: str = ""  # 逗号分隔，如 "short_video,live"；为空则不传
+
+    @property
+    def open_api_channel_usage_types_list(self) -> list[str]:
+        return [t.strip() for t in self.open_api_channel_usage_types.split(",") if t.strip()]
 
     @property
     def max_image_size_bytes(self) -> int:

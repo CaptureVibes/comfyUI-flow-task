@@ -172,12 +172,15 @@ class OpenAPIClient:
         }
 
     async def fetch_channels(
-        self, platform: str, page: int = 1, page_size: int = 20, is_active: bool | None = None
+        self, platform: str, page: int = 1, page_size: int = 20, is_active: bool | None = None,
+        usage_types: list[str] | None = None,
     ) -> dict:
         """获取渠道列表"""
         params = {"platform": platform, "page": page, "page_size": page_size}
         if is_active is not None:
             params["is_active"] = is_active
+        if usage_types:
+            params["usage_type"] = ",".join(usage_types)
 
         signed_params = self._sign_params(params)
         logged_params = dict(signed_params)
@@ -974,9 +977,10 @@ class VideoPublicationService:
         page: int = 1,
         page_size: int = 20,
         is_active: bool | None = None,
+        usage_types: list[str] | None = None,
     ) -> dict:
         """获取渠道列表（代理到 Open API）"""
-        return await self.open_api.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)
+        return await self.open_api.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active, usage_types=usage_types)
 
     async def fetch_channels_filtered(
         self,
@@ -986,6 +990,7 @@ class VideoPublicationService:
         page_size: int = 20,
         is_active: bool | None = None,
         current_account_id: uuid.UUID | None = None,
+        usage_types: list[str] | None = None,
     ) -> dict:
         """过滤掉当前用户下已被其他账号绑定过的渠道，并对过滤后的结果重新分页。"""
         excluded_channel_ids = await self._load_excluded_channel_ids(
@@ -1003,7 +1008,7 @@ class VideoPublicationService:
             len(excluded_channel_ids),
         )
         if not excluded_channel_ids:
-            return await self.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active)
+            return await self.fetch_channels(platform, page=page, page_size=page_size, is_active=is_active, usage_types=usage_types)
 
         upstream_page = 1
         upstream_page_size = max(page_size, 100)
@@ -1016,6 +1021,7 @@ class VideoPublicationService:
                 page=upstream_page,
                 page_size=upstream_page_size,
                 is_active=is_active,
+                usage_types=usage_types,
             )
             data = response.get("data", {}) if isinstance(response, dict) else {}
             raw_items = data.get("items") or []

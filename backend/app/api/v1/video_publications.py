@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
 from app.schemas.video_publication import (
@@ -401,6 +402,7 @@ async def fetch_channels(
     )
 
     try:
+        usage_types = settings.open_api_channel_usage_types_list or None
         response = await service.fetch_channels_filtered(
             platform,
             owner_id=current_user.user_id,
@@ -408,6 +410,7 @@ async def fetch_channels(
             page_size=page_size,
             is_active=is_active,
             current_account_id=account_id,
+            usage_types=usage_types,
         )
         data = response.get("data", {}) if isinstance(response, dict) else {}
         logger.info(

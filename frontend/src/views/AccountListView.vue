@@ -506,6 +506,14 @@
                 <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'traffic'}`">
                   {{ item.account_type === 'persona' ? '人设号' : '流量号' }}
                 </span>
+                <span
+                  class="ac-type-badge ac-face-badge"
+                  :class="item.face_mode === 'no_face' ? 'ac-face-no' : 'ac-face-yes'"
+                  style="cursor:pointer"
+                  @click.stop="toggleFaceMode(item)"
+                >
+                  {{ item.face_mode === 'no_face' ? '非人脸' : '人脸' }}
+                </span>
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
                 </span>
@@ -770,7 +778,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, fetchAccountBloggers, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1324,6 +1332,16 @@ async function handleDelete(item) {
     ElMessage.error(err?.response?.data?.detail || '删除失败')
   } finally {
     deleting.value = null
+  }
+}
+
+async function toggleFaceMode(item) {
+  const newMode = item.face_mode === 'no_face' ? 'face' : 'no_face'
+  try {
+    await patchAccount(item.id, { face_mode: newMode })
+    item.face_mode = newMode
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '切换失败')
   }
 }
 
@@ -1955,6 +1973,16 @@ onMounted(() => {
 .ac-type-traffic {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.ac-face-yes {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.ac-face-no {
+  background: #fef3c7;
+  color: #b45309;
 }
 
 .ac-ai-status {

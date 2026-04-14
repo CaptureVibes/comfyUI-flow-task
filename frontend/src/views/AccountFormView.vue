@@ -58,6 +58,29 @@
                 </div>
               </el-form-item>
 
+              <el-form-item label="人脸模式">
+                <div class="ac-type-toggle">
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.face_mode === 'face' }"
+                    @click="form.face_mode = 'face'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+                    人脸
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.face_mode === 'no_face' }"
+                    @click="form.face_mode = 'no_face'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                    非人脸
+                  </button>
+                </div>
+              </el-form-item>
+
               <el-form-item label="风格描述">
                 <el-input
                   v-model="form.style_description"
@@ -530,6 +553,7 @@ async function loadExtPubAccounts() {
 const form = reactive({
   account_name: '',
   account_type: 'traffic',
+  face_mode: 'face',
   style_description: '',
   model_appearance: '',
   avatar_url: '',
@@ -770,6 +794,7 @@ async function loadAccount() {
     const data = await fetchAccount(route.params.id)
     form.account_name = data.account_name || ''
     form.account_type = data.account_type || 'traffic'
+    form.face_mode = data.face_mode || 'face'
     form.style_description = data.style_description || ''
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
@@ -813,6 +838,7 @@ async function handleSave() {
       const payload = {
         account_name: form.account_name.trim(),
         account_type: form.account_type,
+        face_mode: form.face_mode,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
@@ -971,6 +997,7 @@ async function startAIGeneration() {
       const payload = {
         account_name: form.account_name.trim() || '新建账号（AI生成中）',
         account_type: form.account_type,
+        face_mode: form.face_mode,
         style_description: form.style_description || null,
         model_appearance: form.model_appearance || null,
         avatar_url: form.avatar_url || null,
