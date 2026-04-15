@@ -1,40 +1,42 @@
-# AI Blogger Channel Open API
+# AI 博主频道占用接口文档
 
-Base URL:
+服务地址：
 
 ```text
-http://34.55.116.212/api/v1
+http://34.55.116.212:8000/api/v1
 ```
 
-Authentication:
+认证方式：
 
-Pass the agreed API key in the request header:
+调用方需要在请求头中传入约定好的 API Key：
 
 ```http
 X-API-Key: <api_key>
 ```
 
-The backend must configure the same key:
+服务端需要配置同一个 Key：
 
 ```env
 ACCOUNT_CHANNEL_API_KEY=<api_key>
 ```
 
-Supported platforms:
+支持的平台：
 
 ```text
 youtube, tiktok, instagram
 ```
 
-## 1. Search AI Bloggers
+## 1. 查询可用 AI 博主
 
-Search available AI bloggers by owner, gender, platform, and count. This endpoint only returns candidates. It does not reserve, confirm, bind, or write any database record.
+按 `owner_id`、性别、平台和数量查询可用 AI 博主。
+
+这个接口只返回候选数据，不会占用账号，不会写入数据库。
 
 ```http
 POST /open-api/accounts/channel-reservations
 ```
 
-Request:
+请求：
 
 ```json
 {
@@ -46,7 +48,7 @@ Request:
 }
 ```
 
-Response:
+响应：
 
 ```json
 {
@@ -65,20 +67,22 @@ Response:
 }
 ```
 
-Notes:
+说明：
 
-- An account is excluded if it already has a record for the requested platform in `account_channel_reservations`.
-- Because search does not write data, repeated searches can return the same candidate until `confirm` or `bind` is called.
+- 如果某个账号已经存在同平台的 `account_channel_reservations` 记录，则不会被查询出来。
+- 因为查询接口不写数据库，所以在调用确认或绑定前，重复查询可能返回同一个账号。
 
-## 2. Confirm Channel Occupation
+## 2. 确认占用频道
 
-Confirm that the caller will occupy one AI blogger's platform. This endpoint creates or updates the occupation record.
+调用方确认要占用某个 AI 博主的某个平台。
+
+这个接口会创建或更新占用记录，状态为 `confirmed`。
 
 ```http
 POST /open-api/accounts/channel-reservations/confirm
 ```
 
-Request:
+请求：
 
 ```json
 {
@@ -88,7 +92,7 @@ Request:
 }
 ```
 
-Response:
+响应：
 
 ```json
 {
@@ -99,20 +103,26 @@ Response:
 }
 ```
 
-Errors:
+错误：
 
-- `404`: account not found under the given owner.
-- `409`: the account and platform were occupied by another concurrent request.
+- `404`：该 `owner_id` 下不存在这个账号。
+- `409`：并发情况下，该账号的平台已被其他请求占用。
 
-## 3. Bind Channel
+## 3. 绑定频道信息
 
-Bind channel information to one AI blogger and platform. The unique key is `account_id + platform`.
+给某个 AI 博主绑定平台频道信息。
+
+唯一定位方式是：
+
+```text
+account_id + platform
+```
 
 ```http
 POST /open-api/accounts/{account_id}/channel-bindings
 ```
 
-Request:
+请求：
 
 ```json
 {
@@ -125,7 +135,7 @@ Request:
 }
 ```
 
-Response:
+响应：
 
 ```json
 {
@@ -157,25 +167,26 @@ Response:
 }
 ```
 
-Notes:
+说明：
 
-- `channel_info` is not returned by this external API.
-- If `confirm` was not called before `bind`, `bind` will create the record and set it to `bound`.
-- If another channel already exists for the same `account_id + platform`, it is updated in place.
+- 外部接口不会返回 `social_bindings`。
+- 外部接口不会返回 `channel_info`。
+- 如果绑定前没有调用确认接口，绑定接口会自动创建记录并直接设置为 `bound`。
+- 如果同一个 `account_id + platform` 已经存在记录，则更新原记录。
 
-## Test Script
+## 测试脚本
 
-Local test script:
+本地测试脚本：
 
 ```bash
 cd backend
 uv run python scripts/test_account_channel_openapi.py
 ```
 
-Edit the constants at the top of the script:
+修改脚本顶部配置：
 
 ```python
-BASE_URL = "http://34.55.116.212/api/v1"
+BASE_URL = "http://34.55.116.212:8000/api/v1"
 API_KEY = "..."
 OWNER_ID = "..."
 ACTION = "reserve"  # reserve / confirm / bind
