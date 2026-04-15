@@ -17,7 +17,7 @@ import httpx
 
 
 BASE_URL = "http://127.0.0.1:8000/api/v1"
-API_KEY = "填你的 api_key"
+API_KEY = ""  # 填入 ACCOUNT_CHANNEL_API_KEY
 OWNER_ID = "4424f85f-6e43-4ca2-a0a3-2cc75c766e0c"
 
 # reserve 参数
@@ -39,7 +39,7 @@ BIND_USERNAME = "@test"
 BIND_CHANNEL_SOURCE = "openapi"
 
 # 改这里选择要测试的接口：reserve / confirm / bind
-ACTION = "bind"
+ACTION = "reserve"
 
 
 def post(path: str, payload: dict) -> None:

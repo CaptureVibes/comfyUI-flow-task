@@ -27,6 +27,24 @@ from app.schemas.account import (
 router = APIRouter(prefix="/open-api/accounts", tags=["open-api-account-channels"])
 
 
+def _resolve_owner_id(body_owner_id: uuid.UUID | None) -> uuid.UUID:
+    if body_owner_id is not None:
+        return body_owner_id
+    default = settings.account_channel_owner_id
+    if not default:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="owner_id 未传且服务端未配置 ACCOUNT_CHANNEL_OWNER_ID",
+        )
+    try:
+        return uuid.UUID(default)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="服务端 ACCOUNT_CHANNEL_OWNER_ID 格式无效",
+        )
+
+
 def _verify_api_key(body_api_key: str = "", header_api_key: str | None = None) -> None:
     expected = settings.account_channel_api_key
     if not expected:
@@ -76,11 +94,12 @@ async def reserve_ai_accounts_for_channel_openapi(
 ) -> ExternalReserveAIAccountsResponse:
     """外部团队按 owner、性别、平台查询可用 AI 博主；不写库、不占用。"""
     _verify_api_key(body.api_key, x_api_key)
+    owner_id = _resolve_owner_id(body.owner_id)
 
     platform = body.platform.lower()
     stmt = (
         select(Account)
-        .where(Account.owner_id == body.owner_id)
+        .where(Account.owner_id == owner_id)
         .where(Account.gender == body.gender)
         .where(
             ~exists()
@@ -100,6 +119,7 @@ async def reserve_ai_accounts_for_channel_openapi(
             account_handle=account.account_handle,
             account_signature=account.account_signature,
             hashtags=account.hashtags,
+            avatar_url=account.avatar_url,
         )
         for account in accounts
     ]
@@ -118,12 +138,13 @@ async def confirm_channel_reservation_openapi(
 ) -> ExternalConfirmChannelReservationResponse:
     """外部团队逐条确认一个 account_id + platform，占用从这里才真正写库。"""
     _verify_api_key(body.api_key, x_api_key)
+    owner_id = _resolve_owner_id(body.owner_id)
 
     platform = body.platform.lower()
     account = await session.scalar(
         select(Account)
         .where(Account.id == body.account_id)
-        .where(Account.owner_id == body.owner_id)
+        .where(Account.owner_id == owner_id)
     )
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
@@ -141,7 +162,7 @@ async def confirm_channel_reservation_openapi(
         await session.commit()
         return ExternalConfirmChannelReservationResponse(
             status=existing.status,
-            owner_id=body.owner_id,
+            owner_id=owner_id,
             account_id=body.account_id,
             platform=body.platform,
         )
@@ -163,7 +184,7 @@ async def confirm_channel_reservation_openapi(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该账号平台已被占用") from None
     return ExternalConfirmChannelReservationResponse(
         status=reservation.status,
-        owner_id=body.owner_id,
+        owner_id=owner_id,
         account_id=body.account_id,
         platform=body.platform,
     )
@@ -178,11 +199,12 @@ async def bind_openapi_channel_openapi(
 ) -> ExternalBindOpenAPIChannelResponse:
     """外部团队绑定频道信息到 AI 博主。"""
     _verify_api_key(body.api_key, x_api_key)
+    owner_id = _resolve_owner_id(body.owner_id)
 
     account = await session.scalar(
         select(Account)
         .where(Account.id == account_id)
-        .where(Account.owner_id == body.owner_id)
+        .where(Account.owner_id == owner_id)
     )
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")

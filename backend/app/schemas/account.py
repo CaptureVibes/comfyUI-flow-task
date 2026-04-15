@@ -260,7 +260,7 @@ class BindOpenAPIChannelBody(BaseModel):
 
 class ExternalReserveAIAccountsBody(BaseModel):
     api_key: str = ""
-    owner_id: uuid.UUID
+    owner_id: uuid.UUID | None = None
     gender: Literal["male", "female", "unisex"]
     platform: ChannelPlatform
     count: int = Field(ge=1, le=100)
@@ -274,6 +274,7 @@ class ExternalAIAccountCandidateItem(BaseModel):
     account_handle: str | None = None
     account_signature: str | None = None
     hashtags: list[str] | None = None
+    avatar_url: str | None = None
 
 
 class ExternalReserveAIAccountsResponse(BaseModel):
@@ -284,7 +285,7 @@ class ExternalReserveAIAccountsResponse(BaseModel):
 
 class ExternalConfirmChannelReservationBody(BaseModel):
     api_key: str = ""
-    owner_id: uuid.UUID
+    owner_id: uuid.UUID | None = None
     account_id: uuid.UUID
     platform: ChannelPlatform
 
@@ -298,7 +299,7 @@ class ExternalConfirmChannelReservationResponse(BaseModel):
 
 class ExternalBindOpenAPIChannelBody(BaseModel):
     api_key: str = ""
-    owner_id: uuid.UUID
+    owner_id: uuid.UUID | None = None
     platform: ChannelPlatform
     channel_source: str = "openapi"
     channel_id: str = ""

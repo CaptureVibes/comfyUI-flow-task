@@ -11,7 +11,8 @@ http://34.55.116.212:8000/api/v1
 调用方需要在请求头中传入约定好的 API Key：
 
 ```http
-X-API-Key: <api_key>
+X-API-Key: 
+owner_id: 
 ```
 
 服务端需要配置同一个 Key：
@@ -169,9 +170,6 @@ POST /open-api/accounts/{account_id}/channel-bindings
 
 说明：
 
-- 外部接口不会返回 `social_bindings`。
-- 外部接口不会返回 `channel_info`。
-- 如果绑定前没有调用确认接口，绑定接口会自动创建记录并直接设置为 `bound`。
 - 如果同一个 `account_id + platform` 已经存在记录，则更新原记录。
 
 ## 测试脚本
