@@ -146,3 +146,18 @@ export async function bulkBindHashtags(accountIds = null, hashtags = [], mode = 
   const { data } = await http.post('/accounts/bulk-bind-hashtags', payload)
   return data
 }
+
+export async function reserveAIAccountsForChannel(payload) {
+  const { data } = await http.post('/accounts/channel-reservations', payload)
+  return data
+}
+
+export async function confirmChannelReservations(payload) {
+  const { data } = await http.post('/accounts/channel-reservations/confirm', payload)
+  return data
+}
+
+export async function bindOpenAPIChannel(accountId, payload) {
+  const { data } = await http.post(`/accounts/${accountId}/channel-bindings`, payload)
+  return data
+}

@@ -164,6 +164,20 @@ const rules = {
 
 // 可用的绑定平台
 const availableBindings = computed(() => {
+  const reservations = props.account?.channel_reservations || []
+  if (reservations.length) {
+    return reservations
+      .filter(item => item.status === 'bound')
+      .map(item => ({
+        ...(item.channel_info || {}),
+        platform: item.platform,
+        channel_source: item.channel_source || item.source || 'openapi',
+        channel_id: item.channel_id || '',
+        channel_name: item.channel_name || '',
+        username: item.username || '',
+        avatar_url: item.avatar_url || '',
+      }))
+  }
   return props.account?.social_bindings || []
 })
 

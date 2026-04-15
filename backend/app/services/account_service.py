@@ -20,11 +20,13 @@ async def create_account(
         owner_id=owner_id,
         account_name=payload.account_name,
         account_type=payload.account_type,
+        face_mode=payload.face_mode,
+        gender=payload.gender,
         style_description=payload.style_description,
         model_appearance=payload.model_appearance,
         avatar_url=payload.avatar_url,
         photo_url=payload.photo_url,
-        social_bindings=payload.social_bindings,
+        hashtags=payload.hashtags if payload.hashtags else None,
     )
     session.add(account)
     await session.commit()
@@ -95,8 +97,6 @@ async def patch_account(
         account.avatar_url = payload.avatar_url
     if payload.photo_url is not None:
         account.photo_url = payload.photo_url
-    if payload.social_bindings is not None:
-        account.social_bindings = payload.social_bindings
     if payload.hashtags is not None:
         account.hashtags = payload.hashtags if payload.hashtags else None
     await session.commit()

@@ -866,7 +866,7 @@ async function loadAccount() {
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
     form.photo_url = data.photo_url || ''
-    form.social_bindings = data.social_bindings ? JSON.parse(JSON.stringify(data.social_bindings)) : []
+    form.social_bindings = accountBoundChannelBindings(data)
     boundBloggers.value = data.tiktok_bloggers || []
     boundTags.value = data.bound_tags || []
 
@@ -883,6 +883,24 @@ async function loadAccount() {
   } finally {
     loading.value = false
   }
+}
+
+function accountBoundChannelBindings(account) {
+  const reservations = account?.channel_reservations || []
+  if (reservations.length) {
+    return reservations
+      .filter(item => item.status === 'bound')
+      .map(item => ({
+        ...(item.channel_info || {}),
+        platform: item.platform,
+        channel_source: item.channel_source || item.source || 'openapi',
+        channel_id: item.channel_id || '',
+        channel_name: item.channel_name || '',
+        username: item.username || '',
+        avatar_url: item.avatar_url || '',
+      }))
+  }
+  return account?.social_bindings ? JSON.parse(JSON.stringify(account.social_bindings)) : []
 }
 
 async function handleSave() {

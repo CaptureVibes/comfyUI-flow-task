@@ -15,6 +15,7 @@ from app.models.account_tag import AccountTag
 from app.models.flag import Flag, AccountFlag
 from app.models.tiktok_blogger import TiktokBlogger
 from app.models.account_blogger_binding import AccountBloggerBinding
+from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.topic import Topic, MotherKeyword, Keyword
 from app.models.candidate_video import CandidateVideo
 from app.models.face_photo import FacePhoto
@@ -29,6 +30,7 @@ __all__ = [
     "Flag", "AccountFlag",
     "TiktokBlogger",
     "AccountBloggerBinding",
+    "AccountChannelReservation",
     "Topic", "MotherKeyword", "Keyword",
     "CandidateVideo",
     "FacePhoto",

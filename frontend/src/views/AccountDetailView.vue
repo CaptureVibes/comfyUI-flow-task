@@ -92,7 +92,7 @@
           </div>
           <div class="ad-hero-platforms">
             <span
-              v-for="binding in (account.social_bindings || [])"
+              v-for="binding in boundChannelBindings"
               :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
               class="ad-platform-badge"
               :class="`ad-platform-${binding.platform}`"
@@ -100,7 +100,7 @@
             >
               {{ bindingDisplayLabel(binding) }}
             </span>
-            <span v-if="!account.social_bindings?.length" class="ad-no-platform">未绑定平台</span>
+            <span v-if="!boundChannelBindings.length" class="ad-no-platform">未绑定平台</span>
           </div>
           <div class="ad-hero-tags">
             <span
@@ -858,6 +858,23 @@ function fmtDate(iso) {
 }
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
+const boundChannelBindings = computed(() => {
+  const reservations = account.value?.channel_reservations || []
+  if (reservations.length) {
+    return reservations
+      .filter(item => item.status === 'bound')
+      .map(item => ({
+        ...(item.channel_info || {}),
+        platform: item.platform,
+        channel_source: item.channel_source || item.source || 'openapi',
+        channel_id: item.channel_id || '',
+        channel_name: item.channel_name || '',
+        username: item.username || '',
+        avatar_url: item.avatar_url || '',
+      }))
+  }
+  return account.value?.social_bindings || []
+})
 function bindingDisplayLabel(binding) {
   const platform = platformLabel(binding.platform)
   const channelName = binding.channel_name?.trim()
@@ -1008,7 +1025,7 @@ function openPublishDialog(task, sub) {
     ElMessage.warning('视频尚未生成完成')
     return
   }
-  if (!account.value?.social_bindings?.length) {
+  if (!boundChannelBindings.value.length) {
     ElMessage.warning('该账号尚未绑定任何发布平台，请先在编辑页面绑定平台')
     return
   }

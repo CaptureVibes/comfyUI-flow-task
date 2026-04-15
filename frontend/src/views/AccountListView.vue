@@ -606,7 +606,7 @@
 
             <!-- 平台绑定 -->
             <td class="al-td al-td-platform">
-              <div v-if="item.social_bindings?.length" class="al-bindings">
+              <div v-if="item.social_bindings?.length || item.channel_reservations?.length" class="al-bindings">
                 <span
                   v-for="binding in item.social_bindings"
                   :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
@@ -614,6 +614,12 @@
                   :class="`ac-tag-${binding.platform}`"
                   :title="bindingDisplayLabel(binding)"
                 >{{ bindingDisplayLabel(binding) }}</span>
+                <span
+                  v-for="reservation in unboundChannelReservations(item)"
+                  :key="`reservation-${reservation.id}`"
+                  class="ac-tag ac-tag-reserved"
+                  :title="reservationDisplayLabel(reservation)"
+                >{{ reservationDisplayLabel(reservation) }}</span>
               </div>
               <span v-else class="al-no-binding">未绑定</span>
             </td>
@@ -1300,6 +1306,15 @@ function bindingDisplayLabel(binding) {
   const channelName = binding.channel_name?.trim()
   const channelId = binding.channel_id?.trim()
   return channelName ? `${platform} · ${channelName}` : channelId ? `${platform} · ${channelId}` : platform
+}
+function unboundChannelReservations(item) {
+  const boundPlatforms = new Set((item.social_bindings || []).map(b => b?.platform).filter(Boolean))
+  return (item.channel_reservations || []).filter(r => r?.platform && !boundPlatforms.has(r.platform))
+}
+function reservationDisplayLabel(reservation) {
+  const platform = platformLabel(reservation.platform)
+  const statusMap = { reserved: '已占位', confirmed: '已确认', bound: '已绑定' }
+  return `${platform} · ${statusMap[reservation.status] || reservation.status || '已占位'}`
 }
 function snapshotValue(item, key) {
   return item?.performance_snapshot?.[key]
@@ -2174,6 +2189,7 @@ onMounted(() => {
 .ac-tag-youtube  { background: #fef2f2; color: #dc2626; }
 .ac-tag-tiktok   { background: #f1f5f9; color: #0f172a; }
 .ac-tag-instagram { background: #fef3c7; color: #92400e; }
+.ac-tag-reserved { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; }
 
 /* Account type badge */
 .ac-type-badge {

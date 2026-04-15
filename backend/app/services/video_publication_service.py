@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.account import Account
+from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.video_publication import VideoPublication
 from app.schemas.video_publication import (
     VideoPublicationCreate,
@@ -331,7 +332,16 @@ class ExtPubAPIClient:
                 json=payload,
                 headers=self._headers(),
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError:
+                logger.warning(
+                    "ExtPubAPI create_post failed: status=%s body=%s payload=%s",
+                    response.status_code,
+                    response.text[:1000],
+                    payload,
+                )
+                raise
             return response.json()
 
     async def fetch_post_detail(self, business_id: str) -> dict:
@@ -529,6 +539,40 @@ class ExtPubAdapter(PublishAdapter):
     def __init__(self, client: ExtPubAPIClient):
         self.client = client
 
+    @staticmethod
+    def _statuses_from_post_data(post_data: dict, fallback_channels: list[dict]) -> list[dict]:
+        publishes = post_data.get("publishes") if isinstance(post_data, dict) else None
+        if isinstance(publishes, list) and publishes:
+            return [
+                {
+                    "platform": p.get("platform_type", ""),
+                    "channel_id": p.get("platform_account_id") or p.get("id") or "",
+                    "channel_name": p.get("nickname") or p.get("username") or "",
+                    "status": ExtPubAdapter._CHANNEL_STATUS_MAP.get(p.get("status", ""), p.get("status", "pending")),
+                    "platform_video_id": p.get("external_post_id"),
+                    "platform_video_url": None,
+                    "error_message": p.get("failed_reason"),
+                    "uploaded_at": p.get("published_at"),
+                    "_source": _SOURCE_EXT_PUB,
+                }
+                for p in publishes
+            ]
+
+        return [
+            {
+                "platform": c.get("platform", ""),
+                "channel_id": c["channel_id"],
+                "channel_name": c.get("channel_name", ""),
+                "status": "pending",
+                "platform_video_id": None,
+                "platform_video_url": None,
+                "error_message": None,
+                "uploaded_at": None,
+                "_source": _SOURCE_EXT_PUB,
+            }
+            for c in fallback_channels
+        ]
+
     async def submit(
         self,
         data: "VideoPublicationCreate",
@@ -548,7 +592,20 @@ class ExtPubAdapter(PublishAdapter):
             data.sub_task_id, api_payload,
         )
 
-        response = await self.client.create_post(api_payload)
+        try:
+            response = await self.client.create_post(api_payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise
+            logger.info(
+                "ExtPubAdapter.submit: create_post 400, probing existing business_id=%s",
+                api_payload["business_id"],
+            )
+            try:
+                response = await self.client.fetch_post_detail(api_payload["business_id"])
+                logger.info("ExtPubAdapter.submit: found existing post for business_id=%s", api_payload["business_id"])
+            except Exception:
+                raise exc
         logger.info("ExtPubAdapter.submit response: %s", response)
 
         response_data = response if isinstance(response, dict) else {}
@@ -556,22 +613,7 @@ class ExtPubAdapter(PublishAdapter):
         post_data = response_data.get("data") or {}
         task_id: str | None = str(post_data.get("id")) if post_data.get("id") else None
 
-        # 提交时外部 API 不返回各频道状态，用请求的 channels 构造 pending 条目
-        # 频道名从请求的 binding 中取（ext_pub 的 channel_id 是 platform_account id）
-        channel_statuses = [
-            {
-                "platform": c.get("platform", ""),
-                "channel_id": c["channel_id"],
-                "channel_name": c.get("channel_name", ""),
-                "status": "pending",
-                "platform_video_id": None,
-                "platform_video_url": None,
-                "error_message": None,
-                "uploaded_at": None,
-                "_source": _SOURCE_EXT_PUB,
-            }
-            for c in channels
-        ]
+        channel_statuses = self._statuses_from_post_data(post_data, channels)
 
         logger.info(
             "ExtPubAdapter.submit: task_id=%s channels=%s",
@@ -813,8 +855,17 @@ class VideoPublicationService:
             )
 
         rows = (await self.db.execute(stmt)).all()
+        bindings_by_account = await self._load_social_bindings_by_account([
+            account.id for _, _, _, account in rows if account is not None
+        ])
         items = [
-            self._build_stats_item(publication, sub_task, task, account)
+            self._build_stats_item(
+                publication,
+                sub_task,
+                task,
+                account,
+                bindings_by_account.get(account.id, []) if account is not None else [],
+            )
             for publication, sub_task, task, account in rows
         ]
 
@@ -866,8 +917,17 @@ class VideoPublicationService:
             )
 
         rows = (await self.db.execute(stmt)).all()
+        bindings_by_account = await self._load_social_bindings_by_account([
+            account.id for _, _, _, account in rows if account is not None
+        ])
         items = [
-            self._build_stats_item(publication, sub_task, task, account)
+            self._build_stats_item(
+                publication,
+                sub_task,
+                task,
+                account,
+                bindings_by_account.get(account.id, []) if account is not None else [],
+            )
             for publication, sub_task, task, account in rows
         ]
 
@@ -887,6 +947,7 @@ class VideoPublicationService:
         sub_task: Any,
         task: Any,
         account: Account | None,
+        social_bindings: list[dict],
     ) -> VideoPublicationStatsListItem:
         request_payload = publication.request_payload or {}
         metrics_snapshot = publication.metrics_snapshot if isinstance(publication.metrics_snapshot, dict) else None
@@ -921,7 +982,7 @@ class VideoPublicationService:
             account_id=getattr(task, "account_id", None),
             account_name=getattr(account, "account_name", None),
             account_type=getattr(account, "account_type", None),
-            social_bindings=getattr(account, "social_bindings", None),
+            social_bindings=social_bindings,
             status=publication.status,
             video_url=getattr(sub_task, "result_video_url", None),
             published_at=publication.completed_at,
@@ -938,6 +999,34 @@ class VideoPublicationService:
             created_at=publication.created_at,
             updated_at=publication.updated_at,
         )
+
+    async def _load_social_bindings_by_account(
+        self,
+        account_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, list[dict]]:
+        unique_ids = list({aid for aid in account_ids if aid is not None})
+        if not unique_ids:
+            return {}
+        stmt = (
+            select(AccountChannelReservation)
+            .where(AccountChannelReservation.account_id.in_(unique_ids))
+            .where(AccountChannelReservation.status == "bound")
+            .order_by(AccountChannelReservation.created_at.asc())
+        )
+        result: dict[uuid.UUID, list[dict]] = {aid: [] for aid in unique_ids}
+        for row in (await self.db.execute(stmt)).scalars().all():
+            binding = dict(row.channel_info or {})
+            binding.update({
+                "platform": row.platform,
+                "channel_source": row.channel_source or row.source or "openapi",
+                "channel_id": row.channel_id or "",
+                "channel_name": row.channel_name or "",
+                "username": row.username or "",
+            })
+            if row.avatar_url:
+                binding["avatar_url"] = row.avatar_url
+            result.setdefault(row.account_id, []).append(binding)
+        return result
 
     @staticmethod
     def _to_int(value: Any) -> int:
@@ -1363,26 +1452,19 @@ class VideoPublicationService:
         channel_source: 若传入则只统计该来源（openapi / ext_pub），
                         None 表示统计所有来源。
         """
-        stmt = select(Account.id, Account.social_bindings).where(Account.owner_id == owner_id)
+        stmt = (
+            select(AccountChannelReservation.channel_id)
+            .join(Account, Account.id == AccountChannelReservation.account_id)
+            .where(Account.owner_id == owner_id)
+            .where(AccountChannelReservation.platform == platform)
+            .where(AccountChannelReservation.status == "bound")
+        )
         if current_account_id is not None:
             stmt = stmt.where(Account.id != current_account_id)
-        rows = (await self.db.execute(stmt)).all()
-
-        excluded_channel_ids: set[str] = set()
-        for _, bindings in rows:
-            if not isinstance(bindings, list):
-                continue
-            for binding in bindings:
-                if not isinstance(binding, dict):
-                    continue
-                if binding.get("platform") != platform:
-                    continue
-                if channel_source is not None and binding.get("channel_source") != channel_source:
-                    continue
-                channel_id = str(binding.get("channel_id") or "").strip()
-                if channel_id:
-                    excluded_channel_ids.add(channel_id)
-        return excluded_channel_ids
+        if channel_source is not None:
+            stmt = stmt.where(AccountChannelReservation.channel_source == channel_source)
+        rows = (await self.db.execute(stmt)).scalars().all()
+        return {str(channel_id).strip() for channel_id in rows if str(channel_id or "").strip()}
 
     # ── 统一频道查询 ──────────────────────────────────────────────────────────────
 

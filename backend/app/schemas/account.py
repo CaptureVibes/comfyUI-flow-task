@@ -194,6 +194,69 @@ class BulkGenerateNameHandleResponse(BaseModel):
     queued_count: int = 0
 
 
+class AccountChannelReservationRead(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    platform: str
+    status: str
+    source: str = "openapi"
+    channel_source: str = "openapi"
+    channel_id: str | None = None
+    channel_name: str | None = None
+    username: str | None = None
+    avatar_url: str | None = None
+    channel_info: dict | None = None
+    note: str | None = None
+    reserved_at: datetime
+    confirmed_at: datetime | None = None
+    bound_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ReserveAIAccountsBody(BaseModel):
+    gender: Literal["male", "female", "unisex"]
+    platform: Literal["youtube", "tiktok"]
+    count: int = Field(ge=1, le=100)
+    source: str = "openapi"
+    note: str | None = None
+
+
+class ReserveAIAccountsResponse(BaseModel):
+    items: list["AccountRead"]
+    requested_count: int
+    reserved_count: int
+    reservation_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class ConfirmChannelReservationsBody(BaseModel):
+    reservation_ids: list[uuid.UUID] | None = None
+    account_ids: list[uuid.UUID] | None = None
+    platform: Literal["youtube", "tiktok"] | None = None
+
+
+class ConfirmChannelReservationsResponse(BaseModel):
+    status: str
+    confirmed_count: int = 0
+    reservation_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class BindOpenAPIChannelBody(BaseModel):
+    platform: Literal["youtube", "tiktok"]
+    channel_id: str = ""
+    channel_name: str = ""
+    username: str = ""
+    open_id: str = ""
+    access_token: str = ""
+    refresh_token: str = ""
+    expires_in: int = 0
+    api_key: str = ""
+    source: str = "openapi"
+    extra: dict | None = None
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
@@ -208,7 +271,8 @@ class AccountRead(BaseModel):
     avatar_url: str | None
     photo_url: str | None = None
     painting_url: str | None = None
-    social_bindings: list | None
+    social_bindings: list | None = None
+    channel_reservations: list[AccountChannelReservationRead] = []
     performance_snapshot: AccountPerformanceSnapshot | None = None
     hashtags: list[str] | None = None
     tiktok_bloggers: list[BoundBloggerRead] = []

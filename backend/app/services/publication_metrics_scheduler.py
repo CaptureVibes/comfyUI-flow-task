@@ -206,6 +206,7 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
     """
     from sqlalchemy import select
     from app.models.account import Account
+    from app.models.account_channel_reservation import AccountChannelReservation
     from app.models.video_publication import VideoPublication
     from app.models.video_task import VideoSubTask, VideoTask
 
@@ -229,15 +230,17 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
             )
             pubs = list((await db.execute(stmt)).scalars().all())
 
-            # 从 social_bindings 遍历各平台获取粉丝数（各平台累加）
+            # 从频道绑定表遍历各平台获取粉丝数（各平台累加）
             followers_count: int | None = None
-            bindings = account.social_bindings or []
+            bindings = (await db.execute(
+                select(AccountChannelReservation)
+                .where(AccountChannelReservation.account_id == account.id)
+                .where(AccountChannelReservation.status == "bound")
+            )).scalars().all()
             loop = asyncio.get_running_loop()
             for binding in bindings:
-                if not isinstance(binding, dict):
-                    continue
-                platform = binding.get("platform") or ""
-                ch_name = binding.get("username") or binding.get("channel_name") or ""
+                platform = binding.platform or ""
+                ch_name = binding.username or binding.channel_name or ""
                 if not ch_name:
                     continue
                 if platform == "youtube":

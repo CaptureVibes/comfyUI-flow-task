@@ -23,11 +23,12 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import SessionLocal
 from app.models.account import Account
+from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.video_task import VideoSubTask, VideoTask
 
 logger = logging.getLogger("app.account_publish_scheduler")
 
-_POLL_INTERVAL_SECONDS = 60.0
+_POLL_INTERVAL_SECONDS = 600.0
 _TZ = pytz.timezone("Asia/Shanghai")
 
 _scheduler_task: asyncio.Task | None = None
@@ -203,11 +204,11 @@ async def _process_account(account: Account, *, now_utc: datetime, now_local: da
 async def _do_publish(account: Account) -> None:
     """从队列取前 N 个 queued 子任务，按顺序串行发布"""
     publish_count = max(1, account.publish_count or 1)
-    channels = _build_channels(account)
+    channels = await _build_channels(account.id)
 
     if not channels:
         logger.warning(
-            "【定时发布】账号 %s（%s）未配置发布渠道（social_bindings 为空），跳过",
+            "【定时发布】账号 %s（%s）未配置发布渠道，跳过",
             account.id, account.account_name,
         )
         return
@@ -361,14 +362,19 @@ async def _publish_sub_task(
             raise
 
 
-def _build_channels(account: Account) -> list[dict]:
-    bindings = account.social_bindings or []
+async def _build_channels(account_id: uuid.UUID) -> list[dict]:
+    async with SessionLocal() as session:
+        bindings = (await session.execute(
+            select(AccountChannelReservation)
+            .where(AccountChannelReservation.account_id == account_id)
+            .where(AccountChannelReservation.status == "bound")
+            .where(AccountChannelReservation.channel_id.is_not(None))
+            .order_by(AccountChannelReservation.created_at.asc())
+        )).scalars().all()
     result = []
     for b in bindings:
-        if not isinstance(b, dict) or not b.get("channel_id"):
-            continue
-        entry = {"platform": b.get("platform", ""), "channel_id": b["channel_id"]}
-        if b.get("channel_source"):
-            entry["channel_source"] = b["channel_source"]
+        entry = {"platform": b.platform, "channel_id": b.channel_id}
+        if b.channel_source:
+            entry["channel_source"] = b.channel_source
         result.append(entry)
     return result

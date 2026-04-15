@@ -9,12 +9,14 @@ import random
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import exists, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
 from app.db.session import get_db
 from app.models.account import Account
 from app.models.account_blogger_binding import AccountBloggerBinding
+from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.account_tag import AccountTag
 from app.models.flag import AccountFlag, Flag
 from app.models.tag import Tag
@@ -27,6 +29,8 @@ from app.schemas.account import (
     AIGenerateBody, AIGenerateStatusResponse, BindTagBody, BulkGenerateAIAccountsResponse,
     BulkResumeAIAccountsResponse, ResumeAIGenerationBody, SelectPhotoCandidateBody,
     BulkGenerateNameHandleBody, BulkGenerateNameHandleResponse,
+    AccountChannelReservationRead, BindOpenAPIChannelBody, ConfirmChannelReservationsBody,
+    ConfirmChannelReservationsResponse, ReserveAIAccountsBody, ReserveAIAccountsResponse,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -78,18 +82,125 @@ async def _load_bound_tags(session: AsyncSession, account_id: uuid.UUID) -> list
     return [BoundTagRead.model_validate(t) for t in rows]
 
 
+async def _load_channel_reservations(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+) -> list[AccountChannelReservationRead]:
+    stmt = (
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.account_id == account_id)
+        .order_by(AccountChannelReservation.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [AccountChannelReservationRead.model_validate(r) for r in rows]
+
+
+def _channel_binding_payload(body: BindOpenAPIChannelBody) -> dict:
+    data = body.model_dump(exclude_none=True)
+    extra = data.pop("extra", None) or {}
+    data.update(extra)
+    data["platform"] = body.platform
+    data["source"] = body.source or "openapi"
+    return data
+
+
+def _reservation_to_binding(reservation: AccountChannelReservation | AccountChannelReservationRead) -> dict:
+    base = dict(reservation.channel_info or {})
+    base.update({
+        "platform": reservation.platform,
+        "channel_source": reservation.channel_source or reservation.source or "openapi",
+        "channel_id": reservation.channel_id or "",
+        "channel_name": reservation.channel_name or "",
+        "username": reservation.username or "",
+    })
+    avatar_url = getattr(reservation, "avatar_url", None)
+    if avatar_url:
+        base["avatar_url"] = avatar_url
+    return base
+
+
+def _apply_channel_binding(
+    reservation: AccountChannelReservation,
+    binding: dict,
+    *,
+    now: datetime,
+) -> None:
+    platform = str(binding.get("platform") or reservation.platform or "").lower()
+    source = str(binding.get("channel_source") or binding.get("source") or reservation.source or "openapi")
+    reservation.platform = platform
+    reservation.status = "bound"
+    reservation.source = source
+    reservation.channel_source = source
+    reservation.channel_id = str(binding.get("channel_id") or "") or None
+    reservation.channel_name = str(binding.get("channel_name") or "") or None
+    reservation.username = str(binding.get("username") or "") or None
+    reservation.avatar_url = str(binding.get("avatar_url") or "") or None
+    reservation.channel_info = {**binding, "platform": platform, "channel_source": source}
+    reservation.confirmed_at = reservation.confirmed_at or now
+    reservation.bound_at = now
+
+
+async def _sync_channel_reservations_from_bindings(
+    session: AsyncSession,
+    account: Account,
+    bindings: list[dict] | None,
+) -> None:
+    """把接口传入的频道绑定写入结构化频道表。"""
+    supported_platforms = {"youtube", "tiktok", "instagram"}
+    desired: dict[str, dict] = {}
+    for binding in bindings or []:
+        if not isinstance(binding, dict):
+            continue
+        platform = str(binding.get("platform") or "").lower()
+        if platform in supported_platforms:
+            desired[platform] = {**binding, "platform": platform}
+
+    rows = (await session.execute(
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.account_id == account.id)
+        .where(AccountChannelReservation.platform.in_(supported_platforms))
+    )).scalars().all()
+    existing_by_platform = {r.platform: r for r in rows}
+    now = datetime.now(timezone.utc)
+
+    for platform, binding in desired.items():
+        reservation = existing_by_platform.get(platform)
+        if reservation is None:
+            reservation = AccountChannelReservation(
+                account_id=account.id,
+                platform=platform,
+                reserved_at=now,
+                confirmed_at=now,
+            )
+            session.add(reservation)
+        _apply_channel_binding(reservation, binding, now=now)
+
+    for platform, reservation in existing_by_platform.items():
+        if platform not in desired and reservation.status == "bound":
+            await session.delete(reservation)
+
+    await session.commit()
+
+
 def _account_read(
     account,
     bloggers: list[BoundBloggerRead],
     tags: list[BoundTagRead] | None = None,
     flags: list[BoundFlagRead] | None = None,
     pending_publish_count: int = 0,
+    channel_reservations: list[AccountChannelReservationRead] | None = None,
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
     data.bound_tags = tags or []
     data.bound_flags = flags or []
     data.pending_publish_count = pending_publish_count
+    data.channel_reservations = channel_reservations or []
+    data.social_bindings = [
+        _reservation_to_binding(reservation)
+        for reservation in data.channel_reservations
+        if reservation.status == "bound"
+    ]
     return data
 
 
@@ -130,7 +241,10 @@ async def create_account_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> AccountRead:
     account = await create_account(session, payload, creator_id)
-    return _account_read(account, [], [])
+    if payload.social_bindings is not None:
+        await _sync_channel_reservations_from_bindings(session, account, payload.social_bindings)
+    reservations = await _load_channel_reservations(session, account.id)
+    return _account_read(account, [], [], channel_reservations=reservations)
 
 
 @router.get("", response_model=AccountListResponse)
@@ -147,6 +261,7 @@ async def list_accounts_endpoint(
     blogger_map: dict[uuid.UUID, list[BoundBloggerRead]] = {aid: [] for aid in account_ids}
     tag_map: dict[uuid.UUID, list[BoundTagRead]] = {aid: [] for aid in account_ids}
     flag_map: dict[uuid.UUID, list[BoundFlagRead]] = {aid: [] for aid in account_ids}
+    reservation_map: dict[uuid.UUID, list[AccountChannelReservationRead]] = {aid: [] for aid in account_ids}
     pending_publish_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
     if account_ids:
         blogger_stmt = (
@@ -176,6 +291,14 @@ async def list_accounts_endpoint(
         for aid, flag in (await session.execute(flag_stmt)).all():
             flag_map[aid].append(BoundFlagRead.model_validate(flag))
 
+        reservation_stmt = (
+            select(AccountChannelReservation)
+            .where(AccountChannelReservation.account_id.in_(account_ids))
+            .order_by(AccountChannelReservation.created_at.asc())
+        )
+        for reservation in (await session.execute(reservation_stmt)).scalars().all():
+            reservation_map[reservation.account_id].append(AccountChannelReservationRead.model_validate(reservation))
+
         pending_publish_stmt = (
             select(VideoTask.account_id, func.count(VideoSubTask.id))
             .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
@@ -196,6 +319,7 @@ async def list_accounts_endpoint(
             tag_map[a.id],
             flag_map[a.id],
             pending_publish_map[a.id],
+            reservation_map[a.id],
         )
         for a in items
     ]
@@ -205,6 +329,159 @@ async def list_accounts_endpoint(
         page=page,
         page_size=page_size,
     )
+
+
+@router.post("/channel-reservations", response_model=ReserveAIAccountsResponse, status_code=201)
+async def reserve_ai_accounts_for_channel(
+    body: ReserveAIAccountsBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> ReserveAIAccountsResponse:
+    """按性别和平台领取 AI 博主，并立即占用该平台名额。"""
+    platform = body.platform.lower()
+    reserved_accounts: list[Account] = []
+    reservations: list[AccountChannelReservation] = []
+    seen_account_ids: set[uuid.UUID] = set()
+    batch_size = max(body.count * 5, 50)
+    while len(reserved_accounts) < body.count:
+        stmt = (
+            select(Account)
+            .where(Account.gender == body.gender)
+            .where(
+                ~exists()
+                .where(AccountChannelReservation.account_id == Account.id)
+                .where(AccountChannelReservation.platform == platform)
+            )
+            .order_by(Account.created_at.asc())
+            .limit(batch_size)
+        )
+        if owner_id is not None:
+            stmt = stmt.where(Account.owner_id == owner_id)
+        if seen_account_ids:
+            stmt = stmt.where(Account.id.not_in(list(seen_account_ids)))
+        candidates = (await session.execute(stmt)).scalars().all()
+        if not candidates:
+            break
+        for account in candidates:
+            seen_account_ids.add(account.id)
+            if len(reserved_accounts) >= body.count:
+                break
+            reservation = AccountChannelReservation(
+                account_id=account.id,
+                platform=platform,
+                status="reserved",
+                source=body.source or "openapi",
+                channel_source=body.source or "openapi",
+                note=body.note,
+                reserved_at=datetime.now(timezone.utc),
+            )
+            session.add(reservation)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                continue
+            await session.refresh(reservation)
+            reserved_accounts.append(account)
+            reservations.append(reservation)
+
+    items: list[AccountRead] = []
+    for account, reservation in zip(reserved_accounts, reservations, strict=False):
+        bloggers = await _load_bound_bloggers(session, account.id)
+        tags = await _load_bound_tags(session, account.id)
+        flags = await _load_bound_flags(session, account.id)
+        items.append(
+            _account_read(
+                account,
+                bloggers,
+                tags,
+                flags,
+                channel_reservations=[AccountChannelReservationRead.model_validate(reservation)],
+            )
+        )
+
+    return ReserveAIAccountsResponse(
+        items=items,
+        requested_count=body.count,
+        reserved_count=len(items),
+        reservation_ids=[r.id for r in reservations],
+    )
+
+
+@router.post("/channel-reservations/confirm", response_model=ConfirmChannelReservationsResponse)
+async def confirm_channel_reservations(
+    body: ConfirmChannelReservationsBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> ConfirmChannelReservationsResponse:
+    """确认外部调用方确实占用了这些 AI 博主的平台频道。"""
+    stmt = select(AccountChannelReservation).join(Account, Account.id == AccountChannelReservation.account_id)
+    if body.reservation_ids:
+        stmt = stmt.where(AccountChannelReservation.id.in_(body.reservation_ids))
+    else:
+        if not body.account_ids or not body.platform:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reservation_ids 或 account_ids + platform 必须提供一组",
+            )
+        stmt = stmt.where(AccountChannelReservation.account_id.in_(body.account_ids))
+        stmt = stmt.where(AccountChannelReservation.platform == body.platform)
+    if owner_id is not None:
+        stmt = stmt.where(Account.owner_id == owner_id)
+
+    rows = (await session.execute(stmt)).scalars().all()
+    now = datetime.now(timezone.utc)
+    confirmed_ids: list[uuid.UUID] = []
+    for reservation in rows:
+        if reservation.status != "bound":
+            reservation.status = "confirmed"
+            reservation.confirmed_at = reservation.confirmed_at or now
+        confirmed_ids.append(reservation.id)
+    await session.commit()
+    return ConfirmChannelReservationsResponse(
+        status="confirmed",
+        confirmed_count=len(confirmed_ids),
+        reservation_ids=confirmed_ids,
+    )
+
+
+@router.post("/{account_id}/channel-bindings", response_model=AccountRead)
+async def bind_openapi_channel(
+    account_id: uuid.UUID,
+    body: BindOpenAPIChannelBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> AccountRead:
+    """保存 OpenAPI 回传的平台频道信息。"""
+    account = await get_account_or_404(session, account_id, owner_id)
+    platform = body.platform.lower()
+    binding = _channel_binding_payload(body)
+
+    reservation = await session.scalar(
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.account_id == account_id)
+        .where(AccountChannelReservation.platform == platform)
+    )
+    now = datetime.now(timezone.utc)
+    if reservation is None:
+        reservation = AccountChannelReservation(
+            account_id=account_id,
+            platform=platform,
+            source=body.source or "openapi",
+            channel_source=body.source or "openapi",
+            reserved_at=now,
+            confirmed_at=now,
+        )
+        session.add(reservation)
+    _apply_channel_binding(reservation, binding, now=now)
+
+    await session.commit()
+    await session.refresh(account)
+    bloggers = await _load_bound_bloggers(session, account_id)
+    tags = await _load_bound_tags(session, account_id)
+    flags = await _load_bound_flags(session, account_id)
+    reservations = await _load_channel_reservations(session, account_id)
+    return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
 @router.get("/{account_id}", response_model=AccountRead)
@@ -217,7 +494,8 @@ async def get_account_endpoint(
     bloggers = await _load_bound_bloggers(session, account_id)
     tags = await _load_bound_tags(session, account_id)
     flags = await _load_bound_flags(session, account_id)
-    return _account_read(account, bloggers, tags, flags)
+    reservations = await _load_channel_reservations(session, account_id)
+    return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
 @router.patch("/{account_id}", response_model=AccountRead)
@@ -229,10 +507,13 @@ async def patch_account_endpoint(
 ) -> AccountRead:
     account = await get_account_or_404(session, account_id, owner_id)
     account = await patch_account(session, account, payload)
+    if payload.social_bindings is not None:
+        await _sync_channel_reservations_from_bindings(session, account, payload.social_bindings)
     bloggers = await _load_bound_bloggers(session, account_id)
     tags = await _load_bound_tags(session, account_id)
     flags = await _load_bound_flags(session, account_id)
-    return _account_read(account, bloggers, tags, flags)
+    reservations = await _load_channel_reservations(session, account_id)
+    return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
 @router.delete("/{account_id}")
@@ -265,7 +546,8 @@ async def update_scheduled_publish(
     bloggers = await _load_bound_bloggers(session, account_id)
     tags = await _load_bound_tags(session, account_id)
     flags = await _load_bound_flags(session, account_id)
-    return _account_read(account, bloggers, tags, flags)
+    reservations = await _load_channel_reservations(session, account_id)
+    return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
 # ── 账号-博主绑定 ─────────────────────────────────────────────────────────────
