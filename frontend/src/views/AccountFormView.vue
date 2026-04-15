@@ -245,28 +245,29 @@
                 </button>
               </div>
 
-              <!-- 内部频道选择 (从 Open API 获取) -->
-              <template v-if="binding.platform && binding.channel_source !== 'ext_pub' && shouldShowChannelSelect(binding.platform)">
-                <el-form-item :label="`${platformLabel(binding.platform)} 频道`">
+              <!-- 频道选择（内部/外部统一） -->
+              <template v-if="binding.platform && binding.channel_source && shouldShowChannelSelect(binding.platform, binding.channel_source)">
+                <el-form-item :label="`${platformLabel(binding.platform)} ${binding.channel_source === 'ext_pub' ? '外部' : ''}频道`">
                   <el-select
                     v-model="binding.channel_id"
-                    placeholder="选择要绑定的频道"
+                    :placeholder="binding.channel_source === 'ext_pub' ? '选择外部频道' : '选择要绑定的频道'"
                     class="vtfd-beautiful-input"
                     filterable
                     style="width: 100%"
+                    :loading="isChannelsLoading(binding.platform, binding.channel_source)"
                     @visible-change="visible => handleChannelDropdownVisible(binding, visible)"
                     @change="handleChannelSelect(binding)"
                   >
                     <el-option
-                      v-for="channel in channelsMap[binding.platform]"
+                      v-for="channel in channelsByKey(binding.platform, binding.channel_source)"
                       :key="channel.channel_id"
                       :label="`${channel.channel_name} (@${channel.username || 'N/A'})`"
                       :value="channel.channel_id"
                     >
                       <div style="display: flex; align-items: center; gap: 8px;">
                         <img
-                          v-if="channel.thumbnail_url"
-                          :src="channel.thumbnail_url"
+                          v-if="channel.avatar_url"
+                          :src="channel.avatar_url"
                           style="width: 24px; height: 24px; border-radius: 50%;"
                         />
                         <span>{{ channel.channel_name }}</span>
@@ -274,18 +275,25 @@
                       </div>
                     </el-option>
                     <el-option
-                      v-if="isChannelsLoading(binding.platform)"
+                      v-if="isChannelsLoading(binding.platform, binding.channel_source)"
                       key="__loading__"
                       label="加载中..."
                       value="__loading__"
+                      disabled
+                    />
+                    <el-option
+                      v-if="!isChannelsLoading(binding.platform, binding.channel_source) && channelsByKey(binding.platform, binding.channel_source).length === 0 && channelStateByKey(binding.platform, binding.channel_source).loaded"
+                      key="__empty__"
+                      :label="`暂无 ${platformLabel(binding.platform)} 频道`"
+                      value="__empty__"
                       disabled
                     />
                   </el-select>
                 </el-form-item>
               </template>
 
-              <!-- 内部频道：手动输入 (当没有从 API 获取到频道时) -->
-              <template v-if="binding.platform && binding.channel_source !== 'ext_pub' && shouldShowManualChannelInput(binding.platform)">
+              <!-- 内部频道：手动输入降级（API 无数据时） -->
+              <template v-if="binding.platform && binding.channel_source && shouldShowManualChannelInput(binding.platform, binding.channel_source)">
                 <el-form-item :label="`${platformLabel(binding.platform)} Channel ID`">
                   <el-input
                     v-model="binding.channel_id"
@@ -301,49 +309,6 @@
                     clearable
                     class="vtfd-beautiful-input"
                   />
-                </el-form-item>
-              </template>
-
-              <!-- 外部频道选择 (从外部发布 API 获取) -->
-              <template v-if="binding.platform && binding.channel_source === 'ext_pub'">
-                <el-form-item :label="`${platformLabel(binding.platform)} 外部频道`">
-                  <el-select
-                    v-model="binding.channel_id"
-                    placeholder="选择外部频道"
-                    class="vtfd-beautiful-input"
-                    filterable
-                    style="width: 100%"
-                    :loading="extPubAccountsLoading"
-                    @visible-change="visible => { if (visible) loadExtPubAccounts() }"
-                    @change="handleExtPubChannelSelect(binding)"
-                  >
-                    <el-option
-                      v-for="acc in extPubAccountsByPlatform(binding.platform)"
-                      :key="acc.id"
-                      :label="acc.nickname || acc.username"
-                      :value="acc.id"
-                    >
-                      <div style="display: flex; align-items: center; gap: 8px;">
-                        <span>{{ acc.nickname || acc.username }}</span>
-                        <span style="color: #94a3b8; font-size: 12px;">(@{{ acc.username }})</span>
-                        <span v-if="acc.remark" style="color: #64748b; font-size: 11px;">{{ acc.remark }}</span>
-                      </div>
-                    </el-option>
-                    <el-option
-                      v-if="extPubAccountsLoading"
-                      key="__loading__"
-                      label="加载中..."
-                      value="__loading__"
-                      disabled
-                    />
-                    <el-option
-                      v-if="!extPubAccountsLoading && extPubAccountsByPlatform(binding.platform).length === 0"
-                      key="__empty__"
-                      :label="`暂无 ${platformLabel(binding.platform)} 外部频道`"
-                      value="__empty__"
-                      disabled
-                    />
-                  </el-select>
                 </el-form-item>
               </template>
             </div>
@@ -561,7 +526,7 @@ import { fetchTags, fetchTagsVideoCount } from '../api/tags'
 import { searchBloggers } from '../api/tiktok_bloggers'
 import { uploadImageByFile } from '../api/uploads'
 import { isDuplicateRequestError } from '../api/http'
-import { fetchChannels, fetchExtPubPlatformAccounts } from '../api/video_publications'
+import { fetchChannelsUnified } from '../api/video_publications'
 
 const route = useRoute()
 const router = useRouter()
@@ -573,41 +538,25 @@ const uploadingAvatar = ref(false)
 const uploadingPhoto = ref(false)
 const formRef = ref(null)
 
-// Open API 频道数据
-const channelsMap = ref({
-  youtube: [],
-  tiktok: [],
-  instagram: [],
-})
-const channelPageState = reactive({
-  youtube: { page: 0, total: 0, loading: false, loaded: false },
-  tiktok: { page: 0, total: 0, loading: false, loaded: false },
-  instagram: { page: 0, total: 0, loading: false, loaded: false },
-})
+// 频道数据缓存：key 格式为 `${platform}__${channel_source}`
+// 统一格式：每条 { channel_id, channel_name, username, platform, channel_source, avatar_url }
+const channelsMap = ref({})
+const channelPageState = reactive({})
 
-// 外部发布 API 频道数据
-const extPubAccounts = ref([])
-const extPubAccountsLoading = ref(false)
-const extPubAccountsLoaded = ref(false)
-
-function extPubAccountsByPlatform(platform) {
-  return extPubAccounts.value.filter(a => a.platform_type === platform)
+function _cacheKey(platform, channelSource) {
+  return `${platform}__${channelSource}`
 }
 
-async function loadExtPubAccounts() {
-  if (extPubAccountsLoaded.value || extPubAccountsLoading.value) return
-  extPubAccountsLoading.value = true
-  try {
-    const res = await fetchExtPubPlatformAccounts()
-    extPubAccounts.value = res?.data?.items || []
-    extPubAccountsLoaded.value = true
-  } catch (err) {
-    console.error('加载外部频道失败:', err)
-    extPubAccounts.value = []
-    extPubAccountsLoaded.value = true
-  } finally {
-    extPubAccountsLoading.value = false
+function channelsByKey(platform, channelSource) {
+  return channelsMap.value[_cacheKey(platform, channelSource)] || []
+}
+
+function channelStateByKey(platform, channelSource) {
+  const key = _cacheKey(platform, channelSource)
+  if (!channelPageState[key]) {
+    channelPageState[key] = { page: 0, total: 0, loading: false, loaded: false }
   }
+  return channelPageState[key]
 }
 
 const form = reactive({
@@ -633,49 +582,49 @@ const CHANNEL_PAGE_SIZE = 50
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
 
-function isChannelsLoading(platform) {
-  return platform ? channelPageState[platform]?.loading : false
+function isChannelsLoading(platform, channelSource) {
+  return channelStateByKey(platform, channelSource)?.loading ?? false
 }
 
-function shouldShowChannelSelect(platform) {
-  if (!platform) return false
-  const state = channelPageState[platform]
-  return !!(channelsMap.value[platform]?.length || state?.loading || state?.loaded)
+function shouldShowChannelSelect(platform, channelSource) {
+  if (!platform || !channelSource) return false
+  const state = channelStateByKey(platform, channelSource)
+  return !!(channelsByKey(platform, channelSource).length || state.loading || state.loaded)
 }
 
-function shouldShowManualChannelInput(platform) {
-  if (!platform) return false
-  const state = channelPageState[platform]
-  return !!(state?.loaded && !state?.loading && !(channelsMap.value[platform]?.length))
+function shouldShowManualChannelInput(platform, channelSource) {
+  if (!platform || !channelSource) return false
+  if (channelSource === 'ext_pub') return false  // 外部频道不支持手动输入
+  const state = channelStateByKey(platform, channelSource)
+  return !!(state.loaded && !state.loading && !channelsByKey(platform, channelSource).length)
 }
 
-function hasMoreChannels(platform) {
-  if (!platform) return false
-  const state = channelPageState[platform]
-  if (!state) return false
+function hasMoreChannels(platform, channelSource) {
+  if (!platform || !channelSource) return false
+  const state = channelStateByKey(platform, channelSource)
   if (!state.loaded) return true
   if (state.total === 0) return false
-  return channelsMap.value[platform].length < state.total
+  return channelsByKey(platform, channelSource).length < state.total
 }
 
-async function loadChannels(platform, { reset = false } = {}) {
-  if (!platform || !channelPageState[platform]) return
-  const state = channelPageState[platform]
+async function loadChannels(platform, channelSource, { reset = false } = {}) {
+  if (!platform || !channelSource) return
+  const state = channelStateByKey(platform, channelSource)
   if (state.loading) return
   if (reset) {
-    channelsMap.value[platform] = []
+    channelsMap.value[_cacheKey(platform, channelSource)] = []
     state.page = 0
     state.total = 0
     state.loaded = false
   }
-  if (state.loaded && !hasMoreChannels(platform)) return
+  if (state.loaded && !hasMoreChannels(platform, channelSource)) return
 
   const nextPage = state.page + 1
   const accountId = isEdit.value ? route.params.id : null
   try {
     state.loading = true
-    const response = await fetchChannels(platform, {
-      isActive: true,
+    const response = await fetchChannelsUnified(platform, channelSource, {
+      isActive: channelSource === 'openapi' ? true : undefined,
       page: nextPage,
       pageSize: CHANNEL_PAGE_SIZE,
       accountId,
@@ -685,12 +634,12 @@ async function loadChannels(platform, { reset = false } = {}) {
     state.page = Number(data.page || nextPage)
     state.total = Number(data.total || 0)
     state.loaded = true
-    channelsMap.value[platform] = reset ? pageItems : [...channelsMap.value[platform], ...pageItems]
+    const key = _cacheKey(platform, channelSource)
+    channelsMap.value[key] = reset ? pageItems : [...(channelsMap.value[key] || []), ...pageItems]
   } catch (err) {
-    console.error(`加载 ${platform} 频道失败:`, err)
-    // 静默失败，不弹窗提示，允许用户手动输入
+    console.error(`加载 ${platform}(${channelSource}) 频道失败:`, err)
     if (reset) {
-      channelsMap.value[platform] = []
+      channelsMap.value[_cacheKey(platform, channelSource)] = []
       state.loaded = true
       state.total = 0
       state.page = 1
@@ -706,8 +655,9 @@ async function handleChannelDropdownVisible(binding, visible) {
     detachChannelScrollListener(binding)
     return
   }
-  if (!channelPageState[binding.platform].loaded) {
-    await loadChannels(binding.platform, { reset: true })
+  const state = channelStateByKey(binding.platform, binding.channel_source)
+  if (!state.loaded) {
+    await loadChannels(binding.platform, binding.channel_source, { reset: true })
   }
   await attachChannelScrollListener(binding)
 }
@@ -728,8 +678,8 @@ async function attachChannelScrollListener(binding) {
   if (!target) return
   const onScroll = async () => {
     const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24
-    if (nearBottom && hasMoreChannels(binding.platform)) {
-      await loadChannels(binding.platform)
+    if (nearBottom && hasMoreChannels(binding.platform, binding.channel_source)) {
+      await loadChannels(binding.platform, binding.channel_source)
     }
   }
   target.addEventListener('scroll', onScroll, { passive: true })
@@ -742,18 +692,21 @@ async function handlePlatformChange(binding) {
   const oldPlatform = binding._prevPlatform
   const newPlatform = binding.platform
 
-  // 清空之前的频道选择
-  delete binding._prevPlatform
+  if (newPlatform && newPlatform !== oldPlatform) {
+    const duplicated = form.social_bindings.some(b => b !== binding && b.platform === newPlatform)
+    if (duplicated) {
+      ElMessage.warning(`${platformLabel(newPlatform)} 已绑定，每个平台只能绑定一个频道`)
+      binding.platform = oldPlatform || ''
+      return
+    }
+  }
+
   binding.channel_id = ''
   binding.channel_name = ''
+  binding._prevPlatform = newPlatform
 
-  // 如果平台变了，加载新的频道列表
   if (newPlatform && newPlatform !== oldPlatform) {
-    if (binding.channel_source === 'ext_pub') {
-      await loadExtPubAccounts()
-    } else {
-      await loadChannels(newPlatform, { reset: true })
-    }
+    await loadChannels(newPlatform, binding.channel_source, { reset: true })
   }
 }
 
@@ -761,25 +714,14 @@ async function handlePlatformChange(binding) {
 async function handleChannelSourceChange(binding) {
   binding.channel_id = ''
   binding.channel_name = ''
-  if (binding.channel_source === 'ext_pub') {
-    await loadExtPubAccounts()
-  } else if (binding.platform) {
-    await loadChannels(binding.platform, { reset: true })
+  if (binding.platform) {
+    await loadChannels(binding.platform, binding.channel_source, { reset: true })
   }
 }
 
-// 处理外部频道选择
-function handleExtPubChannelSelect(binding) {
-  const acc = extPubAccounts.value.find(a => a.id === binding.channel_id)
-  if (acc) {
-    binding.channel_name = acc.nickname || acc.username || ''
-    binding.username = acc.username || ''
-  }
-}
-
-// 处理频道选择，保存频道名称
+// 处理频道选择，保存频道名称（内部和外部统一格式，直接从 channelsByKey 找）
 function handleChannelSelect(binding) {
-  const channel = channelsMap.value[binding.platform]?.find(c => c.channel_id === binding.channel_id)
+  const channel = channelsByKey(binding.platform, binding.channel_source).find(c => c.channel_id === binding.channel_id)
   if (channel) {
     binding.channel_name = channel.channel_name
     binding.username = channel.username || ''
@@ -787,15 +729,22 @@ function handleChannelSelect(binding) {
 }
 
 async function addBinding() {
+  const ALL_PLATFORMS = ['youtube', 'tiktok', 'instagram']
+  const usedPlatforms = new Set(form.social_bindings.map(b => b.platform).filter(Boolean))
+  const nextPlatform = ALL_PLATFORMS.find(p => !usedPlatforms.has(p))
+  if (!nextPlatform) {
+    ElMessage.warning('所有平台已绑定，每个平台只能绑定一个频道')
+    return
+  }
   form.social_bindings.push({
-    platform: 'youtube',
+    platform: nextPlatform,
     channel_source: 'openapi',
     _prevPlatform: '',
     channel_id: '',
     channel_name: '',
     username: ''
   })
-  await loadChannels('youtube', { reset: true })
+  await loadChannels(nextPlatform, 'openapi', { reset: true })
 }
 
 function removeBinding(idx) {
@@ -874,11 +823,7 @@ async function loadAccount() {
       if (!binding.channel_source) binding.channel_source = 'openapi'
       if (binding.platform) {
         binding._prevPlatform = binding.platform
-        if (binding.channel_source === 'ext_pub') {
-          await loadExtPubAccounts()
-        } else {
-          await loadChannels(binding.platform, { reset: true })
-        }
+        await loadChannels(binding.platform, binding.channel_source, { reset: true })
       }
     }
   } catch (err) {
@@ -892,6 +837,13 @@ async function handleSave() {
   if (saving.value) return
   await formRef.value?.validate(async (valid) => {
     if (!valid) return
+    // 校验平台绑定唯一性
+    const platforms = form.social_bindings.map(b => b.platform).filter(Boolean)
+    const uniquePlatforms = new Set(platforms)
+    if (platforms.length !== uniquePlatforms.size) {
+      ElMessage.error('每个平台只能绑定一个频道，请检查平台绑定')
+      return
+    }
     saving.value = true
     try {
       const normalizedBindings = form.social_bindings.map(binding => ({
@@ -1309,9 +1261,9 @@ onMounted(async () => {
   await loadAccount()
   await loadBoundBloggers()
   await loadBoundTags()
-  // 如果是新建，预加载 YouTube 频道列表
+  // 如果是新建，预加载 YouTube 内部频道列表
   if (!isEdit.value) {
-    await loadChannels('youtube', { reset: true })
+    await loadChannels('youtube', 'openapi', { reset: true })
   }
 })
 

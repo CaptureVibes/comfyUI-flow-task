@@ -429,6 +429,60 @@ async def sync_account_snapshots(
     return {"total": total, "message": f"后台同步 {total} 个博主数据中"}
 
 
+@router.get("/channels")
+async def fetch_channels_unified(
+    platform: str = Query(..., description="平台类型: tiktok/youtube/instagram"),
+    channel_source: str = Query(..., description="频道来源: openapi（内部）| ext_pub（外部）"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(50, ge=1, le=200, description="每页数量，最大 200"),
+    is_active: bool | None = Query(None, description="是否只获取启用的渠道（仅内部频道有效）"),
+    account_id: uuid.UUID | None = Query(None, description="当前编辑中的账号 ID，用于保留它自己已绑定的频道"),
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """统一频道查询接口。
+
+    通过 channel_source 参数区分内部（openapi）和外部（ext_pub）频道。
+    两侧均过滤当前用户已被其他账号占用的频道，返回归一化结构：
+    { channel_id, channel_name, username, platform, channel_source, avatar_url }
+    """
+    if channel_source not in ("openapi", "ext_pub"):
+        raise HTTPException(status_code=422, detail="channel_source 必须为 openapi 或 ext_pub")
+
+    service = VideoPublicationService(db)
+    usage_types = settings.open_api_channel_usage_types_list or None if channel_source == "openapi" else None
+
+    logger.info(
+        "channels unified request: platform=%s source=%s page=%s page_size=%s account_id=%s user_id=%s",
+        platform, channel_source, page, page_size, account_id, current_user.user_id,
+    )
+    try:
+        response = await service.fetch_channels_unified(
+            platform=platform,
+            channel_source=channel_source,
+            owner_id=current_user.user_id,
+            page=page,
+            page_size=page_size,
+            is_active=is_active,
+            current_account_id=account_id,
+            usage_types=usage_types,
+        )
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        logger.info(
+            "channels unified response: platform=%s source=%s total=%s returned=%s",
+            platform, channel_source, data.get("total"), len(data.get("items") or []),
+        )
+        return response
+    except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException):
+        logger.warning("channels unified network fallback: platform=%s source=%s", platform, channel_source)
+        return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "page": page, "page_size": page_size}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("channels unified failed: platform=%s source=%s", platform, channel_source)
+        raise HTTPException(status_code=500, detail=f"获取频道列表失败: {str(e)}")
+
+
 @router.get("/open-api/channels")
 async def fetch_channels(
     platform: str = Query(..., description="平台类型: tiktok/youtube/instagram"),
@@ -439,18 +493,8 @@ async def fetch_channels(
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取 Open API 渠道列表（代理）"""
+    """获取 Open API 渠道列表（代理，兼容旧版）"""
     service = VideoPublicationService(db)
-    logger.info(
-        "Open API channels proxy request: platform=%s page=%s page_size=%s is_active=%s account_id=%s user_id=%s",
-        platform,
-        page,
-        page_size,
-        is_active,
-        account_id,
-        current_user.user_id,
-    )
-
     try:
         usage_types = settings.open_api_channel_usage_types_list or None
         response = await service.fetch_channels_filtered(
@@ -462,42 +506,11 @@ async def fetch_channels(
             current_account_id=account_id,
             usage_types=usage_types,
         )
-        data = response.get("data", {}) if isinstance(response, dict) else {}
-        logger.info(
-            "Open API channels proxy response: platform=%s page=%s page_size=%s code=%s total=%s items=%s message=%s account_id=%s user_id=%s",
-            platform,
-            page,
-            page_size,
-            response.get("code") if isinstance(response, dict) else None,
-            data.get("total"),
-            len(data.get("items") or []),
-            response.get("message") if isinstance(response, dict) else None,
-            account_id,
-            current_user.user_id,
-        )
         return response
     except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException):
-        # Open API 服务不可达时返回空列表，前端降级为手动输入
-        logger.warning(
-            "Open API channels proxy network fallback: platform=%s page=%s page_size=%s is_active=%s account_id=%s user_id=%s",
-            platform,
-            page,
-            page_size,
-            is_active,
-            account_id,
-            current_user.user_id,
-        )
         return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "page": page, "page_size": page_size}}
     except Exception as e:
-        logger.exception(
-            "Open API channels proxy failed: platform=%s page=%s page_size=%s is_active=%s account_id=%s user_id=%s",
-            platform,
-            page,
-            page_size,
-            is_active,
-            account_id,
-            current_user.user_id,
-        )
+        logger.exception("Open API channels proxy failed: platform=%s", platform)
         raise HTTPException(status_code=500, detail=f"获取渠道列表失败: {str(e)}")
 
 
@@ -507,35 +520,15 @@ async def fetch_ext_pub_platform_accounts(
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取外部发布 API 的平台账号列表（代理，支持按平台过滤）"""
+    """获取外部发布 API 的平台账号列表（代理，兼容旧版）"""
     service = VideoPublicationService(db)
     try:
-        logger.info("ExtPubAPI platform-accounts proxy request: platform=%s", platform)
         result = await service.ext_pub.fetch_platform_accounts(platform=platform)
-        data = result.get("data") if isinstance(result, dict) else {}
-        items = data.get("items") if isinstance(data, dict) else []
-        platform_counts: dict[str, int] = {}
-        if isinstance(items, list):
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                item_platform = str(item.get("platform_type") or "")
-                platform_counts[item_platform] = platform_counts.get(item_platform, 0) + 1
-        logger.info(
-            "ExtPubAPI platform-accounts proxy response: platform=%s code=%s total=%s returned_items=%s platform_counts=%s",
-            platform,
-            result.get("code") if isinstance(result, dict) else None,
-            data.get("total") if isinstance(data, dict) else None,
-            len(items) if isinstance(items, list) else None,
-            platform_counts,
-        )
-        if isinstance(result, dict) and result.get("code") == 200:
-            return result
         return result
-    except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
-        logger.warning("ExtPubAPI platform-accounts proxy fallback: %s", e)
+    except (httpx.ConnectTimeout, httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError):
+        logger.warning("ExtPubAPI platform-accounts proxy fallback: platform=%s", platform)
         return {"code": 200, "message": "Success", "data": {"items": [], "total": 0}}
-    except Exception as e:
+    except Exception:
         logger.exception("ExtPubAPI platform-accounts proxy failed")
         return {"code": 200, "message": "Success", "data": {"items": [], "total": 0}}
 

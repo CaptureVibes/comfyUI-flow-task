@@ -122,9 +122,30 @@ export async function healthCheck() {
 }
 
 /**
- * 获取外部发布 API 的平台账号列表（通过后端代理）
+ * 统一频道查询接口（内部 openapi / 外部 ext_pub 均走此接口）
+ * @param {string} platform - 平台: tiktok/youtube/instagram
+ * @param {string} channelSource - 来源: 'openapi' | 'ext_pub'
+ * @param {Object} options - { page, pageSize, isActive, accountId }
  */
-export async function fetchExtPubPlatformAccounts() {
-  const { data } = await http.get('/ext-pub/platform-accounts')
+export async function fetchChannelsUnified(platform, channelSource, options = {}) {
+  const params = {
+    platform,
+    channel_source: channelSource,
+    page: options.page ?? 1,
+    page_size: options.pageSize ?? 50,
+  }
+  if (options.isActive !== undefined) params.is_active = options.isActive
+  if (options.accountId) params.account_id = options.accountId
+  const { data } = await http.get('/channels', { params })
+  return data
+}
+
+/**
+ * 获取外部发布 API 的平台账号列表（通过后端代理，兼容旧版）
+ */
+export async function fetchExtPubPlatformAccounts(platform) {
+  const { data } = await http.get('/ext-pub/platform-accounts', {
+    params: platform ? { platform } : undefined,
+  })
   return data
 }

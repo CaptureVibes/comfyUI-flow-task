@@ -1016,8 +1016,19 @@ class VideoPublicationService:
             raise ValueError("发布任务不存在")
 
         payload = publication.request_payload or {}
-        has_openapi = payload.get("_has_openapi", not payload.get("_has_ext_pub", False))
-        has_ext_pub = payload.get("_has_ext_pub", False)
+
+        # 新数据：request_payload 里有明确的 _has_openapi / _has_ext_pub 标记
+        # 老数据：两个 key 都不存在，不能凭 "not ext_pub" 推断 openapi 存在；
+        #         改为看 open_api_task_id 是否有值来判断是否有 openapi 侧，
+        #         并且只有当 channels_status 里有 ext_pub 来源的条目才触发 ext_pub 轮询。
+        if "_has_openapi" in payload or "_has_ext_pub" in payload:
+            has_openapi = payload.get("_has_openapi", False)
+            has_ext_pub = payload.get("_has_ext_pub", False)
+        else:
+            # 老数据兼容：没有标记字段，保守推断
+            has_openapi = bool(publication.open_api_task_id)
+            existing_sources = {c.get("_source") for c in (publication.channels_status or [])}
+            has_ext_pub = _SOURCE_EXT_PUB in existing_sources
 
         existing_statuses: list[dict] = publication.channels_status or []
 
@@ -1345,7 +1356,13 @@ class VideoPublicationService:
         owner_id: uuid.UUID,
         platform: str,
         current_account_id: uuid.UUID | None = None,
+        channel_source: str | None = None,
     ) -> set[str]:
+        """返回当前用户下（排除 current_account_id）已绑定的 channel_id 集合。
+
+        channel_source: 若传入则只统计该来源（openapi / ext_pub），
+                        None 表示统计所有来源。
+        """
         stmt = select(Account.id, Account.social_bindings).where(Account.owner_id == owner_id)
         if current_account_id is not None:
             stmt = stmt.where(Account.id != current_account_id)
@@ -1360,7 +1377,175 @@ class VideoPublicationService:
                     continue
                 if binding.get("platform") != platform:
                     continue
+                if channel_source is not None and binding.get("channel_source") != channel_source:
+                    continue
                 channel_id = str(binding.get("channel_id") or "").strip()
                 if channel_id:
                     excluded_channel_ids.add(channel_id)
         return excluded_channel_ids
+
+    # ── 统一频道查询 ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_openapi_channel(item: dict) -> dict:
+        """将 Open API 渠道条目归一化为统一格式。"""
+        return {
+            "channel_id": str(item.get("channel_id") or ""),
+            "channel_name": str(item.get("channel_name") or ""),
+            "username": str(item.get("username") or ""),
+            "platform": str(item.get("platform") or ""),
+            "channel_source": _SOURCE_OPENAPI,
+            # 内部额外字段，前端可选用
+            "avatar_url": item.get("avatar_url"),
+        }
+
+    @staticmethod
+    def _normalize_ext_pub_channel(item: dict) -> dict:
+        """将外部发布 API 平台账号条目归一化为统一格式。"""
+        return {
+            "channel_id": str(item.get("id") or ""),
+            "channel_name": str(item.get("nickname") or item.get("username") or ""),
+            "username": str(item.get("username") or ""),
+            "platform": str(item.get("platform_type") or ""),
+            "channel_source": _SOURCE_EXT_PUB,
+            "avatar_url": None,
+        }
+
+    async def fetch_channels_unified(
+        self,
+        platform: str,
+        channel_source: str,               # "openapi" | "ext_pub"
+        owner_id: uuid.UUID,
+        page: int = 1,
+        page_size: int = 50,
+        is_active: bool | None = None,
+        current_account_id: uuid.UUID | None = None,
+        usage_types: list[str] | None = None,
+    ) -> dict:
+        """统一频道查询入口，按 channel_source 路由到对应上游，过滤已占用频道，返回归一化结果。
+
+        统一返回格式（data.items 每条）：
+        {
+          "channel_id": str,
+          "channel_name": str,
+          "username": str,
+          "platform": str,
+          "channel_source": "openapi" | "ext_pub",
+          "avatar_url": str | null,
+        }
+        """
+        excluded = await self._load_excluded_channel_ids(
+            owner_id=owner_id,
+            platform=platform,
+            current_account_id=current_account_id,
+            channel_source=channel_source,
+        )
+        logger.info(
+            "fetch_channels_unified: platform=%s source=%s page=%s page_size=%s excluded=%d",
+            platform, channel_source, page, page_size, len(excluded),
+        )
+
+        if channel_source == _SOURCE_EXT_PUB:
+            return await self._fetch_ext_pub_channels_unified(
+                platform=platform,
+                page=page,
+                page_size=page_size,
+                excluded=excluded,
+            )
+        else:
+            return await self._fetch_openapi_channels_unified(
+                platform=platform,
+                page=page,
+                page_size=page_size,
+                is_active=is_active,
+                usage_types=usage_types,
+                excluded=excluded,
+            )
+
+    async def _fetch_openapi_channels_unified(
+        self,
+        platform: str,
+        page: int,
+        page_size: int,
+        is_active: bool | None,
+        usage_types: list[str] | None,
+        excluded: set[str],
+    ) -> dict:
+        if not excluded:
+            response = await self.open_api.fetch_channels(
+                platform, page=page, page_size=page_size,
+                is_active=is_active, usage_types=usage_types,
+            )
+            data = response.get("data", {}) if isinstance(response, dict) else {}
+            raw_items = data.get("items") or []
+            items = [self._normalize_openapi_channel(i) for i in raw_items]
+            return {"code": 0, "message": "success", "data": {
+                "items": items, "total": int(data.get("total") or 0),
+                "page": page, "page_size": page_size,
+            }}
+
+        # 有排除列表时，拉全量过滤后重新分页（与原 fetch_channels_filtered 逻辑一致）
+        upstream_page = 1
+        upstream_page_size = max(page_size, 100)
+        upstream_total = 0
+        filtered: list[dict] = []
+
+        while True:
+            response = await self.open_api.fetch_channels(
+                platform, page=upstream_page, page_size=upstream_page_size,
+                is_active=is_active, usage_types=usage_types,
+            )
+            data = response.get("data", {}) if isinstance(response, dict) else {}
+            raw_items = data.get("items") or []
+            upstream_total = max(upstream_total, int(data.get("total") or 0))
+            for item in raw_items:
+                if str(item.get("channel_id") or "").strip() not in excluded:
+                    filtered.append(self._normalize_openapi_channel(item))
+            if len(raw_items) < upstream_page_size:
+                break
+            if upstream_total and upstream_page * upstream_page_size >= upstream_total:
+                break
+            upstream_page += 1
+
+        start = max(page - 1, 0) * page_size
+        return {"code": 0, "message": "success", "data": {
+            "items": filtered[start: start + page_size],
+            "total": len(filtered),
+            "page": page,
+            "page_size": page_size,
+        }}
+
+    async def _fetch_ext_pub_channels_unified(
+        self,
+        platform: str,
+        page: int,
+        page_size: int,
+        excluded: set[str],
+    ) -> dict:
+        """拉取外部发布 API 的平台账号，过滤已占用，归一化后分页返回。
+
+        外部 API 不支持分页查询（GET /api/platform-accounts 默认返回 page_size=20），
+        这里一次性拉取足够大的页（page_size=200），过滤后在本地分页。
+        """
+        try:
+            response = await self.ext_pub.fetch_platform_accounts(platform=platform)
+        except Exception:
+            logger.exception("fetch_ext_pub_channels_unified: upstream error")
+            return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "page": page, "page_size": page_size}}
+
+        data = response.get("data") if isinstance(response, dict) else {}
+        raw_items: list[dict] = (data.get("items") if isinstance(data, dict) else None) or []
+
+        filtered = [
+            self._normalize_ext_pub_channel(item)
+            for item in raw_items
+            if isinstance(item, dict) and str(item.get("id") or "").strip() not in excluded
+        ]
+
+        start = max(page - 1, 0) * page_size
+        return {"code": 0, "message": "success", "data": {
+            "items": filtered[start: start + page_size],
+            "total": len(filtered),
+            "page": page,
+            "page_size": page_size,
+        }}
