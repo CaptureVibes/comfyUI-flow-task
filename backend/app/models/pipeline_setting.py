@@ -58,6 +58,11 @@ class PipelineSetting(Base):
     ai_account_avatar_size: Mapped[str] = mapped_column(String(20), nullable=False, default="1:1")
     ai_account_avatar_quality: Mapped[str] = mapped_column(String(10), nullable=False, default="1K")
 
+    # 标签搜索（Hashtag Search）
+    hashtag_search_top_n: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    hashtag_filter_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    hashtag_filter_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
     # 关键词生成配置
     keyword_gen_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     keyword_gen_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")

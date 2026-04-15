@@ -115,6 +115,14 @@
             <span v-if="!account.bound_tags?.length" class="ad-no-platform">未绑定标签</span>
           </div>
 
+          <!-- HashTags -->
+          <div v-if="account.hashtags?.length" class="ad-hero-hashtags">
+            <span class="ad-bloggers-label">HashTags</span>
+            <div class="ad-hashtag-list">
+              <span v-for="tag in account.hashtags" :key="tag" class="ad-hashtag-chip">#{{ tag }}</span>
+            </div>
+          </div>
+
           <!-- Bound TikTok bloggers -->
           <div v-if="account.tiktok_bloggers?.length" class="ad-hero-bloggers">
             <span class="ad-bloggers-label">关联博主</span>
@@ -1478,6 +1486,27 @@ onUnmounted(() => {
 
 .ad-hero-platforms { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .ad-hero-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+
+.ad-hero-hashtags {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.ad-hashtag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ad-hashtag-chip {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: #ede9fe;
+  color: #6d28d9;
+  white-space: nowrap;
+}
 
 .ad-hero-bloggers {
   display: flex;

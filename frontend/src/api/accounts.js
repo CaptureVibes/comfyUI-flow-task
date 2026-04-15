@@ -127,3 +127,22 @@ export async function bulkGenerateNameHandle(accountIds = null) {
   const { data } = await http.post('/accounts/bulk-generate-name-handle', payload)
   return data
 }
+
+export async function bulkSearchHashtags(accountIds = null, mode = 'replace') {
+  const payload = {
+    mode,
+    ...(accountIds && accountIds.length > 0 ? { account_ids: accountIds } : {}),
+  }
+  const { data } = await http.post('/accounts/bulk-search-hashtags', payload)
+  return data
+}
+
+export async function bulkBindHashtags(accountIds = null, hashtags = [], mode = 'replace') {
+  const payload = {
+    hashtags,
+    mode,
+    ...(accountIds && accountIds.length > 0 ? { account_ids: accountIds } : {}),
+  }
+  const { data } = await http.post('/accounts/bulk-bind-hashtags', payload)
+  return data
+}

@@ -31,6 +31,10 @@
           <svg v-if="!bulkNameHandleLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           {{ selectedMap.size > 0 ? `生成Handle (${selectedMap.size})` : '生成Handle' }}
         </el-button>
+        <el-button class="al-hashtag-btn" :loading="hashtagSearchLoading" :disabled="total === 0" @click="openHashtagSearchDialog">
+          <svg v-if="!hashtagSearchLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+          {{ selectedMap.size > 0 ? `标签搜索 (${selectedMap.size})` : '标签搜索' }}
+        </el-button>
         <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
           <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           {{ downloading ? '下载中...' : selectedMap.size > 0 ? `下载 (${selectedMap.size})` : '下载视频' }}
@@ -162,6 +166,30 @@
           </div>
           <el-form-item label="共享号 Prompt">
             <el-input v-model="aiSettingsForm.ai_account_shared_name_prompt" type="textarea" :rows="4" placeholder="例：根据关键词「{keyword}」，为一个共享账号生成博主名称、handle 和签名..." />
+          </el-form-item>
+        </div>
+
+        <!-- 标签搜索配置 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">标签搜索（Hashtag Search）</span>
+            <span class="ai-cfg-desc">根据账号绑定的 TikTok 博主，抓取热门视频的 HashTag，经 AI 过滤后返回推荐标签列表</span>
+          </div>
+          <el-form-item label="抓取视频数量">
+            <el-input-number v-model="aiSettingsForm.hashtag_search_top_n" :min="10" :max="500" :step="10" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">条（按播放量排序取前 N 个视频）</span>
+          </el-form-item>
+          <el-form-item label="过滤模型">
+            <el-input v-model="aiSettingsForm.hashtag_filter_model" placeholder="e.g. gemini-3.1-pro-preview" />
+          </el-form-item>
+          <el-form-item label="AI 过滤提示词">
+            <el-input
+              v-model="aiSettingsForm.hashtag_filter_prompt"
+              type="textarea"
+              :rows="5"
+              placeholder="例：以下是从 TikTok 视频中提取的 HashTag 列表，请过滤掉无意义、过于通用（如 fyp、viral）或与目标内容无关的标签，保留能精准描述内容品类、场景、风格的标签..."
+            />
+            <div style="margin-top:4px;color:#9ca3af;font-size:12px">留空则跳过 AI 过滤，直接返回全量去重 HashTag。系统会在提示词末尾自动拼接 JSON 格式化指令。</div>
           </el-form-item>
         </div>
 
@@ -395,6 +423,38 @@
       </template>
     </el-dialog>
 
+    <!-- 标签搜索确认弹窗 -->
+    <el-dialog
+      v-model="showHashtagSearchDialog"
+      title="标签搜索"
+      width="480px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="al-supplement-body">
+        <div class="al-supplement-scope">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span v-if="selectedMap.size > 0">将为已选 <b>{{ selectedMap.size }}</b> 个账号搜索并绑定 HashTag</span>
+          <span v-else>将为全部 <b>{{ total }}</b> 个账号搜索并绑定 HashTag</span>
+        </div>
+        <div style="color:#6b7280;font-size:13px;line-height:1.6">
+          任务会在后台执行：抓取每个账号绑定博主的热门视频 → 提取 HashTag → AI 过滤 → 自动写入账号。<br>
+          抓取数量、AI 过滤提示词可在「AI博主配置」中设置。
+        </div>
+        <div class="al-hashtag-bind-bar">
+          <span class="al-hashtag-bind-label">绑定方式：</span>
+          <el-radio-group v-model="hashtagBindMode" size="small">
+            <el-radio-button value="replace">覆盖原有标签</el-radio-button>
+            <el-radio-button value="merge">追加合并</el-radio-button>
+          </el-radio-group>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showHashtagSearchDialog = false">取消</el-button>
+        <el-button type="primary" :loading="hashtagSearchLoading" @click="startHashtagSearch">开始搜索并绑定</el-button>
+      </template>
+    </el-dialog>
+
     <!-- Flag 过滤栏 -->
     <div class="al-filter-bar">
       <div class="al-filter-flags">
@@ -606,7 +666,12 @@
                   <span class="ac-blogger-name">{{ blogger.blogger_name }}</span>
                 </span>
               </div>
-              <span v-if="!item.bound_tags?.length && !item.tiktok_bloggers?.length" class="al-no-binding">—</span>
+              <!-- Hashtags -->
+              <div v-if="item.hashtags?.length" class="al-hashtags-wrap">
+                <span v-for="tag in item.hashtags.slice(0, 5)" :key="tag" class="al-hashtag-chip">#{{ tag }}</span>
+                <span v-if="item.hashtags.length > 5" class="al-hashtag-chip al-hashtag-more">+{{ item.hashtags.length - 5 }}</span>
+              </div>
+              <span v-if="!item.bound_tags?.length && !item.tiktok_bloggers?.length && !item.hashtags?.length" class="al-no-binding">—</span>
             </td>
 
             <!-- 操作 -->
@@ -801,7 +866,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1017,6 +1082,30 @@ async function confirmBulkNameHandle() {
   }
 }
 
+// 标签搜索
+const showHashtagSearchDialog = ref(false)
+const hashtagSearchLoading = ref(false)
+const hashtagBindMode = ref('replace')
+
+function openHashtagSearchDialog() {
+  showHashtagSearchDialog.value = true
+}
+
+async function startHashtagSearch() {
+  if (hashtagSearchLoading.value) return
+  hashtagSearchLoading.value = true
+  try {
+    const ids = selectedMap.value.size > 0 ? [...selectedMap.value.keys()] : null
+    await bulkSearchHashtags(ids, hashtagBindMode.value)
+    ElMessage.success('标签搜索任务已入队，完成后将自动绑定到账号，请稍后刷新查看')
+    showHashtagSearchDialog.value = false
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败，请检查 Apify Token 和博主绑定配置')
+  } finally {
+    hashtagSearchLoading.value = false
+  }
+}
+
 function openBulkFlagDialog(mode) {
   if (selectedIds.value.size === 0) {
     ElMessage.warning('请先勾选账号')
@@ -1119,6 +1208,9 @@ const aiSettingsForm = ref({
   ai_account_painting_prompt: '',
   ai_account_exclusive_name_prompt: '',
   ai_account_shared_name_prompt: '',
+  hashtag_search_top_n: 100,
+  hashtag_filter_model: 'gemini-3.1-pro-preview',
+  hashtag_filter_prompt: '',
 })
 
 async function openAISettings() {
@@ -1140,6 +1232,9 @@ async function openAISettings() {
     aiSettingsForm.value.ai_account_painting_prompt = data.ai_account_painting_prompt || ''
     aiSettingsForm.value.ai_account_exclusive_name_prompt = data.ai_account_exclusive_name_prompt || ''
     aiSettingsForm.value.ai_account_shared_name_prompt = data.ai_account_shared_name_prompt || ''
+    aiSettingsForm.value.hashtag_search_top_n = data.hashtag_search_top_n ?? 100
+    aiSettingsForm.value.hashtag_filter_model = data.hashtag_filter_model || 'gemini-3.1-pro-preview'
+    aiSettingsForm.value.hashtag_filter_prompt = data.hashtag_filter_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -1167,6 +1262,9 @@ async function saveAISettings() {
       ai_account_painting_prompt: aiSettingsForm.value.ai_account_painting_prompt,
       ai_account_exclusive_name_prompt: aiSettingsForm.value.ai_account_exclusive_name_prompt,
       ai_account_shared_name_prompt: aiSettingsForm.value.ai_account_shared_name_prompt,
+      hashtag_search_top_n: aiSettingsForm.value.hashtag_search_top_n,
+      hashtag_filter_model: aiSettingsForm.value.hashtag_filter_model,
+      hashtag_filter_prompt: aiSettingsForm.value.hashtag_filter_prompt,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')
@@ -1989,6 +2087,25 @@ onMounted(() => {
 }
 
 /* Shared chip / badge styles */
+.al-hashtags-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.al-hashtag-chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: #ede9fe;
+  color: #6d28d9;
+  white-space: nowrap;
+}
+.al-hashtag-chip.al-hashtag-more {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 .ac-blogger-chip {
   display: flex;
   align-items: center;
@@ -2554,6 +2671,131 @@ onMounted(() => {
 }
 .al-namehandle-btn:active { transform: translateY(1px); }
 .al-namehandle-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+/* 标签搜索按钮 */
+.al-hashtag-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1.5px solid #7c3aed;
+  background: #fff;
+  color: #7c3aed;
+  white-space: nowrap;
+}
+.al-hashtag-btn:hover:not(:disabled) {
+  background: #7c3aed;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(124,58,237,0.18);
+}
+.al-hashtag-btn:active { transform: translateY(1px); }
+.al-hashtag-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+/* 标签搜索弹窗 */
+.al-hashtag-pre {
+  padding: 4px 0 8px;
+}
+.al-hashtag-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 0;
+}
+.al-hashtag-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.al-hashtag-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ef4444;
+  font-size: 14px;
+  padding: 12px;
+  background: #fef2f2;
+  border-radius: 8px;
+}
+.al-hashtag-meta {
+  font-size: 13px;
+  color: #6b7280;
+}
+.al-hashtag-block {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.al-hashtag-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+.al-hashtag-block-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.al-hashtag-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #6366f1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.al-hashtag-copy-btn:hover { background: #ede9fe; }
+.al-hashtag-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 14px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.al-hashtag-tags-raw {
+  max-height: 130px;
+}
+.al-hashtag-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  background: #f3f4f6;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.al-hashtag-tag:hover { background: #e0e7ff; color: #4338ca; }
+.al-hashtag-tag.is-filtered {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+.al-hashtag-tag.is-filtered:hover { background: #ddd6fe; }
+.al-hashtag-bind-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 2px;
+  border-top: 1px solid #f3f4f6;
+  margin-top: 4px;
+}
+.al-hashtag-bind-label {
+  font-size: 13px;
+  color: #6b7280;
+  white-space: nowrap;
+}
 
 /* 补充模板弹窗 */
 .al-supplement-body {

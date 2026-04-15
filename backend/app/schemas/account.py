@@ -45,6 +45,7 @@ class AccountCreate(BaseModel):
     avatar_url: str | None = None
     photo_url: str | None = None
     social_bindings: list[dict] | None = None
+    hashtags: list[str] | None = None
 
 
 class AccountPatch(BaseModel):
@@ -59,6 +60,7 @@ class AccountPatch(BaseModel):
     avatar_url: str | None = None
     photo_url: str | None = None
     social_bindings: list[dict] | None = None
+    hashtags: list[str] | None = None
 
 
 class AIGenerateBody(BaseModel):
@@ -208,6 +210,7 @@ class AccountRead(BaseModel):
     painting_url: str | None = None
     social_bindings: list | None
     performance_snapshot: AccountPerformanceSnapshot | None = None
+    hashtags: list[str] | None = None
     tiktok_bloggers: list[BoundBloggerRead] = []
     bound_tags: list[BoundTagRead] = []
     bound_flags: list[BoundFlagRead] = []

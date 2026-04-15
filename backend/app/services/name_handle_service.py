@@ -100,6 +100,44 @@ async def _queue_processor() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def _unique_name(session, base_name: str, owner_id, exclude_id) -> str:
+    """返回同 owner 下不重复的账号名。若 base_name 已存在则追加 -1、-2 …"""
+    from app.models.account import Account as _Account
+    candidate = base_name
+    suffix = 1
+    while True:
+        dup = await session.scalar(
+            select(_Account.id)
+            .where(_Account.owner_id == owner_id)
+            .where(_Account.id != exclude_id)
+            .where(_Account.account_name == candidate)
+            .limit(1)
+        )
+        if not dup:
+            return candidate
+        candidate = f"{base_name}-{suffix}"
+        suffix += 1
+
+
+async def _unique_handle(session, base_handle: str, owner_id, exclude_id) -> str:
+    """返回同 owner 下不重复的 handle。若 base_handle 已存在则追加 _1、_2 …"""
+    from app.models.account import Account as _Account
+    candidate = base_handle
+    suffix = 1
+    while True:
+        dup = await session.scalar(
+            select(_Account.id)
+            .where(_Account.owner_id == owner_id)
+            .where(_Account.id != exclude_id)
+            .where(_Account.account_handle == candidate)
+            .limit(1)
+        )
+        if not dup:
+            return candidate
+        candidate = f"{base_handle}_{suffix}"
+        suffix += 1
+
+
 async def _generate_for_account(account_id: str) -> None:
     """为单个账号生成名称/handle/签名并写回数据库。"""
     from app.models.account import Account
@@ -204,6 +242,15 @@ async def _generate_for_account(account_id: str) -> None:
         new_name = str(result.get("name") or "").strip()
         new_handle = str(result.get("handle") or "").strip()
         new_signature = str(result.get("signature") or "").strip()
+
+        # 重复检测：同 owner 下不允许相同 name 或 handle（排除自身），重复则自动追加后缀
+        from app.models.account import Account as _Account
+        owner_id = acc.owner_id
+        if owner_id:
+            if new_name:
+                new_name = await _unique_name(session, new_name, owner_id, acc.id)
+            if new_handle:
+                new_handle = await _unique_handle(session, new_handle, owner_id, acc.id)
 
         if new_name:
             acc.account_name = new_name

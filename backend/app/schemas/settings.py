@@ -98,6 +98,10 @@ class PipelineSettingsPayload(BaseModel):
     # 批量生成名称/handle/签名 Prompt
     ai_account_exclusive_name_prompt: str = ""
     ai_account_shared_name_prompt: str = ""
+    # 标签搜索（Hashtag Search）
+    hashtag_search_top_n: int = 100
+    hashtag_filter_model: str = "gemini-3.1-pro-preview"
+    hashtag_filter_prompt: str = ""
 
 
 class CandidateBatchAIReviewRequest(BaseModel):

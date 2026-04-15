@@ -160,6 +160,35 @@
                   class="vtfd-beautiful-input"
                 />
               </el-form-item>
+
+              <el-form-item label="HashTags">
+                <div class="ac-hashtag-editor">
+                  <div class="ac-hashtag-chips">
+                    <span
+                      v-for="(tag, idx) in form.hashtags"
+                      :key="idx"
+                      class="ac-hashtag-chip"
+                    >
+                      #{{ tag }}
+                      <button type="button" class="ac-hashtag-remove" @click="removeHashtag(idx)">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </span>
+                    <span v-if="!form.hashtags.length" class="ac-hashtag-empty">暂无标签，可通过列表页「标签搜索」自动填充，或手动输入</span>
+                  </div>
+                  <div class="ac-hashtag-input-row">
+                    <el-input
+                      v-model="hashtagInput"
+                      placeholder="输入标签名（不含 #），回车添加"
+                      class="vtfd-beautiful-input"
+                      clearable
+                      @keydown.enter.prevent="addHashtag"
+                    />
+                    <el-button @click="addHashtag">添加</el-button>
+                    <el-button @click="form.hashtags = []" :disabled="!form.hashtags.length">清空</el-button>
+                  </div>
+                </div>
+              </el-form-item>
             </div>
 
             <div class="ac-form-right">
@@ -571,7 +600,29 @@ const form = reactive({
   avatar_url: '',
   photo_url: '',
   social_bindings: [],
+  hashtags: [],
 })
+
+const hashtagInput = ref('')
+
+function addHashtag() {
+  const raw = hashtagInput.value.trim().replace(/^#+/, '')
+  if (!raw) return
+  // 支持空格/逗号分隔的批量输入
+  const tags = raw.split(/[\s,，]+/).map(t => t.replace(/^#+/, '').trim()).filter(Boolean)
+  const existingLower = new Set(form.hashtags.map(t => t.toLowerCase()))
+  for (const tag of tags) {
+    if (!existingLower.has(tag.toLowerCase())) {
+      form.hashtags.push(tag)
+      existingLower.add(tag.toLowerCase())
+    }
+  }
+  hashtagInput.value = ''
+}
+
+function removeHashtag(idx) {
+  form.hashtags.splice(idx, 1)
+}
 
 const rules = {
   account_name: [{ required: true, message: '请输入账号名称', trigger: 'blur' }],
@@ -811,6 +862,7 @@ async function loadAccount() {
     form.face_mode = data.face_mode || 'face'
     form.gender = data.gender || 'female'
     form.style_description = data.style_description || ''
+    form.hashtags = data.hashtags ? [...data.hashtags] : []
     form.model_appearance = data.model_appearance || ''
     form.avatar_url = data.avatar_url || ''
     form.photo_url = data.photo_url || ''
@@ -865,6 +917,7 @@ async function handleSave() {
         avatar_url: form.avatar_url || null,
         photo_url: form.photo_url || null,
         social_bindings: isEdit.value ? normalizedBindings : (normalizedBindings.length > 0 ? normalizedBindings : null),
+        hashtags: form.hashtags.length > 0 ? form.hashtags : null,
       }
       if (isEdit.value) {
         await patchAccount(route.params.id, payload)
@@ -1812,5 +1865,58 @@ onUnmounted(() => {
 
 .ac-type-btn.active svg {
   stroke: #fff;
+}
+
+.ac-hashtag-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.ac-hashtag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 32px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.ac-hashtag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 10px;
+  border-radius: 20px;
+  background: #ede9fe;
+  color: #6d28d9;
+  font-size: 13px;
+}
+.ac-hashtag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px;
+  color: #6d28d9;
+  opacity: 0.6;
+  border-radius: 50%;
+}
+.ac-hashtag-remove:hover { opacity: 1; background: #ddd6fe; }
+.ac-hashtag-empty {
+  color: #9ca3af;
+  font-size: 12px;
+  align-self: center;
+}
+.ac-hashtag-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ac-hashtag-input-row .el-input {
+  flex: 1;
 }
 </style>

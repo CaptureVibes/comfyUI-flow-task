@@ -97,6 +97,8 @@ async def patch_account(
         account.photo_url = payload.photo_url
     if payload.social_bindings is not None:
         account.social_bindings = payload.social_bindings
+    if payload.hashtags is not None:
+        account.hashtags = payload.hashtags if payload.hashtags else None
     await session.commit()
     await session.refresh(account)
     return account

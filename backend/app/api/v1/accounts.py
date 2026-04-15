@@ -880,3 +880,92 @@ async def supplement_templates(
         "message": f"已为 {len(body.account_ids)} 个账号启动补充模板任务（{template_type}）",
         "count": len(body.account_ids),
     }
+
+
+# ---------------------------------------------------------------------------
+# 标签搜索（Hashtag Search）
+# ---------------------------------------------------------------------------
+
+class BulkSearchHashtagsBody(BaseModel):
+    account_ids: list[uuid.UUID] | None = None  # None = 当前用户全部账号
+    mode: str = "replace"                        # "replace" | "merge"
+
+
+@router.post("/bulk-search-hashtags", status_code=202)
+async def bulk_search_hashtags(
+    body: BulkSearchHashtagsBody,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    批量标签搜索并绑定（后台异步执行）：
+    1. 找到所选账号绑定的 TikTok 博主
+    2. 用 Apify 抓取每个博主最热门视频（top_n 由配置决定，默认 100）
+    3. 提取 hashtag 去重
+    4. AI 过滤（需在 AI博主配置中填写提示词）
+    5. 将结果写入各账号的 hashtags 字段（mode=replace 覆盖 / mode=merge 追加）
+    """
+    import asyncio as _asyncio
+    from app.services.hashtag_search_service import search_and_bind_hashtags_for_accounts
+
+    owner_id = current_user.user_id
+
+    # 确定账号范围
+    stmt = select(Account.id).where(Account.owner_id == owner_id)
+    if body.account_ids:
+        stmt = stmt.where(Account.id.in_(body.account_ids))
+    account_ids = [str(aid) for aid in (await session.execute(stmt)).scalars().all()]
+
+    if not account_ids:
+        raise HTTPException(status_code=400, detail="没有找到符合条件的账号")
+
+    _asyncio.create_task(
+        search_and_bind_hashtags_for_accounts(
+            account_ids=account_ids,
+            owner_id=str(owner_id),
+            mode=body.mode,
+        )
+    )
+    return {"status": "queued", "account_count": len(account_ids)}
+
+
+class BulkBindHashtagsBody(BaseModel):
+    account_ids: list[uuid.UUID] | None = None  # None = 当前用户全部账号
+    hashtags: list[str]                          # 要绑定的 hashtag 列表（不含 #）
+    mode: str = "replace"                        # "replace" | "merge"
+
+
+@router.post("/bulk-bind-hashtags", status_code=200)
+async def bulk_bind_hashtags(
+    body: BulkBindHashtagsBody,
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    将 hashtag 列表批量绑定到指定账号。
+    mode=replace：直接覆盖账号的 hashtags 字段。
+    mode=merge：与现有 hashtags 合并去重。
+    """
+    owner_id = current_user.user_id
+
+    stmt = select(Account).where(Account.owner_id == owner_id)
+    if body.account_ids:
+        stmt = stmt.where(Account.id.in_(body.account_ids))
+    accounts = (await session.execute(stmt)).scalars().all()
+
+    if not accounts:
+        return {"updated_count": 0, "message": "没有找到符合条件的账号"}
+
+    clean_tags = [t.strip().lstrip("#") for t in body.hashtags if t.strip()]
+
+    for acc in accounts:
+        if body.mode == "merge" and acc.hashtags:
+            existing = list(acc.hashtags)
+            existing_lower = {t.lower() for t in existing}
+            merged = existing + [t for t in clean_tags if t.lower() not in existing_lower]
+            acc.hashtags = merged
+        else:
+            acc.hashtags = clean_tags
+
+    await session.commit()
+    return {"updated_count": len(accounts), "message": f"已为 {len(accounts)} 个账号绑定 {len(clean_tags)} 个标签"}
