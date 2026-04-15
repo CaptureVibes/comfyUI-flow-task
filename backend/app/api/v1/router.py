@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1 import accounts, auth, candidates, face_library, flags, settings, tags, tiktok_bloggers, topics, uploads, video_ai_templates, video_sources, video_tasks, video_task_config, video_publications
+from app.api.v1 import account_channel_reservations, accounts, auth, candidates, face_library, flags, settings, tags, tiktok_bloggers, topics, uploads, video_ai_templates, video_sources, video_tasks, video_task_config, video_publications
 from app.core.security import get_current_user
 
 api_router = APIRouter(prefix="/api/v1")
@@ -10,6 +10,7 @@ api_router = APIRouter(prefix="/api/v1")
 # ── Public routes (no auth required) ──────────────────────────────────────────
 api_router.include_router(auth.router)       # /auth/login is public
 api_router.include_router(video_publications.router)  # Open API 代理（测试阶段无需认证）
+api_router.include_router(account_channel_reservations.router)
 
 # ── Protected routes (Bearer token required) ──────────────────────────────────
 _auth_dep = [Depends(get_current_user)]

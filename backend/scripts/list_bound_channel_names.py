@@ -1,5 +1,5 @@
 """
-查询 accounts 表中已绑定的所有 channel_name，打印为 JSON 数组。
+查询 account_channel_reservations 表中已绑定的所有 channel_id，打印为 JSON 数组。
 
 用法：
     cd backend
@@ -17,27 +17,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
-from app.models.account import Account
+from app.models.account_channel_reservation import AccountChannelReservation
 
 
 async def main() -> None:
     async with SessionLocal() as db:
         rows = (
             await db.execute(
-                select(Account.social_bindings).where(Account.social_bindings.isnot(None))
+                select(AccountChannelReservation.channel_id)
+                .where(AccountChannelReservation.status == "bound")
+                .where(AccountChannelReservation.channel_id.isnot(None))
             )
         ).scalars().all()
 
-    channel_names: list[str] = []
-    for bindings in rows:
-        if not isinstance(bindings, list):
-            continue
-        for binding in bindings:
-            cid = binding.get("channel_id") if isinstance(binding, dict) else None
-            if cid:
-                channel_names.append(cid)
-
-    print(json.dumps(channel_names, ensure_ascii=False, indent=2))
+    channel_ids = [str(cid) for cid in rows if cid]
+    print(json.dumps(channel_ids, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

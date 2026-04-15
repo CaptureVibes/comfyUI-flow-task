@@ -372,7 +372,6 @@ async def reserve_ai_accounts_for_channel(
                 status="reserved",
                 source=body.source or "openapi",
                 channel_source=body.source or "openapi",
-                note=body.note,
                 reserved_at=datetime.now(timezone.utc),
             )
             session.add(reservation)

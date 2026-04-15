@@ -6,6 +6,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
+ChannelPlatform = Literal["youtube", "tiktok", "instagram"]
+
 
 class SocialBindingYouTube(BaseModel):
     platform: Literal["youtube"]
@@ -221,7 +223,6 @@ class ReserveAIAccountsBody(BaseModel):
     platform: Literal["youtube", "tiktok"]
     count: int = Field(ge=1, le=100)
     source: str = "openapi"
-    note: str | None = None
 
 
 class ReserveAIAccountsResponse(BaseModel):
@@ -255,6 +256,84 @@ class BindOpenAPIChannelBody(BaseModel):
     api_key: str = ""
     source: str = "openapi"
     extra: dict | None = None
+
+
+class ExternalReserveAIAccountsBody(BaseModel):
+    api_key: str = ""
+    owner_id: uuid.UUID
+    gender: Literal["male", "female", "unisex"]
+    platform: ChannelPlatform
+    count: int = Field(ge=1, le=100)
+    source: str = "openapi"
+
+
+class ExternalAIAccountCandidateItem(BaseModel):
+    account_id: uuid.UUID
+    platform: ChannelPlatform
+    account_name: str
+    account_handle: str | None = None
+    account_signature: str | None = None
+    hashtags: list[str] | None = None
+
+
+class ExternalReserveAIAccountsResponse(BaseModel):
+    items: list[ExternalAIAccountCandidateItem]
+    requested_count: int
+    returned_count: int
+
+
+class ExternalConfirmChannelReservationBody(BaseModel):
+    api_key: str = ""
+    owner_id: uuid.UUID
+    account_id: uuid.UUID
+    platform: ChannelPlatform
+
+
+class ExternalConfirmChannelReservationResponse(BaseModel):
+    status: str
+    owner_id: uuid.UUID
+    account_id: uuid.UUID
+    platform: ChannelPlatform
+
+
+class ExternalBindOpenAPIChannelBody(BaseModel):
+    api_key: str = ""
+    owner_id: uuid.UUID
+    platform: ChannelPlatform
+    channel_source: str = "openapi"
+    channel_id: str = ""
+    channel_name: str = ""
+    username: str = ""
+
+
+class ExternalChannelReservationRead(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    platform: ChannelPlatform
+    status: str
+    source: str = "openapi"
+    channel_source: str = "openapi"
+    channel_id: str | None = None
+    channel_name: str | None = None
+    username: str | None = None
+    avatar_url: str | None = None
+    reserved_at: datetime
+    confirmed_at: datetime | None = None
+    bound_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ExternalBindOpenAPIChannelResponse(BaseModel):
+    account_id: uuid.UUID
+    account_name: str
+    account_handle: str | None = None
+    account_signature: str | None = None
+    gender: str
+    account_type: str
+    channel_reservations: list[ExternalChannelReservationRead]
 
 
 class AccountRead(BaseModel):
