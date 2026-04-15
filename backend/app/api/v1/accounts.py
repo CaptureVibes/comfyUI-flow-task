@@ -173,10 +173,13 @@ async def _sync_channel_reservations_from_bindings(
                 confirmed_at=now,
             )
             session.add(reservation)
+        elif reservation.status == "bound":
+            # bound 记录受保护，跳过修改
+            continue
         _apply_channel_binding(reservation, binding, now=now)
 
     for platform, reservation in existing_by_platform.items():
-        if platform not in desired and reservation.status == "bound":
+        if platform not in desired and reservation.status == "bound" and reservation.confirmed_at is None:
             await session.delete(reservation)
 
     await session.commit()
@@ -472,6 +475,11 @@ async def bind_openapi_channel(
             confirmed_at=now,
         )
         session.add(reservation)
+    elif reservation.status == "bound":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该账号 {platform} 平台已绑定，不可修改；请先调用 release 释放",
+        )
     _apply_channel_binding(reservation, binding, now=now)
 
     await session.commit()

@@ -11,8 +11,7 @@ http://34.55.116.212:8000/api/v1
 调用方需要在请求头中传入约定好的 API Key：
 
 ```http
-X-API-Key: 
-owner_id: 
+X-API-Key: <api_key>
 ```
 
 服务端需要配置同一个 Key：
@@ -26,6 +25,20 @@ ACCOUNT_CHANNEL_API_KEY=<api_key>
 ```text
 youtube, tiktok, instagram
 ```
+
+## owner_id 说明
+
+所有接口的 `owner_id` 字段均为**可选**。
+
+- 不传（或传 `null`）时，服务端使用 `.env` 中配置的默认值：
+
+```env
+ACCOUNT_CHANNEL_OWNER_ID=<uuid>
+```
+
+- 需要指定归属时才显式传入。
+
+---
 
 ## 1. 查询可用 AI 博主
 
@@ -41,7 +54,7 @@ POST /open-api/accounts/channel-reservations
 
 ```json
 {
-  "owner_id": "4424f85f-6e43-4ca2-a0a3-2cc75c766e0c",
+  "owner_id": null,
   "gender": "female",
   "platform": "tiktok",
   "count": 1,
@@ -60,7 +73,8 @@ POST /open-api/accounts/channel-reservations
       "account_name": "Sonny们的冬日七搭",
       "account_handle": "sonny_winter_7days",
       "account_signature": "账号签名",
-      "hashtags": ["fashioninspo", "outfitideas"]
+      "hashtags": ["fashioninspo", "outfitideas"],
+      "avatar_url": "https://example.com/avatar.jpg"
     }
   ],
   "requested_count": 1,
@@ -71,13 +85,15 @@ POST /open-api/accounts/channel-reservations
 说明：
 
 - 如果某个账号已经存在同平台的 `account_channel_reservations` 记录，则不会被查询出来。
-- 因为查询接口不写数据库，所以在调用确认或绑定前，重复查询可能返回同一个账号。
+- 查询接口不写数据库，在调用确认或绑定前，重复查询可能返回同一个账号。
+
+---
 
 ## 2. 确认占用频道
 
 调用方确认要占用某个 AI 博主的某个平台。
 
-这个接口会创建或更新占用记录，状态为 `confirmed`。
+这个接口会创建或更新占用记录，状态为 `confirmed`。**确认后，该账号的该平台不可再被他人领取，也不可通过绑定接口修改，直到调用 release 释放。**
 
 ```http
 POST /open-api/accounts/channel-reservations/confirm
@@ -87,7 +103,7 @@ POST /open-api/accounts/channel-reservations/confirm
 
 ```json
 {
-  "owner_id": "4424f85f-6e43-4ca2-a0a3-2cc75c766e0c",
+  "owner_id": null,
   "account_id": "c673e254-5eae-4b87-a1d3-b247258476b4",
   "platform": "tiktok"
 }
@@ -107,17 +123,15 @@ POST /open-api/accounts/channel-reservations/confirm
 错误：
 
 - `404`：该 `owner_id` 下不存在这个账号。
-- `409`：并发情况下，该账号的平台已被其他请求占用。
+- `409`：该账号的平台已被其他请求占用。
+
+---
 
 ## 3. 绑定频道信息
 
-给某个 AI 博主绑定平台频道信息。
+给某个 AI 博主绑定平台频道信息，状态变为 `bound`。
 
-唯一定位方式是：
-
-```text
-account_id + platform
-```
+**前提：该账号 + 平台必须已经 confirm，或尚无记录（直接创建）。已 bound 的记录不可重复绑定，需先 release。**
 
 ```http
 POST /open-api/accounts/{account_id}/channel-bindings
@@ -127,7 +141,7 @@ POST /open-api/accounts/{account_id}/channel-bindings
 
 ```json
 {
-  "owner_id": "4424f85f-6e43-4ca2-a0a3-2cc75c766e0c",
+  "owner_id": null,
   "platform": "youtube",
   "channel_source": "openapi",
   "channel_id": "UCgBJozWjiE0cqwv7UNalyog",
@@ -168,13 +182,65 @@ POST /open-api/accounts/{account_id}/channel-bindings
 }
 ```
 
-说明：
+错误：
 
-- 如果同一个 `account_id + platform` 已经存在记录，则更新原记录。
+- `404`：账号不存在。
+- `409`：该平台已 `bound`，请先调用 release 释放。
+
+---
+
+## 4. 释放频道占用
+
+删除某个 AI 博主的平台占用记录（`confirmed` 或 `bound` 均可释放）。
+
+释放后该账号可重新被其他人领取并绑定。
+
+```http
+POST /open-api/accounts/channel-reservations/release
+```
+
+请求：
+
+```json
+{
+  "owner_id": null,
+  "account_id": "c673e254-5eae-4b87-a1d3-b247258476b4",
+  "platform": "tiktok"
+}
+```
+
+响应：
+
+```json
+{
+  "account_id": "c673e254-5eae-4b87-a1d3-b247258476b4",
+  "platform": "tiktok",
+  "released": true
+}
+```
+
+错误：
+
+- `404`：账号不存在，或该平台无占用记录。
+
+---
+
+## 状态流转
+
+```text
+（无记录）
+    ↓ reserve（查询，不写库）
+    ↓ confirm
+confirmed（锁定，不可再被领取）
+    ↓ bind
+bound（已绑定频道）
+    ↓ release（confirmed 或 bound 均可）
+（记录删除，可重新 reserve）
+```
+
+---
 
 ## 测试脚本
-
-本地测试脚本：
 
 ```bash
 cd backend
@@ -185,7 +251,7 @@ uv run python scripts/test_account_channel_openapi.py
 
 ```python
 BASE_URL = "http://34.55.116.212:8000/api/v1"
-API_KEY = "..."
-OWNER_ID = "..."
-ACTION = "reserve"  # reserve / confirm / bind
+API_KEY = "..."        # ACCOUNT_CHANNEL_API_KEY
+OWNER_ID = None        # None 则由服务端 ACCOUNT_CHANNEL_OWNER_ID 决定
+ACTION = "reserve"     # reserve / confirm / bind / release
 ```

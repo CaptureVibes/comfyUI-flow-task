@@ -22,6 +22,7 @@ from app.schemas.account import (
     ExternalConfirmChannelReservationResponse,
     ExternalReserveAIAccountsBody,
     ExternalReserveAIAccountsResponse,
+    ExternalReleaseChannelReservationBody,
 )
 
 router = APIRouter(prefix="/open-api/accounts", tags=["open-api-account-channels"])
@@ -226,6 +227,11 @@ async def bind_openapi_channel_openapi(
             confirmed_at=now,
         )
         session.add(reservation)
+    elif reservation.status == "bound":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该账号 {platform} 平台已绑定，不可修改；请先调用 release 释放",
+        )
 
     _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
     await session.commit()
@@ -245,3 +251,35 @@ async def bind_openapi_channel_openapi(
         account_type=account.account_type,
         channel_reservations=[ExternalChannelReservationRead.model_validate(row) for row in rows],
     )
+
+
+@router.post("/channel-reservations/release", status_code=200)
+async def release_channel_reservation_openapi(
+    body: ExternalReleaseChannelReservationBody,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """解绑并删除 AI 博主的平台频道占用记录，解绑后该博主可重新被领取绑定。"""
+    _verify_api_key(body.api_key, x_api_key)
+    owner_id = _resolve_owner_id(body.owner_id)
+
+    account = await session.scalar(
+        select(Account)
+        .where(Account.id == body.account_id)
+        .where(Account.owner_id == owner_id)
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    platform = body.platform.lower()
+    reservation = await session.scalar(
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.account_id == body.account_id)
+        .where(AccountChannelReservation.platform == platform)
+    )
+    if not reservation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到该平台的绑定记录")
+
+    await session.delete(reservation)
+    await session.commit()
+    return {"account_id": str(body.account_id), "platform": body.platform, "released": True}

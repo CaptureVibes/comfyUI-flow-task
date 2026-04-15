@@ -3,8 +3,8 @@
 
 用法：
 1. 手动填写下面的 BASE_URL / API_KEY / OWNER_ID。
-2. 按需要填写 CONFIRM_* 和 BIND_*。
-3. 修改 ACTION 为 "reserve" / "confirm" / "bind"。
+2. 按需要填写各操作的参数。
+3. 修改 ACTION 为 "reserve" / "confirm" / "bind" / "release"。
 4. 执行：
    cd backend
    uv run python scripts/test_account_channel_openapi.py
@@ -16,9 +16,9 @@ import json
 import httpx
 
 
-BASE_URL = "http://127.0.0.1:8000/api/v1"
+BASE_URL = "http://34.55.116.212:8000/api/v1"
 API_KEY = ""  # 填入 ACCOUNT_CHANNEL_API_KEY
-OWNER_ID = "4424f85f-6e43-4ca2-a0a3-2cc75c766e0c"
+OWNER_ID = None  # 不填则由服务端 ACCOUNT_CHANNEL_OWNER_ID 决定
 
 # reserve 参数
 RESERVE_GENDER = "female"  # male / female / unisex
@@ -38,8 +38,12 @@ BIND_CHANNEL_NAME = "test"
 BIND_USERNAME = "@test"
 BIND_CHANNEL_SOURCE = "openapi"
 
-# 改这里选择要测试的接口：reserve / confirm / bind
-ACTION = "reserve"
+# release 参数
+RELEASE_ACCOUNT_ID = "c673e254-5eae-4b87-a1d3-b247258476b4"
+RELEASE_PLATFORM = "tiktok"  # youtube / tiktok / instagram
+
+# 改这里选择要测试的接口：reserve / confirm / bind / release
+ACTION = "confirm"
 
 
 def post(path: str, payload: dict) -> None:
@@ -94,6 +98,17 @@ def bind() -> None:
     )
 
 
+def release() -> None:
+    post(
+        "/open-api/accounts/channel-reservations/release",
+        {
+            "owner_id": OWNER_ID,
+            "account_id": RELEASE_ACCOUNT_ID,
+            "platform": RELEASE_PLATFORM,
+        },
+    )
+
+
 if __name__ == "__main__":
     if ACTION == "reserve":
         reserve()
@@ -101,5 +116,7 @@ if __name__ == "__main__":
         confirm()
     elif ACTION == "bind":
         bind()
+    elif ACTION == "release":
+        release()
     else:
         raise SystemExit(f"Unknown ACTION: {ACTION}")

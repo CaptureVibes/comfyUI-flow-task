@@ -241,6 +241,27 @@
           </div>
 
           <div class="bindings-grid">
+            <!-- 已 confirmed/bound 的平台：只读展示 -->
+            <div
+              v-for="res in lockedReservations"
+              :key="`locked-${res.platform}`"
+              class="ac-binding-block ac-binding-block--locked"
+            >
+              <div class="ac-binding-header">
+                <span class="ac-binding-platform-label">{{ { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }[res.platform] || res.platform }}</span>
+                <el-tag
+                  :type="res.status === 'bound' ? 'success' : 'warning'"
+                  size="small"
+                  style="margin-left: 8px;"
+                >{{ res.status === 'bound' ? '已绑定' : '已确认' }}</el-tag>
+                <span style="margin-left: auto; color: #94a3b8; font-size: 12px;">不可编辑</span>
+              </div>
+              <div v-if="res.channel_name || res.username" style="padding: 8px 0 4px; font-size: 13px; color: #64748b;">
+                <span v-if="res.channel_name">{{ res.channel_name }}</span>
+                <span v-if="res.username" style="margin-left: 6px; color: #94a3b8;">@{{ res.username }}</span>
+              </div>
+            </div>
+
             <div
               v-for="(binding, idx) in form.social_bindings"
               :key="idx"
@@ -254,9 +275,18 @@
                   style="width: 140px"
                   @change="handlePlatformChange(binding)"
                 >
-                  <el-option label="YouTube" value="youtube" />
-                  <el-option label="TikTok" value="tiktok" />
-                  <el-option label="Instagram" value="instagram" />
+                  <el-option
+                    label="YouTube" value="youtube"
+                    :disabled="binding.platform !== 'youtube' && usedPlatformSet.has('youtube')"
+                  />
+                  <el-option
+                    label="TikTok" value="tiktok"
+                    :disabled="binding.platform !== 'tiktok' && usedPlatformSet.has('tiktok')"
+                  />
+                  <el-option
+                    label="Instagram" value="instagram"
+                    :disabled="binding.platform !== 'instagram' && usedPlatformSet.has('instagram')"
+                  />
                 </el-select>
                 <!-- 频道来源切换 -->
                 <el-select
@@ -563,6 +593,7 @@ const isEdit = computed(() => Boolean(route.params.id))
 
 const loading = ref(false)
 const saving = ref(false)
+const lockedReservations = ref([])  // confirmed/bound 状态，只读展示
 const uploadingAvatar = ref(false)
 const uploadingPhoto = ref(false)
 const formRef = ref(null)
@@ -629,6 +660,9 @@ const rules = {
 }
 
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
+const usedPlatformSet = computed(() =>
+  new Set([...form.social_bindings.map(b => b.platform), ...lockedReservations.value.map(r => r.platform)].filter(Boolean))
+)
 const CHANNEL_PAGE_SIZE = 50
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
@@ -744,7 +778,7 @@ async function handlePlatformChange(binding) {
   const newPlatform = binding.platform
 
   if (newPlatform && newPlatform !== oldPlatform) {
-    const duplicated = form.social_bindings.some(b => b !== binding && b.platform === newPlatform)
+    const duplicated = usedPlatformSet.value.has(newPlatform) && newPlatform !== oldPlatform
     if (duplicated) {
       ElMessage.warning(`${platformLabel(newPlatform)} 已绑定，每个平台只能绑定一个频道`)
       binding.platform = oldPlatform || ''
@@ -781,8 +815,7 @@ function handleChannelSelect(binding) {
 
 async function addBinding() {
   const ALL_PLATFORMS = ['youtube', 'tiktok', 'instagram']
-  const usedPlatforms = new Set(form.social_bindings.map(b => b.platform).filter(Boolean))
-  const nextPlatform = ALL_PLATFORMS.find(p => !usedPlatforms.has(p))
+  const nextPlatform = ALL_PLATFORMS.find(p => !usedPlatformSet.value.has(p))
   if (!nextPlatform) {
     ElMessage.warning('所有平台已绑定，每个平台只能绑定一个频道')
     return
@@ -867,6 +900,7 @@ async function loadAccount() {
     form.avatar_url = data.avatar_url || ''
     form.photo_url = data.photo_url || ''
     form.social_bindings = accountBoundChannelBindings(data)
+    lockedReservations.value = (data.channel_reservations || []).filter(r => r.status === 'confirmed')
     boundBloggers.value = data.tiktok_bloggers || []
     boundTags.value = data.bound_tags || []
 
@@ -887,20 +921,10 @@ async function loadAccount() {
 
 function accountBoundChannelBindings(account) {
   const reservations = account?.channel_reservations || []
-  if (reservations.length) {
-    return reservations
-      .filter(item => item.status === 'bound')
-      .map(item => ({
-        ...(item.channel_info || {}),
-        platform: item.platform,
-        channel_source: item.channel_source || item.source || 'openapi',
-        channel_id: item.channel_id || '',
-        channel_name: item.channel_name || '',
-        username: item.username || '',
-        avatar_url: item.avatar_url || '',
-      }))
-  }
-  return account?.social_bindings ? JSON.parse(JSON.stringify(account.social_bindings)) : []
+  const lockedPlatforms = new Set(reservations.filter(r => r.status === 'confirmed').map(r => r.platform))
+  // confirmed 平台走 lockedReservations 只读展示，bound/其他可编辑
+  const editableBindings = (account?.social_bindings || []).filter(b => b.platform && !lockedPlatforms.has(b.platform))
+  return JSON.parse(JSON.stringify(editableBindings))
 }
 
 async function handleSave() {
@@ -1545,6 +1569,25 @@ onUnmounted(() => {
   border-color: #cbd5e1;
   box-shadow: 0 4px 12px rgba(0,0,0,0.03);
   transform: translateY(-2px);
+}
+
+.ac-binding-block--locked {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  opacity: 0.85;
+  cursor: default;
+}
+
+.ac-binding-block--locked:hover {
+  border-color: #e2e8f0;
+  box-shadow: none;
+  transform: none;
+}
+
+.ac-binding-platform-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #475569;
 }
 
 .ac-binding-header {

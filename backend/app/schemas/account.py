@@ -307,6 +307,13 @@ class ExternalBindOpenAPIChannelBody(BaseModel):
     username: str = ""
 
 
+class ExternalReleaseChannelReservationBody(BaseModel):
+    api_key: str = ""
+    owner_id: uuid.UUID | None = None
+    account_id: uuid.UUID
+    platform: ChannelPlatform
+
+
 class ExternalChannelReservationRead(BaseModel):
     id: uuid.UUID
     account_id: uuid.UUID
