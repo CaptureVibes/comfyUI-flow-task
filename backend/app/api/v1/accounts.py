@@ -1036,7 +1036,8 @@ async def bulk_generate_video_tasks(
 ) -> dict:
     """
     为指定账号批量创建视频生成任务。
-    mode=unused: 选取未使用(is_used=False)的模板，按创建时间顺序取前 limit 个。
+    只根据账号绑定的标签查找模板，不再根据已绑定的 TikTok 博主筛选模板。
+    mode=unused: 选取未使用(is_used=False)的模板，按创建时间倒序取前 limit 个。
     mode=used:   选取已使用(is_used=True)的模板，随机打乱后取前 limit 个。
     """
     from app.models.video_ai_template import VideoAITemplate
@@ -1056,51 +1057,27 @@ async def bulk_generate_video_tasks(
 
     for account_id in body.account_ids:
         try:
-            # 路径1：通过绑定博主获取模板
-            blogger_stmt = (
-                select(TiktokBlogger)
-                .join(AccountBloggerBinding, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
-                .where(AccountBloggerBinding.account_id == account_id)
-            )
-            bloggers = (await session.execute(blogger_stmt)).scalars().all()
-
             candidate_tpls: list[VideoAITemplate] = []
-
-            if bloggers:
-                for blogger in bloggers:
+            tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
+            tag_ids = list((await session.execute(tag_stmt)).scalars().all())
+            if tag_ids:
+                for tid in tag_ids:
                     tpl_stmt = (
                         select(VideoAITemplate)
-                        .where(VideoAITemplate.tiktok_blogger_id == blogger.id)
                         .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
                         .where(VideoAITemplate.is_used == use_used)
-                        .order_by(VideoAITemplate.created_at.asc())
+                        .where(
+                            exists().where(
+                                VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
+                                VideoSourceTag.tag_id == tid,
+                            )
+                        )
+                        .order_by(VideoAITemplate.created_at.desc())
                     )
                     if owner_id is not None:
                         tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
                     rows = (await session.execute(tpl_stmt)).scalars().all()
                     candidate_tpls.extend(rows)
-            else:
-                # 路径2：无绑定博主时，通过账号绑定的标签获取模板
-                tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
-                tag_ids = list((await session.execute(tag_stmt)).scalars().all())
-                if tag_ids:
-                    for tid in tag_ids:
-                        tpl_stmt = (
-                            select(VideoAITemplate)
-                            .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
-                            .where(VideoAITemplate.is_used == use_used)
-                            .where(
-                                exists().where(
-                                    VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
-                                    VideoSourceTag.tag_id == tid,
-                                )
-                            )
-                            .order_by(VideoAITemplate.created_at.asc())
-                        )
-                        if owner_id is not None:
-                            tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
-                        rows = (await session.execute(tpl_stmt)).scalars().all()
-                        candidate_tpls.extend(rows)
 
             # 去重
             seen: set[uuid.UUID] = set()
