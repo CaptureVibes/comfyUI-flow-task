@@ -1562,9 +1562,8 @@ async function startBulkVideoGenerate() {
     }
 
     const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount)
-    const skipMsg = result.skipped > 0 ? `，${result.skipped} 个账号跳过` : ''
-    const failMsg = result.failed > 0 ? `，${result.failed} 个失败` : ''
-    ElMessage.success(`已创建 ${result.created} 个生成任务${failMsg}${skipMsg}`)
+    const skipMsg = result.skipped_accounts > 0 ? `，${result.skipped_accounts} 个账号无可用模板` : ''
+    ElMessage.success(result.message || `后台已启动，预计创建 ${result.planned || 0} 个生成任务${skipMsg}`)
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '一键生成失败')
   } finally {

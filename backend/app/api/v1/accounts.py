@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
+from app.db.session import SessionLocal
 from app.db.session import get_db
 from app.models.account import Account
 from app.models.account_blogger_binding import AccountBloggerBinding
@@ -1027,7 +1029,134 @@ class BulkGenerateVideoTasksBody(BaseModel):
     subtask_count: int = 3       # 每个任务创建的子任务数量
 
 
-@router.post("/bulk-generate-video-tasks", status_code=200)
+async def _load_bulk_video_task_templates(
+    session: AsyncSession,
+    *,
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None,
+    use_used: bool,
+):
+    from app.models.enums import VideoAIProcessStatus
+    from app.models.video_ai_template import VideoAITemplate
+
+    candidate_tpls: list[VideoAITemplate] = []
+    tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
+    tag_ids = list((await session.execute(tag_stmt)).scalars().all())
+    if not tag_ids:
+        return []
+
+    for tid in tag_ids:
+        tpl_stmt = (
+            select(VideoAITemplate)
+            .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
+            .where(VideoAITemplate.is_used == use_used)
+            .where(
+                exists().where(
+                    VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
+                    VideoSourceTag.tag_id == tid,
+                )
+            )
+            .order_by(VideoAITemplate.created_at.desc())
+        )
+        if owner_id is not None:
+            tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
+        rows = (await session.execute(tpl_stmt)).scalars().all()
+        candidate_tpls.extend(rows)
+
+    seen: set[uuid.UUID] = set()
+    unique_tpls = []
+    for tpl in candidate_tpls:
+        if tpl.id in seen:
+            continue
+        seen.add(tpl.id)
+        unique_tpls.append(tpl)
+    return unique_tpls
+
+
+async def _run_bulk_generate_video_tasks(
+    *,
+    account_ids: list[uuid.UUID],
+    owner_id: uuid.UUID | None,
+    user_id: uuid.UUID,
+    mode: str,
+    limit: int,
+    subtask_count: int,
+) -> None:
+    from app.models.video_ai_template import VideoAITemplate
+    from app.models.video_source import VideoSource
+    from app.services.video_task_service import VideoTaskService
+
+    use_used = mode == "used"
+    total_created = 0
+    total_failed = 0
+    total_skipped = 0
+
+    async with SessionLocal() as session:
+        svc = VideoTaskService(db=session)
+
+        for account_id in account_ids:
+            try:
+                unique_tpls: list[VideoAITemplate] = await _load_bulk_video_task_templates(
+                    session,
+                    account_id=account_id,
+                    owner_id=owner_id,
+                    use_used=use_used,
+                )
+                if not unique_tpls:
+                    total_skipped += 1
+                    continue
+
+                pool = random.sample(unique_tpls, len(unique_tpls)) if use_used else unique_tpls
+                items_to_use = pool[:limit] if limit > 0 else pool
+
+                vs_ids = list({t.video_source_id for t in items_to_use if t.video_source_id})
+                vs_map: dict[uuid.UUID, VideoSource] = {}
+                if vs_ids:
+                    vs_rows = (
+                        await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))
+                    ).scalars().all()
+                    for vs in vs_rows:
+                        vs_map[vs.id] = vs
+
+                for tpl in items_to_use:
+                    try:
+                        dur_s = 0
+                        if tpl.video_source_id and tpl.video_source_id in vs_map:
+                            dur_s = vs_map[tpl.video_source_id].duration or 0
+                        dur_s = min(int(dur_s), 15)
+                        duration = f"{dur_s}s" if dur_s else "0s"
+
+                        shots = [
+                            {k: v for k, v in s.items() if k != "image_base64"}
+                            for s in (tpl.extracted_shots or [])
+                        ]
+                        await svc.create_task(
+                            account_id=account_id,
+                            template_id=tpl.id,
+                            final_prompt=tpl.prompt_description or "",
+                            duration=duration,
+                            shots=shots,
+                            user_id=user_id,
+                            subtask_count=subtask_count,
+                        )
+                        total_created += 1
+                    except Exception:
+                        total_failed += 1
+            except Exception:
+                total_skipped += 1
+
+    logger.info(
+        "bulk_generate_video_tasks done: created=%s failed=%s skipped=%s mode=%s limit=%s accounts=%s",
+        total_created,
+        total_failed,
+        total_skipped,
+        mode,
+        limit,
+        len(account_ids),
+    )
+
+
+@router.post("/bulk-generate-video-tasks", status_code=202)
 async def bulk_generate_video_tasks(
     body: BulkGenerateVideoTasksBody,
     current_user: TokenData = Depends(get_current_user),
@@ -1039,102 +1168,48 @@ async def bulk_generate_video_tasks(
     只根据账号绑定的标签查找模板，不再根据已绑定的 TikTok 博主筛选模板。
     mode=unused: 选取未使用(is_used=False)的模板，按创建时间倒序取前 limit 个。
     mode=used:   选取已使用(is_used=True)的模板，随机打乱后取前 limit 个。
+    先计算预计创建的任务数并立即返回，真正创建过程放到后台执行。
     """
-    from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_source import VideoSource
-    from app.models.enums import VideoAIProcessStatus
-    from app.services.video_task_service import VideoTaskService
-
     if not body.account_ids:
-        return {"message": "无账号，跳过", "created": 0, "failed": 0, "skipped": 0}
+        return {"status": "no_accounts", "planned": 0, "skipped_accounts": 0, "account_count": 0}
 
     use_used = body.mode == "used"
-    svc = VideoTaskService(db=session)
-
-    total_created = 0
-    total_failed = 0
+    total_planned = 0
     total_skipped = 0
 
     for account_id in body.account_ids:
         try:
-            candidate_tpls: list[VideoAITemplate] = []
-            tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
-            tag_ids = list((await session.execute(tag_stmt)).scalars().all())
-            if tag_ids:
-                for tid in tag_ids:
-                    tpl_stmt = (
-                        select(VideoAITemplate)
-                        .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
-                        .where(VideoAITemplate.is_used == use_used)
-                        .where(
-                            exists().where(
-                                VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
-                                VideoSourceTag.tag_id == tid,
-                            )
-                        )
-                        .order_by(VideoAITemplate.created_at.desc())
-                    )
-                    if owner_id is not None:
-                        tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
-                    rows = (await session.execute(tpl_stmt)).scalars().all()
-                    candidate_tpls.extend(rows)
-
-            # 去重
-            seen: set[uuid.UUID] = set()
-            unique_tpls: list[VideoAITemplate] = []
-            for t in candidate_tpls:
-                if t.id not in seen:
-                    seen.add(t.id)
-                    unique_tpls.append(t)
-
+            unique_tpls = await _load_bulk_video_task_templates(
+                session,
+                account_id=account_id,
+                owner_id=owner_id,
+                use_used=use_used,
+            )
             if not unique_tpls:
                 total_skipped += 1
                 continue
-
-            # used 模式随机打乱
-            pool = random.sample(unique_tpls, len(unique_tpls)) if use_used else unique_tpls
-            items_to_use = pool[:body.limit] if body.limit > 0 else pool
-
-            # 预加载 video_source duration
-            vs_ids = list({t.video_source_id for t in items_to_use if t.video_source_id})
-            vs_map: dict[uuid.UUID, VideoSource] = {}
-            if vs_ids:
-                vs_rows = (await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))).scalars().all()
-                for vs in vs_rows:
-                    vs_map[vs.id] = vs
-
-            for tpl in items_to_use:
-                try:
-                    dur_s = 0
-                    if tpl.video_source_id and tpl.video_source_id in vs_map:
-                        dur_s = vs_map[tpl.video_source_id].duration or 0
-                    dur_s = min(int(dur_s), 15)
-                    duration = f"{dur_s}s" if dur_s else "0s"
-
-                    shots = [
-                        {k: v for k, v in s.items() if k != "image_base64"}
-                        for s in (tpl.extracted_shots or [])
-                    ]
-                    await svc.create_task(
-                        account_id=account_id,
-                        template_id=tpl.id,
-                        final_prompt=tpl.prompt_description or "",
-                        duration=duration,
-                        shots=shots,
-                        user_id=current_user.user_id,
-                        subtask_count=body.subtask_count,
-                    )
-                    total_created += 1
-                except Exception:
-                    total_failed += 1
+            planned_for_account = min(len(unique_tpls), body.limit) if body.limit > 0 else len(unique_tpls)
+            total_planned += planned_for_account
         except Exception:
             total_skipped += 1
 
+    asyncio.create_task(
+        _run_bulk_generate_video_tasks(
+            account_ids=body.account_ids,
+            owner_id=owner_id,
+            user_id=current_user.user_id,
+            mode=body.mode,
+            limit=body.limit,
+            subtask_count=body.subtask_count,
+        )
+    )
+
     return {
-        "message": f"已创建 {total_created} 个生成任务，{total_failed} 个失败，{total_skipped} 个账号跳过",
-        "created": total_created,
-        "failed": total_failed,
-        "skipped": total_skipped,
+        "status": "queued",
+        "planned": total_planned,
+        "skipped_accounts": total_skipped,
+        "account_count": len(body.account_ids),
+        "message": f"后台已启动，预计创建 {total_planned} 个生成任务，{total_skipped} 个账号无可用模板",
     }
 
 
