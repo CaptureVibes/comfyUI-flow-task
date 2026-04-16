@@ -252,10 +252,11 @@ async def list_accounts_endpoint(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=9999),
     flag_id: uuid.UUID | None = Query(None),
+    search: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
-    items, total = await list_accounts(session, page=page, page_size=page_size, owner_id=owner_id, flag_id=flag_id)
+    items, total = await list_accounts(session, page=page, page_size=page_size, owner_id=owner_id, flag_id=flag_id, search=search or None)
     # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]
     blogger_map: dict[uuid.UUID, list[BoundBloggerRead]] = {aid: [] for aid in account_ids}

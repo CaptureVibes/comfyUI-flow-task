@@ -457,6 +457,17 @@
 
     <!-- Flag 过滤栏 -->
     <div class="al-filter-bar">
+      <!-- 账号名搜索框 -->
+      <div class="al-search-box">
+        <svg class="al-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input
+          v-model="searchQuery"
+          class="al-search-input"
+          placeholder="搜索账号名称..."
+          @input="onSearchInput"
+        />
+        <button v-if="searchQuery" class="al-search-clear" @click="clearSearch">✕</button>
+      </div>
       <div class="al-filter-flags">
         <button
           class="al-flag-filter-btn"
@@ -956,6 +967,8 @@ const selectedIds = computed(() => new Set(selectedMap.value.keys()))
 // ── Flag 相关 ─────────────────────────────────────────────────────────────────
 const allFlags = ref([])
 const filterFlagId = ref(null)
+const searchQuery = ref('')
+let _searchTimer = null
 const flagBarExpanded = ref(false)
 const FLAG_BAR_LIMIT = 20
 
@@ -1198,6 +1211,22 @@ function handleFilterFlag(flagId) {
   loadData()
 }
 
+function onSearchInput() {
+  clearTimeout(_searchTimer)
+  _searchTimer = setTimeout(() => {
+    page.value = 1
+    jumpPage.value = 1
+    loadData()
+  }, 300)
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  page.value = 1
+  jumpPage.value = 1
+  loadData()
+}
+
 // AI 博主配置弹窗
 const showAISettingsDialog = ref(false)
 const aiSettingsLoading = ref(false)
@@ -1391,6 +1420,7 @@ async function loadData() {
   try {
     const params = { page: page.value, page_size: pageSize.value }
     if (filterFlagId.value) params.flag_id = filterFlagId.value
+    if (searchQuery.value.trim()) params.search = searchQuery.value.trim()
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
@@ -3026,6 +3056,50 @@ onMounted(() => {
   flex-direction: column;
   gap: 10px;
 }
+
+.al-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 260px;
+}
+.al-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #94a3b8;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.al-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 30px 0 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #1e293b;
+  background: #f8fafc;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.al-search-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+  background: #fff;
+}
+.al-search-input::placeholder { color: #94a3b8; }
+.al-search-clear {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.al-search-clear:hover { color: #475569; }
 
 .al-filter-flags {
   display: flex;

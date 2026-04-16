@@ -41,6 +41,7 @@ async def list_accounts(
     page_size: int,
     owner_id: UUID | None = None,
     flag_id: UUID | None = None,
+    search: str | None = None,
 ) -> tuple[list[Account], int]:
     stmt = select(Account).order_by(Account.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     total_stmt = select(func.count(Account.id))
@@ -54,6 +55,10 @@ async def list_accounts(
         total_stmt = total_stmt.where(Account.id.in_(
             select(AccountFlag.account_id).where(AccountFlag.flag_id == flag_id)
         ))
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(Account.account_name.ilike(pattern))
+        total_stmt = total_stmt.where(Account.account_name.ilike(pattern))
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)
     return list(rows), total
