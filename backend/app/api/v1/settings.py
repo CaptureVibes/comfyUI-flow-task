@@ -104,6 +104,9 @@ async def get_pipeline_settings(
         face_select_prompt=row.face_select_prompt,
         ai_account_exclusive_name_prompt=row.ai_account_exclusive_name_prompt,
         ai_account_shared_name_prompt=row.ai_account_shared_name_prompt,
+        hashtag_search_top_n=row.hashtag_search_top_n,
+        hashtag_filter_model=row.hashtag_filter_model,
+        hashtag_filter_prompt=row.hashtag_filter_prompt,
     )
 
 
@@ -147,6 +150,9 @@ async def put_pipeline_settings(
         face_select_prompt=row.face_select_prompt,
         ai_account_exclusive_name_prompt=row.ai_account_exclusive_name_prompt,
         ai_account_shared_name_prompt=row.ai_account_shared_name_prompt,
+        hashtag_search_top_n=row.hashtag_search_top_n,
+        hashtag_filter_model=row.hashtag_filter_model,
+        hashtag_filter_prompt=row.hashtag_filter_prompt,
     )
 
 

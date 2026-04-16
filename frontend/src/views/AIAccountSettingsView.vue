@@ -178,6 +178,32 @@
         </div>
       </div>
 
+      <div class="aias-card">
+        <div class="aias-section">
+          <div class="aias-section-header">
+            <span class="aias-section-tag">标签搜索</span>
+            <span class="aias-section-desc">根据账号绑定的 TikTok 博主抓取热门视频 HashTag，并用 AI 过滤出推荐标签</span>
+          </div>
+          <div class="aias-row">
+            <el-form-item label="抓取视频数量" class="aias-row-item">
+              <el-input-number v-model="form.hashtag_search_top_n" :min="10" :max="500" :step="10" class="aias-input" />
+            </el-form-item>
+            <el-form-item label="过滤模型" class="aias-row-item">
+              <el-input v-model="form.hashtag_filter_model" placeholder="e.g. gemini-3.1-pro-preview" class="aias-input" />
+            </el-form-item>
+          </div>
+          <el-form-item label="AI 过滤提示词">
+            <el-input
+              v-model="form.hashtag_filter_prompt"
+              type="textarea"
+              :rows="5"
+              placeholder="例：以下是从 TikTok 视频中提取的 HashTag 列表，请过滤掉无意义、过于通用或与目标内容无关的标签，保留能精准描述内容品类、场景、风格的标签..."
+              class="aias-input"
+            />
+          </el-form-item>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
@@ -209,6 +235,10 @@ const form = reactive({
   // 批量生成名称/handle/签名
   ai_account_exclusive_name_prompt: '',
   ai_account_shared_name_prompt: '',
+  // 标签搜索
+  hashtag_search_top_n: 100,
+  hashtag_filter_model: 'gemini-3.1-pro-preview',
+  hashtag_filter_prompt: '',
   // 保留其他字段，保存时透传
   _pipeline: null,
 })
@@ -230,6 +260,9 @@ async function loadSettings() {
     form.ai_account_painting_prompt = data.ai_account_painting_prompt || ''
     form.ai_account_exclusive_name_prompt = data.ai_account_exclusive_name_prompt || ''
     form.ai_account_shared_name_prompt = data.ai_account_shared_name_prompt || ''
+    form.hashtag_search_top_n = data.hashtag_search_top_n ?? 100
+    form.hashtag_filter_model = data.hashtag_filter_model || 'gemini-3.1-pro-preview'
+    form.hashtag_filter_prompt = data.hashtag_filter_prompt || ''
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -256,6 +289,9 @@ async function handleSave() {
       ai_account_painting_prompt: form.ai_account_painting_prompt,
       ai_account_exclusive_name_prompt: form.ai_account_exclusive_name_prompt,
       ai_account_shared_name_prompt: form.ai_account_shared_name_prompt,
+      hashtag_search_top_n: form.hashtag_search_top_n,
+      hashtag_filter_model: form.hashtag_filter_model,
+      hashtag_filter_prompt: form.hashtag_filter_prompt,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')
