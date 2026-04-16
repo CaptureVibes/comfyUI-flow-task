@@ -207,7 +207,6 @@ class AccountChannelReservationRead(BaseModel):
     channel_name: str | None = None
     username: str | None = None
     avatar_url: str | None = None
-    channel_info: dict | None = None
     channel_status: str = "active"
     note: str | None = None
     reserved_at: datetime

@@ -867,24 +867,19 @@ function fmtDate(iso) {
 }
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
-const boundChannelBindings = computed(() => {
-  const reservations = account.value?.channel_reservations || []
-  if (reservations.length) {
-    return reservations
-      .filter(item => item.status === 'bound')
-      .map(item => ({
-        ...(item.channel_info || {}),
-        platform: item.platform,
-        channel_source: item.channel_source || item.source || 'openapi',
-        channel_id: item.channel_id || '',
-        channel_name: item.channel_name || '',
-        username: item.username || '',
-        avatar_url: item.avatar_url || '',
-        channel_status: item.channel_status || 'active',
-      }))
-  }
-  return account.value?.social_bindings || []
-})
+const boundChannelBindings = computed(() =>
+  (account.value?.channel_reservations || [])
+    .filter(item => item.status === 'bound')
+    .map(item => ({
+      platform: item.platform,
+      channel_source: item.channel_source || item.source || 'openapi',
+      channel_id: item.channel_id || '',
+      channel_name: item.channel_name || '',
+      username: item.username || '',
+      avatar_url: item.avatar_url || '',
+      channel_status: item.channel_status || 'active',
+    }))
+)
 
 const hasDisabledChannel = computed(() =>
   boundChannelBindings.value.some(b => b.channel_status === 'disabled')

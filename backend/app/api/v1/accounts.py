@@ -105,14 +105,13 @@ def _channel_binding_payload(body: BindOpenAPIChannelBody) -> dict:
 
 
 def _reservation_to_binding(reservation: AccountChannelReservation | AccountChannelReservationRead) -> dict:
-    base = dict(reservation.channel_info or {})
-    base.update({
+    base = {
         "platform": reservation.platform,
         "channel_source": reservation.channel_source or reservation.source or "openapi",
         "channel_id": reservation.channel_id or "",
         "channel_name": reservation.channel_name or "",
         "username": reservation.username or "",
-    })
+    }
     avatar_url = getattr(reservation, "avatar_url", None)
     if avatar_url:
         base["avatar_url"] = avatar_url
@@ -199,11 +198,7 @@ def _account_read(
     data.bound_flags = flags or []
     data.pending_publish_count = pending_publish_count
     data.channel_reservations = channel_reservations or []
-    data.social_bindings = [
-        _reservation_to_binding(reservation)
-        for reservation in data.channel_reservations
-        if reservation.status == "bound"
-    ]
+    data.social_bindings = None
     return data
 
 

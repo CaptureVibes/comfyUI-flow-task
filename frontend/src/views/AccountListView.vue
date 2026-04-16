@@ -606,7 +606,7 @@
 
             <!-- 平台绑定 -->
             <td class="al-td al-td-platform">
-              <div v-if="item.channel_reservations?.length || item.social_bindings?.length" class="al-bindings">
+              <div v-if="item.channel_reservations?.length" class="al-bindings">
                 <template v-for="reservation in boundChannelReservations(item)" :key="`bound-${reservation.id}`">
                   <span
                     class="ac-tag"

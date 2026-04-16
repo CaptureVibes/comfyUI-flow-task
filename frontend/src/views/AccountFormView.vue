@@ -947,15 +947,10 @@ async function loadAccount() {
   }
 }
 
-function accountBoundChannelBindings(account) {
-  const reservations = account?.channel_reservations || []
-  // confirmed 和 bound 都通过 lockedReservations 展示，不再填入可编辑区域
-  const lockedPlatforms = new Set(
-    reservations.filter(r => r.status === 'confirmed' || r.status === 'bound').map(r => r.platform)
-  )
-  // social_bindings 中未被 reservations 覆盖的部分才进入可编辑区域（兜底旧数据）
-  const editableBindings = (account?.social_bindings || []).filter(b => b.platform && !lockedPlatforms.has(b.platform))
-  return JSON.parse(JSON.stringify(editableBindings))
+function accountBoundChannelBindings(_account) {
+  // confirmed/bound 状态均通过 lockedReservations 展示（带删除按钮）
+  // 可编辑区域只用于用户手动添加新平台
+  return []
 }
 
 async function handleDeleteReservation(res) {
