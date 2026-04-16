@@ -246,15 +246,39 @@
               v-for="res in lockedReservations"
               :key="`locked-${res.platform}`"
               class="ac-binding-block ac-binding-block--locked"
+              :class="{ 'ac-binding-block--disabled': res.channel_status === 'disabled' }"
             >
+              <!-- Disabled 警告横幅 -->
+              <div v-if="res.channel_status === 'disabled'" class="ac-binding-disabled-banner">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                此频道已被平台禁用，请删除后重新绑定
+              </div>
               <div class="ac-binding-header">
                 <span class="ac-binding-platform-label">{{ { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }[res.platform] || res.platform }}</span>
                 <el-tag
+                  v-if="res.channel_status === 'disabled'"
+                  type="danger"
+                  size="small"
+                  style="margin-left: 8px;"
+                >已禁用</el-tag>
+                <el-tag
+                  v-else
                   :type="res.status === 'bound' ? 'success' : 'warning'"
                   size="small"
                   style="margin-left: 8px;"
                 >{{ res.status === 'bound' ? '已绑定' : '已确认' }}</el-tag>
-                <span style="margin-left: auto; color: #94a3b8; font-size: 12px;">不可编辑</span>
+                <template v-if="res.channel_status === 'disabled' && res.status === 'bound'">
+                  <button
+                    class="ac-binding-del-btn"
+                    :disabled="deletingReservation === res.id"
+                    @click.prevent="handleDeleteReservation(res)"
+                  >
+                    <svg v-if="deletingReservation !== res.id" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                    <span v-else class="ac-del-spin"></span>
+                    {{ deletingReservation === res.id ? '删除中…' : '删除重绑' }}
+                  </button>
+                </template>
+                <span v-else style="margin-left: auto; color: #94a3b8; font-size: 12px;">不可编辑</span>
               </div>
               <div v-if="res.channel_name || res.username" style="padding: 8px 0 4px; font-size: 13px; color: #64748b;">
                 <span v-if="res.channel_name">{{ res.channel_name }}</span>
@@ -573,13 +597,14 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createAccount, fetchAccount, patchAccount,
   fetchAccountBloggers, bindBlogger, unbindBlogger,
   fetchAccountTags, bindTagToAccount, unbindTagFromAccount,
   triggerAIAccountGeneration, fetchAIGenerationStatus,
   resumeAIAccountGeneration, restartAIAccountGeneration,
+  deleteChannelReservation,
 } from '../api/accounts'
 import { fetchTags, fetchTagsVideoCount } from '../api/tags'
 import { searchBloggers } from '../api/tiktok_bloggers'
@@ -594,6 +619,7 @@ const isEdit = computed(() => Boolean(route.params.id))
 const loading = ref(false)
 const saving = ref(false)
 const lockedReservations = ref([])  // confirmed/bound 状态，只读展示
+const deletingReservation = ref(null)  // 正在删除的 reservation id
 const uploadingAvatar = ref(false)
 const uploadingPhoto = ref(false)
 const formRef = ref(null)
@@ -900,7 +926,7 @@ async function loadAccount() {
     form.avatar_url = data.avatar_url || ''
     form.photo_url = data.photo_url || ''
     form.social_bindings = accountBoundChannelBindings(data)
-    lockedReservations.value = (data.channel_reservations || []).filter(r => r.status === 'confirmed')
+    lockedReservations.value = (data.channel_reservations || []).filter(r => r.status === 'confirmed' || r.status === 'bound')
     boundBloggers.value = data.tiktok_bloggers || []
     boundTags.value = data.bound_tags || []
 
@@ -921,10 +947,37 @@ async function loadAccount() {
 
 function accountBoundChannelBindings(account) {
   const reservations = account?.channel_reservations || []
-  const lockedPlatforms = new Set(reservations.filter(r => r.status === 'confirmed').map(r => r.platform))
-  // confirmed 平台走 lockedReservations 只读展示，bound/其他可编辑
+  // confirmed 和 bound 都走 lockedReservations 只读展示，不填入可编辑区域
+  const lockedPlatforms = new Set(
+    reservations.filter(r => r.status === 'confirmed' || r.status === 'bound').map(r => r.platform)
+  )
   const editableBindings = (account?.social_bindings || []).filter(b => b.platform && !lockedPlatforms.has(b.platform))
   return JSON.parse(JSON.stringify(editableBindings))
+}
+
+async function handleDeleteReservation(res) {
+  const platformLabel = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }[res.platform] || res.platform
+  const channelDesc = res.channel_name || res.username || res.channel_id || ''
+  const desc = channelDesc ? `${platformLabel}（${channelDesc}）` : platformLabel
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 ${desc} 的频道绑定？删除后可重新绑定。`,
+      '删除频道绑定',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  deletingReservation.value = res.id
+  try {
+    await deleteChannelReservation(route.params.id, res.id)
+    ElMessage.success('已删除，可重新绑定')
+    lockedReservations.value = lockedReservations.value.filter(r => r.id !== res.id)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
+  } finally {
+    deletingReservation.value = null
+  }
 }
 
 async function handleSave() {
@@ -1582,6 +1635,66 @@ onUnmounted(() => {
   border-color: #e2e8f0;
   box-shadow: none;
   transform: none;
+}
+
+.ac-binding-block--disabled {
+  background: #fff7ed !important;
+  border-color: #fed7aa !important;
+  opacity: 1 !important;
+}
+
+.ac-binding-block--disabled:hover {
+  border-color: #fdba74 !important;
+  box-shadow: 0 2px 8px rgba(234,88,12,0.1) !important;
+}
+
+.ac-binding-disabled-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #fff1f2;
+  border: 1px solid #fda4af;
+  border-radius: 7px;
+  font-size: 12px;
+  color: #be123c;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.ac-binding-del-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1.5px solid #f87171;
+  background: #fff;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ac-binding-del-btn:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+.ac-binding-del-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ac-del-spin {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(220,38,38,0.3);
+  border-top-color: #dc2626;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
 }
 
 .ac-binding-platform-label {

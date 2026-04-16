@@ -38,6 +38,7 @@ class AccountChannelReservation(Base):
     username: Mapped[str | None] = mapped_column(String(300), nullable=True, index=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     channel_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    channel_status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

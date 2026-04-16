@@ -11,6 +11,7 @@ from app.schemas.settings import (
     PipelineSettingsPayload,
 )
 from app.schemas.topic import KeywordGenConfigPayload
+from app.services.channel_status_poller import run_channel_status_check
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings, update_pipeline_settings
 from app.services.system_settings_service import get_or_create_system_settings
 
@@ -45,6 +46,19 @@ async def put_system_settings(
     await session.commit()
     await session.refresh(row)
     return SystemSettingsPayload(use_seedance_api=row.use_seedance_api)
+
+
+# ---------------------------------------------------------------------------
+# 手动触发频道状态检查
+# ---------------------------------------------------------------------------
+
+@router.post("/check-channel-status")
+async def trigger_check_channel_status(
+    token: TokenData = Depends(require_current_user),
+) -> dict:
+    """立即执行一次频道授权状态检查（通常每天北京时间 10:00 自动触发）。"""
+    result = await run_channel_status_check()
+    return {"status": "ok", "checked": result["checked"], "changed": result["changed"]}
 
 
 # ---------------------------------------------------------------------------

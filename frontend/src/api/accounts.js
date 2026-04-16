@@ -161,3 +161,7 @@ export async function bindOpenAPIChannel(accountId, payload) {
   const { data } = await http.post(`/accounts/${accountId}/channel-bindings`, payload)
   return data
 }
+
+export async function deleteChannelReservation(accountId, reservationId) {
+  await http.delete(`/accounts/${accountId}/channel-reservations/${reservationId}`)
+}

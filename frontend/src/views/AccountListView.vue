@@ -614,6 +614,16 @@
                   :class="`ac-tag-${binding.platform}`"
                   :title="bindingDisplayLabel(binding)"
                 >{{ bindingDisplayLabel(binding) }}</span>
+                <template v-for="reservation in boundChannelReservations(item)" :key="`bound-${reservation.id}`">
+                  <span
+                    class="ac-tag"
+                    :class="[`ac-tag-${reservation.platform}`, reservation.channel_status === 'disabled' ? 'ac-tag-disabled' : '']"
+                    :title="reservation.channel_status === 'disabled' ? reservationBoundLabel(reservation) + '（已禁用）' : reservationBoundLabel(reservation)"
+                  >
+                    <svg v-if="reservation.channel_status === 'disabled'" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:2px;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    {{ reservationBoundLabel(reservation) }}
+                  </span>
+                </template>
                 <span
                   v-for="reservation in unboundChannelReservations(item)"
                   :key="`reservation-${reservation.id}`"
@@ -1307,9 +1317,17 @@ function bindingDisplayLabel(binding) {
   const channelId = binding.channel_id?.trim()
   return channelName ? `${platform} · ${channelName}` : channelId ? `${platform} · ${channelId}` : platform
 }
+function boundChannelReservations(item) {
+  return (item.channel_reservations || []).filter(r => r?.status === 'bound')
+}
 function unboundChannelReservations(item) {
-  const boundPlatforms = new Set((item.social_bindings || []).map(b => b?.platform).filter(Boolean))
-  return (item.channel_reservations || []).filter(r => r?.platform && !boundPlatforms.has(r.platform))
+  return (item.channel_reservations || []).filter(r => r?.platform && r?.status !== 'bound')
+}
+function reservationBoundLabel(reservation) {
+  const platform = platformLabel(reservation.platform)
+  const channelName = reservation.channel_name?.trim()
+  const channelId = reservation.channel_id?.trim()
+  return channelName ? `${platform} · ${channelName}` : channelId ? `${platform} · ${channelId}` : platform
 }
 function reservationDisplayLabel(reservation) {
   const platform = platformLabel(reservation.platform)
@@ -2179,6 +2197,8 @@ onMounted(() => {
 }
 
 .ac-tag {
+  display: inline-flex;
+  align-items: center;
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
@@ -2190,6 +2210,13 @@ onMounted(() => {
 .ac-tag-tiktok   { background: #f1f5f9; color: #0f172a; }
 .ac-tag-instagram { background: #fef3c7; color: #92400e; }
 .ac-tag-reserved { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; }
+.ac-tag-disabled {
+  background: #fff1f2 !important;
+  color: #be123c !important;
+  border: 1.5px solid #fda4af !important;
+  text-decoration: line-through;
+  opacity: 0.85;
+}
 
 /* Account type badge */
 .ac-type-badge {

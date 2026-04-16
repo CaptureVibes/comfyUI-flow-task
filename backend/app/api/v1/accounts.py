@@ -523,6 +523,32 @@ async def patch_account_endpoint(
     return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
+@router.delete("/{account_id}/channel-reservations/{reservation_id}")
+async def delete_channel_reservation(
+    account_id: uuid.UUID,
+    reservation_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """删除一条频道绑定（channel_reservation）。仅允许删除 bound 状态的记录。"""
+    await get_account_or_404(session, account_id, owner_id)
+    reservation = await session.scalar(
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.id == reservation_id)
+        .where(AccountChannelReservation.account_id == account_id)
+    )
+    if reservation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="频道绑定不存在")
+    if reservation.status != "bound":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="只能删除已绑定（bound）状态的频道",
+        )
+    await session.delete(reservation)
+    await session.commit()
+    return Response(status_code=204)
+
+
 @router.delete("/{account_id}")
 async def delete_account_endpoint(
     account_id: uuid.UUID,

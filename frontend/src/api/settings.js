@@ -20,6 +20,11 @@ export async function updatePipelineSettings(payload) {
   return data
 }
 
+export async function triggerCheckChannelStatus() {
+  const { data } = await http.post('/settings/check-channel-status')
+  return data
+}
+
 export async function fetchCandidateConfig() {
   const { data } = await http.get('/settings/candidate-config')
   return data

@@ -369,6 +369,7 @@ async def _build_channels(account_id: uuid.UUID) -> list[dict]:
             .where(AccountChannelReservation.account_id == account_id)
             .where(AccountChannelReservation.status == "bound")
             .where(AccountChannelReservation.channel_id.is_not(None))
+            .where(AccountChannelReservation.channel_status != "disabled")
             .order_by(AccountChannelReservation.created_at.asc())
         )).scalars().all()
     result = []

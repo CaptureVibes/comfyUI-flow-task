@@ -22,6 +22,7 @@ from app.services.video_stats_collector import stop_video_stats_collector
 from app.services.account_publish_scheduler import start_account_publish_scheduler, stop_account_publish_scheduler
 from app.services.candidate_scheduler_service import start_candidate_scheduler, stop_candidate_scheduler
 from app.services.lark_notify_scheduler import start_lark_notify_scheduler, stop_lark_notify_scheduler
+from app.services.channel_status_poller import start_channel_status_poller, stop_channel_status_poller
 from app.services.topic_service import recover_stuck_keyword_gen_on_startup
 from app.services.video_source_service import recover_stuck_downloads_on_startup
 from app.services.candidate_service import recover_candidate_imports_on_startup, recover_stuck_ai_review_on_startup
@@ -92,6 +93,7 @@ async def startup_event() -> None:
     start_account_publish_scheduler()
     start_candidate_scheduler()
     start_lark_notify_scheduler()
+    start_channel_status_poller()
     await recover_stuck_keyword_gen_on_startup()
     await recover_stuck_templates_on_startup()
     await recover_stuck_downloads_on_startup()
@@ -109,6 +111,7 @@ async def shutdown_event() -> None:
     await stop_account_publish_scheduler()
     await stop_candidate_scheduler()
     await stop_lark_notify_scheduler()
+    await stop_channel_status_poller()
 
 
 @app.get("/healthz")

@@ -90,15 +90,24 @@
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
             </span>
           </div>
+          <!-- Disabled channel warning banner -->
+          <div v-if="hasDisabledChannel" class="ad-disabled-warning">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            存在已禁用的平台频道，该频道将不会参与自动发布，请前往
+            <span class="ad-disabled-edit-link" @click="$router.push(`/dashboard/accounts/${account.id}/edit`)">编辑页面</span>
+            删除后重新绑定。
+          </div>
+
           <div class="ad-hero-platforms">
             <span
               v-for="binding in boundChannelBindings"
               :key="`${binding.platform}-${binding.channel_id || binding.channel_name || ''}`"
               class="ad-platform-badge"
-              :class="`ad-platform-${binding.platform}`"
-              :title="bindingDisplayLabel(binding)"
+              :class="[`ad-platform-${binding.platform}`, binding.channel_status === 'disabled' ? 'ad-platform-disabled' : '']"
+              :title="binding.channel_status === 'disabled' ? bindingDisplayLabel(binding) + '（已禁用）' : bindingDisplayLabel(binding)"
             >
-              {{ bindingDisplayLabel(binding) }}
+              <svg v-if="binding.channel_status === 'disabled'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:3px;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              {{ bindingDisplayLabel(binding) }}{{ binding.channel_status === 'disabled' ? ' · 已禁用' : '' }}
             </span>
             <span v-if="!boundChannelBindings.length" class="ad-no-platform">未绑定平台</span>
           </div>
@@ -871,10 +880,15 @@ const boundChannelBindings = computed(() => {
         channel_name: item.channel_name || '',
         username: item.username || '',
         avatar_url: item.avatar_url || '',
+        channel_status: item.channel_status || 'active',
       }))
   }
   return account.value?.social_bindings || []
 })
+
+const hasDisabledChannel = computed(() =>
+  boundChannelBindings.value.some(b => b.channel_status === 'disabled')
+)
 function bindingDisplayLabel(binding) {
   const platform = platformLabel(binding.platform)
   const channelName = binding.channel_name?.trim()
@@ -1574,12 +1588,40 @@ onUnmounted(() => {
 }
 
 .ad-platform-badge {
+  display: inline-flex; align-items: center;
   font-size: 12px; font-weight: 700; padding: 3px 10px;
   border-radius: 20px; letter-spacing: .02em;
 }
 .ad-platform-youtube  { background: #fef2f2; color: #dc2626; }
 .ad-platform-tiktok   { background: #f1f5f9; color: #0f172a; }
 .ad-platform-instagram { background: #fef3c7; color: #92400e; }
+.ad-platform-disabled {
+  background: #fff1f2 !important;
+  color: #be123c !important;
+  border: 1.5px solid #fda4af;
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+.ad-disabled-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #fff7ed;
+  border: 1.5px solid #fed7aa;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #9a3412;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+.ad-disabled-edit-link {
+  color: #ea580c;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
 
 .ad-type-badge {
   font-size: 12px;
