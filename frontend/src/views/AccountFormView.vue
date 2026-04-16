@@ -241,7 +241,7 @@
           </div>
 
           <div class="bindings-grid">
-            <!-- 已 confirmed/bound 的平台：只读展示 -->
+            <!-- confirmed：只读锁定 / bound：可删除 -->
             <div
               v-for="res in lockedReservations"
               :key="`locked-${res.platform}`"
@@ -267,7 +267,8 @@
                   size="small"
                   style="margin-left: 8px;"
                 >{{ res.status === 'bound' ? '已绑定' : '已确认' }}</el-tag>
-                <template v-if="res.channel_status === 'disabled' && res.status === 'bound'">
+                <!-- bound 状态可以删除换绑；confirmed 是外部团队锁定的，不可操作 -->
+                <template v-if="res.status === 'bound'">
                   <button
                     class="ac-binding-del-btn"
                     :disabled="deletingReservation === res.id"
@@ -275,7 +276,7 @@
                   >
                     <svg v-if="deletingReservation !== res.id" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                     <span v-else class="ac-del-spin"></span>
-                    {{ deletingReservation === res.id ? '删除中…' : '删除重绑' }}
+                    {{ deletingReservation === res.id ? '删除中…' : '删除' }}
                   </button>
                 </template>
                 <span v-else style="margin-left: auto; color: #94a3b8; font-size: 12px;">不可编辑</span>
@@ -927,6 +928,7 @@ async function loadAccount() {
     form.photo_url = data.photo_url || ''
     form.social_bindings = accountBoundChannelBindings(data)
     lockedReservations.value = (data.channel_reservations || []).filter(r => r.status === 'confirmed' || r.status === 'bound')
+    // bound 状态通过 lockedReservations 展示（带删除按钮），不再放入可编辑的 social_bindings
     boundBloggers.value = data.tiktok_bloggers || []
     boundTags.value = data.bound_tags || []
 
@@ -947,10 +949,11 @@ async function loadAccount() {
 
 function accountBoundChannelBindings(account) {
   const reservations = account?.channel_reservations || []
-  // confirmed 和 bound 都走 lockedReservations 只读展示，不填入可编辑区域
+  // confirmed 和 bound 都通过 lockedReservations 展示，不再填入可编辑区域
   const lockedPlatforms = new Set(
     reservations.filter(r => r.status === 'confirmed' || r.status === 'bound').map(r => r.platform)
   )
+  // social_bindings 中未被 reservations 覆盖的部分才进入可编辑区域（兜底旧数据）
   const editableBindings = (account?.social_bindings || []).filter(b => b.platform && !lockedPlatforms.has(b.platform))
   return JSON.parse(JSON.stringify(editableBindings))
 }
