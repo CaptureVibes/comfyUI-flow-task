@@ -146,6 +146,8 @@ class VideoTaskService:
             if not normalized_shots or normalized_shots[0].get("image_url") != account_photo_url:
                 normalized_shots = [photo_shot, *normalized_shots]
 
+        has_face = (account.face_mode != "no_face") if account else True
+
         task = VideoTask(
             owner_id=user_id,
             account_id=account_id,
@@ -155,6 +157,7 @@ class VideoTaskService:
             prompt=final_prompt,
             duration=duration,
             shots=normalized_shots,
+            has_face=has_face,
         )
         self.db.add(task)
         await self.db.flush()  # get task.id before creating sub-tasks
@@ -464,6 +467,7 @@ class VideoTaskService:
                     "image_urls": image_urls,
                     "duration": task.duration,
                     "video_id": str(sub.id),
+                    "has_face": task.has_face,
                 })
                 sub.status = "generating"
             task.status = "generating"

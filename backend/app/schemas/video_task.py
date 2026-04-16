@@ -46,6 +46,7 @@ class VideoTaskRead(BaseModel):
     is_prompt_updated: bool = False
     duration: str
     shots: list | None = None
+    has_face: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

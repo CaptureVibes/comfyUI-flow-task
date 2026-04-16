@@ -27,6 +27,7 @@ class VideoTask(Base):
     is_prompt_updated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     duration: Mapped[str] = mapped_column(String(50), nullable=False)
     shots: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    has_face: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

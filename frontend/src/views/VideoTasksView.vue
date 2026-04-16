@@ -246,6 +246,9 @@
             <span class="vt-status-badge" :class="`vt-status-${task.status}`">
               {{ STATUS_LABELS[task.status] || task.status }}
             </span>
+            <span class="vt-face-badge" :class="task.has_face ? 'vt-face-yes' : 'vt-face-no'">
+              {{ task.has_face ? '有人脸' : '无人脸' }}
+            </span>
             <div class="vt-card-meta">
               <span class="vt-account-name">{{ task.account_name || '未知账号' }}</span>
               <span class="vt-sep">·</span>
@@ -1172,6 +1175,17 @@ onMounted(async () => {
 .vt-status-publishing        { background: #ede9fe; color: #7c3aed; }
 .vt-status-published         { background: #dcfce7; color: #15803d; }
 .vt-status-abandoned         { background: #fee2e2; color: #b91c1c; }
+
+.vt-face-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.vt-face-yes { background: #fce7f3; color: #be185d; }
+.vt-face-no  { background: #f1f5f9; color: #64748b; }
 
 .vt-publish-btn {
   display: flex;
