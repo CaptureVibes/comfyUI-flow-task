@@ -17,6 +17,7 @@ from app.schemas.settings import (
 )
 from app.schemas.topic import KeywordGenConfigPayload
 from app.services.channel_status_poller import run_channel_status_check
+from app.services.channel_name_sync_scheduler import run_channel_name_sync
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings, update_pipeline_settings
 from app.services.system_settings_service import get_or_create_system_settings
 
@@ -99,6 +100,74 @@ async def stream_check_channel_status(
                 await queue.put(None)
 
         worker = asyncio.create_task(run_check())
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+                if await request.is_disconnected():
+                    break
+        finally:
+            if not worker.done():
+                worker.cancel()
+                try:
+                    await worker
+                except asyncio.CancelledError:
+                    pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 手动触发频道名称同步
+# ---------------------------------------------------------------------------
+
+@router.post("/sync-channel-names")
+async def trigger_sync_channel_names(
+    token: TokenData = Depends(require_current_user),
+) -> dict:
+    result = await run_channel_name_sync()
+    return {"status": "ok", "checked": result["checked"], "updated": result["updated"]}
+
+
+@router.get("/sync-channel-names/stream")
+async def stream_sync_channel_names(
+    request: Request,
+    token: TokenData = Depends(require_current_user),
+) -> StreamingResponse:
+    """以 SSE 方式流式执行频道名称同步。"""
+    async def event_stream():
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def emit(event: str, payload: dict) -> None:
+            await queue.put(_format_sse(event, payload))
+
+        async def run_sync() -> None:
+            try:
+                await emit("queued", {"message": "同步任务已创建，等待执行"})
+                await run_channel_name_sync(
+                    progress_callback=lambda payload: emit(payload["event"], payload),
+                    should_stop=request.is_disconnected,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Streamed channel name sync failed")
+                await emit("error", {"message": "频道名称同步失败，请稍后重试"})
+            finally:
+                await queue.put(None)
+
+        worker = asyncio.create_task(run_sync())
 
         try:
             while True:

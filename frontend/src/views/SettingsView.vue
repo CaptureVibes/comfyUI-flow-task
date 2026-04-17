@@ -82,6 +82,63 @@
       </div>
 
       <el-divider />
+
+      <!-- 频道名称同步 -->
+      <div class="setting-section">
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-name">平台频道名称同步</span>
+            <span class="setting-desc">
+              每天北京时间 10:00 自动同步内部频道名称，手动触发时会实时展示旧名字和新名字。
+            </span>
+          </div>
+          <button
+            class="check-btn"
+            :class="{ loading: channelNameSyncing }"
+            :disabled="channelNameSyncing"
+            @click="handleSyncChannelNames"
+          >
+            <span v-if="channelNameSyncing" class="check-spin"></span>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+            {{ channelNameSyncing ? '同步中…' : '同步名称' }}
+          </button>
+        </div>
+        <div v-if="channelNameSyncResult" class="check-result" :class="channelNameSyncResult.type">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0">
+            <path v-if="channelNameSyncResult.type === 'success'" d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline v-if="channelNameSyncResult.type === 'success'" points="22 4 12 14.01 9 11.01"/>
+            <circle v-else cx="12" cy="12" r="10"/><line v-if="channelNameSyncResult.type !== 'success'" x1="12" y1="8" x2="12" y2="12"/><line v-if="channelNameSyncResult.type !== 'success'" x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          {{ channelNameSyncResult.message }}
+        </div>
+        <div v-if="channelNameSyncLogs.length" ref="channelNameSyncLogListRef" class="check-log-list">
+          <div
+            v-for="item in channelNameSyncLogs"
+            :key="item.id"
+            class="check-log-item"
+            :class="item.type"
+          >
+            <div class="check-log-top">
+              <div class="check-log-channel-wrap">
+                <span class="check-log-platform">{{ formatPlatformLabel(item.platform) }}</span>
+                <span class="check-log-channel-name">{{ formatChannelDisplayName(item.currentChannelName) }}</span>
+              </div>
+              <span class="check-log-result-badge" :class="`tone-${item.type}`">{{ item.resultLabel }}</span>
+            </div>
+            <div class="check-log-summary">{{ item.summary }}</div>
+            <div class="check-log-name-line">
+              <template v-if="item.previousChannelName !== item.currentChannelName">
+                <span class="check-name-chip is-ghost">{{ formatChannelDisplayName(item.previousChannelName) }}</span>
+                <span class="check-log-arrow">→</span>
+              </template>
+              <span class="check-name-chip" :class="nameChipClass(item.type)">
+                {{ formatChannelDisplayName(item.currentChannelName) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <el-divider />
     </el-card>
   </div>
 </template>
@@ -89,7 +146,7 @@
 <script setup>
 import { nextTick, ref, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchSystemSettings, streamCheckChannelStatus, updateSystemSettings } from '../api/settings'
+import { fetchSystemSettings, streamCheckChannelStatus, streamSyncChannelNames, updateSystemSettings } from '../api/settings'
 
 const systemSettings = ref({ use_seedance_api: false })
 const systemLoading = ref(false)
@@ -99,6 +156,12 @@ const channelCheckResult = ref(null)
 const channelCheckLogs = ref([])
 const channelCheckLogListRef = ref(null)
 let channelCheckController = null
+
+const channelNameSyncing = ref(false)
+const channelNameSyncResult = ref(null)
+const channelNameSyncLogs = ref([])
+const channelNameSyncLogListRef = ref(null)
+let channelNameSyncController = null
 
 const PLATFORM_LABELS = {
   douyin: '抖音',
@@ -127,6 +190,13 @@ const RESULT_LABELS = {
   request_failed: '检查失败',
 }
 
+const CHANNEL_NAME_RESULT_LABELS = {
+  updated: '已更新',
+  unchanged: '名称未变',
+  not_found: '未找到',
+  request_failed: '同步失败',
+}
+
 function formatPlatformLabel(platform) {
   if (!platform) return '频道'
   return PLATFORM_LABELS[platform] || platform.toUpperCase()
@@ -135,6 +205,10 @@ function formatPlatformLabel(platform) {
 function formatChannelStatus(status) {
   if (!status) return '未知状态'
   return CHANNEL_STATUS_META[status]?.label || status
+}
+
+function formatChannelDisplayName(name) {
+  return name || '未命名频道'
 }
 
 function statusChipClass(status) {
@@ -149,6 +223,10 @@ function resultTone(result) {
 
 function formatResultLabel(result) {
   return RESULT_LABELS[result] || '检查完成'
+}
+
+function formatChannelNameResultLabel(result) {
+  return CHANNEL_NAME_RESULT_LABELS[result] || '同步完成'
 }
 
 function buildCheckSummary(data) {
@@ -172,9 +250,34 @@ function buildCheckSummary(data) {
   return data?.message || '检查已完成。'
 }
 
-async function scrollChannelCheckLogsToBottom() {
+function buildChannelNameSyncSummary(data) {
+  const previousName = formatChannelDisplayName(data?.previous_channel_name || '')
+  const currentName = formatChannelDisplayName(data?.current_channel_name || '')
+
+  if (data?.result === 'updated') {
+    return `频道名称已从${previousName}同步为${currentName}。`
+  }
+  if (data?.result === 'unchanged') {
+    return `频道名称未变化，当前仍为${currentName}。`
+  }
+  if (data?.result === 'not_found') {
+    return '上游渠道列表中未找到这个频道，名称保持本地值不变。'
+  }
+  if (data?.result === 'request_failed') {
+    return data?.message || '渠道列表请求失败，本地名称未被修改。'
+  }
+  return data?.message || '频道名称同步完成。'
+}
+
+function nameChipClass(type) {
+  if (type === 'success') return 'is-active'
+  if (type === 'error') return 'is-disabled'
+  return 'is-neutral'
+}
+
+async function scrollLogListToBottom(listRef) {
   await nextTick()
-  const el = channelCheckLogListRef.value
+  const el = listRef.value
   if (!el) return
   el.scrollTop = el.scrollHeight
 }
@@ -250,7 +353,7 @@ async function handleCheckChannelStatus() {
               summary: buildCheckSummary(data),
             }
           ].slice(-200)
-          void scrollChannelCheckLogsToBottom()
+          void scrollLogListToBottom(channelCheckLogListRef)
           return
         }
 
@@ -292,9 +395,97 @@ async function handleCheckChannelStatus() {
   }
 }
 
+async function handleSyncChannelNames() {
+  if (channelNameSyncing.value) return
+  channelNameSyncController?.abort()
+  channelNameSyncController = new AbortController()
+  channelNameSyncing.value = true
+  channelNameSyncResult.value = { type: 'info', message: '正在建立同步连接…' }
+  channelNameSyncLogs.value = []
+  try {
+    await streamSyncChannelNames({
+      signal: channelNameSyncController.signal,
+      onEvent: ({ event, data }) => {
+        if (event === 'queued') {
+          channelNameSyncResult.value = { type: 'info', message: data?.message || '同步任务已创建，等待执行' }
+          return
+        }
+
+        if (event === 'started') {
+          const total = data?.total ?? 0
+          channelNameSyncResult.value = {
+            type: 'info',
+            message: total > 0 ? `开始同步，共 ${total} 个频道` : (data?.message || '开始同步频道名称'),
+          }
+          return
+        }
+
+        if (event === 'progress') {
+          const updated = data?.updated ?? 0
+          const index = data?.index ?? 0
+          const total = data?.total ?? 0
+          channelNameSyncResult.value = {
+            type: 'info',
+            message: `正在同步 ${index} / ${total} 个频道，已更新 ${updated} 个名称`,
+          }
+          channelNameSyncLogs.value = [
+            ...channelNameSyncLogs.value,
+            {
+              id: `${Date.now()}-${index}-${data?.channel_id || 'unknown'}`,
+              type: resultTone(data?.result),
+              platform: data?.platform || '',
+              previousChannelName: data?.previous_channel_name || '',
+              currentChannelName: data?.current_channel_name || '',
+              resultLabel: formatChannelNameResultLabel(data?.result),
+              summary: buildChannelNameSyncSummary(data),
+            }
+          ].slice(-200)
+          void scrollLogListToBottom(channelNameSyncLogListRef)
+          return
+        }
+
+        if (event === 'completed' || event === 'aborted') {
+          const checked = data?.checked ?? 0
+          const total = data?.total ?? checked
+          const updated = data?.updated ?? 0
+          channelNameSyncResult.value = {
+            type: event === 'completed' ? 'success' : 'error',
+            message: event === 'completed'
+              ? (
+                checked === 0
+                  ? '暂无内部绑定频道，无需同步'
+                  : updated === 0
+                    ? `已同步 ${checked} 个频道，名称均为最新`
+                    : `已同步 ${checked} / ${total} 个频道，更新 ${updated} 个名称`
+              )
+              : `同步已中断，已处理 ${checked} / ${total} 个频道`,
+          }
+          return
+        }
+
+        if (event === 'error') {
+          throw new Error(data?.message || '频道名称同步失败，请稍后重试')
+        }
+      }
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      return
+    }
+    channelNameSyncResult.value = {
+      type: 'error',
+      message: e?.message || e?.response?.data?.detail || '频道名称同步失败，请稍后重试',
+    }
+  } finally {
+    channelNameSyncing.value = false
+    channelNameSyncController = null
+  }
+}
+
 onMounted(loadSystemSettings)
 onBeforeUnmount(() => {
   channelCheckController?.abort()
+  channelNameSyncController?.abort()
 })
 </script>
 
@@ -522,6 +713,13 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
+.check-log-name-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .check-log-arrow {
   color: #94a3b8;
   font-size: 13px;
@@ -553,6 +751,37 @@ onBeforeUnmount(() => {
 }
 
 .check-status-chip.is-ghost {
+  background: rgba(226, 232, 240, 0.7);
+  color: #64748b;
+}
+
+.check-name-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.check-name-chip.is-active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.check-name-chip.is-disabled {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.check-name-chip.is-neutral {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.check-name-chip.is-ghost {
   background: rgba(226, 232, 240, 0.7);
   color: #64748b;
 }

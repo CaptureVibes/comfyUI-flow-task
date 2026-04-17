@@ -57,14 +57,14 @@ function parseSseEvent(rawEvent) {
   return { event, data }
 }
 
-export async function streamCheckChannelStatus({ onEvent, signal } = {}) {
+async function streamSse(path, { onEvent, signal } = {}) {
   const token = getIframeToken() || localStorage.getItem(TOKEN_KEY) || ''
   const headers = { Accept: 'text/event-stream' }
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
 
-  const response = await fetch(`${http.defaults.baseURL}/settings/check-channel-status/stream`, {
+  const response = await fetch(`${http.defaults.baseURL}${path}`, {
     method: 'GET',
     headers,
     signal
@@ -131,6 +131,14 @@ export async function streamCheckChannelStatus({ onEvent, signal } = {}) {
       onEvent?.(parsed)
     }
   }
+}
+
+export async function streamCheckChannelStatus(options = {}) {
+  return await streamSse('/settings/check-channel-status/stream', options)
+}
+
+export async function streamSyncChannelNames(options = {}) {
+  return await streamSse('/settings/sync-channel-names/stream', options)
 }
 
 export async function fetchCandidateConfig() {
