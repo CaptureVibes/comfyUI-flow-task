@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -42,6 +43,10 @@ _last_fire_key: str | None = None
 
 # 手动触发时使用的锁，防止手动与自动并发
 _run_lock = asyncio.Lock()
+
+
+ProgressCallback = Callable[[dict], Awaitable[None]]
+DisconnectChecker = Callable[[], Awaitable[bool]]
 
 
 def start_channel_status_poller() -> None:
@@ -72,10 +77,13 @@ async def stop_channel_status_poller() -> None:
     logger.info("【频道状态轮询】已停止")
 
 
-async def run_channel_status_check() -> dict:
+async def run_channel_status_check(
+    progress_callback: ProgressCallback | None = None,
+    should_stop: DisconnectChecker | None = None,
+) -> dict:
     """手动触发一次完整检查，返回 {"checked": N, "changed": N}。"""
     async with _run_lock:
-        return await _run_once()
+        return await _run_once(progress_callback=progress_callback, should_stop=should_stop)
 
 
 async def _poller_loop(stop_event: asyncio.Event) -> None:
@@ -124,7 +132,16 @@ async def _check_and_maybe_fire() -> None:
         await _run_once()
 
 
-async def _run_once() -> dict:
+async def _emit_progress(progress_callback: ProgressCallback | None, payload: dict) -> None:
+    if progress_callback is not None:
+        await progress_callback(payload)
+
+
+async def _run_once(
+    *,
+    progress_callback: ProgressCallback | None = None,
+    should_stop: DisconnectChecker | None = None,
+) -> dict:
     async with SessionLocal() as session:
         result = await session.execute(
             select(AccountChannelReservation).where(
@@ -135,49 +152,119 @@ async def _run_once() -> dict:
         )
         reservations = list(result.scalars().all())
 
-    checked = len(reservations)
+    total = len(reservations)
+    processed = 0
+    checked = 0
+    changed = 0
+    aborted = False
+
+    await _emit_progress(progress_callback, {
+        "event": "started",
+        "total": total,
+        "message": "开始检查频道授权状态",
+    })
+
     if not reservations:
         logger.info("【频道状态轮询】无绑定频道，跳过")
-        return {"checked": 0, "changed": 0}
+        result = {"checked": 0, "changed": 0, "total": 0, "aborted": False}
+        await _emit_progress(progress_callback, {
+            "event": "completed",
+            **result,
+            "message": "暂无绑定频道，无需检查",
+        })
+        return result
 
-    logger.info("【频道状态轮询】开始检查 %d 条绑定频道", checked)
+    logger.info("【频道状态轮询】开始检查 %d 条绑定频道", total)
 
     base_url = settings.open_api_base_url.rstrip("/")
-    changed = 0
 
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
         for index, r in enumerate(reservations):
-            new_status = await _check_one(client, base_url, r)
-            if new_status is None:
-                pass  # 请求失败或 NOT_FOUND，保持原状
-            elif new_status != r.channel_status:
+            if should_stop is not None and await should_stop():
+                aborted = True
+                logger.info(
+                    "【频道状态轮询】客户端已断开，提前结束，已处理 %d/%d 条",
+                    processed,
+                    total,
+                )
+                break
+
+            previous_status = r.channel_status
+            check_result = await _check_one(client, base_url, r)
+            new_status = check_result["new_status"]
+            result_type = check_result["result"]
+            current_status = previous_status
+
+            if new_status is not None and new_status != previous_status:
                 async with SessionLocal() as session:
                     obj = await session.get(AccountChannelReservation, r.id)
                     if obj is not None:
                         obj.channel_status = new_status
                         await session.commit()
-                logger.info(
-                    "【频道状态轮询】%s(%s) channel_status: %s → %s",
-                    r.platform,
-                    r.channel_id,
-                    r.channel_status,
-                    new_status,
-                )
-                changed += 1
+                        current_status = new_status
+                        logger.info(
+                            "【频道状态轮询】%s(%s) channel_status: %s → %s",
+                            r.platform,
+                            r.channel_id,
+                            previous_status,
+                            new_status,
+                        )
+                        changed += 1
+                        result_type = "updated"
+                    else:
+                        result_type = "request_failed"
+            elif new_status is not None:
+                result_type = "unchanged"
+
+            processed = index + 1
+            checked = processed
+
+            if result_type == "updated":
+                message = f"{r.platform}({r.channel_id}) 状态已更新为 {current_status}"
+            elif result_type == "unchanged":
+                message = f"{r.platform}({r.channel_id}) 状态正常，保持 {current_status}"
+            elif result_type == "not_found":
+                message = f"{r.platform}({r.channel_id}) 未查到授权状态，保持 {current_status}"
+            else:
+                message = f"{r.platform}({r.channel_id}) 查询失败，保持 {current_status}"
+
+            await _emit_progress(progress_callback, {
+                "event": "progress",
+                "index": processed,
+                "total": total,
+                "changed": changed,
+                "platform": r.platform,
+                "channel_id": r.channel_id,
+                "previous_status": previous_status,
+                "current_status": current_status,
+                "authorization_status": check_result["authorization_status"],
+                "result": result_type,
+                "message": message,
+            })
 
             # authorization 接口限流：串行调用，最多 1 秒 1 次
-            if index < len(reservations) - 1:
+            if index < len(reservations) - 1 and not aborted:
                 await asyncio.sleep(_REQUEST_RATE_LIMIT_SEC)
 
     logger.info("【频道状态轮询】本轮完成，共检查 %d 条，更新 %d 条", checked, changed)
-    return {"checked": checked, "changed": changed}
+    result = {"checked": checked, "changed": changed, "total": total, "aborted": aborted}
+    await _emit_progress(progress_callback, {
+        "event": "completed" if not aborted else "aborted",
+        **result,
+        "message": (
+            f"已检查 {checked} / {total} 个频道，{changed} 个状态已更新"
+            if total
+            else "暂无绑定频道，无需检查"
+        ),
+    })
+    return result
 
 
 async def _check_one(
     client: httpx.AsyncClient,
     base_url: str,
     r: AccountChannelReservation,
-) -> str | None:
+) -> dict:
     try:
         resp = await client.get(
             f"{base_url}/open-api/v1/channels/authorization",
@@ -193,10 +280,26 @@ async def _check_one(
             r.channel_id,
             exc,
         )
-        return None
+        return {
+            "result": "request_failed",
+            "new_status": None,
+            "authorization_status": None,
+        }
 
     if status_val == "DISABLED":
-        return "disabled"
+        return {
+            "result": "resolved",
+            "new_status": "disabled",
+            "authorization_status": status_val,
+        }
     if status_val == "ACTIVE":
-        return "active"
-    return None
+        return {
+            "result": "resolved",
+            "new_status": "active",
+            "authorization_status": status_val,
+        }
+    return {
+        "result": "not_found",
+        "new_status": None,
+        "authorization_status": status_val or None,
+    }

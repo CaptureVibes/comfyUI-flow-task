@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+import json
+import logging
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +21,7 @@ from app.services.pipeline_settings_service import get_or_create_pipeline_settin
 from app.services.system_settings_service import get_or_create_system_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+logger = logging.getLogger("app.settings")
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +62,69 @@ async def put_system_settings(
 async def trigger_check_channel_status(
     token: TokenData = Depends(require_current_user),
 ) -> dict:
-    """立即执行一次频道授权状态检查（通常每天北京时间 10:00 自动触发）。"""
+    """立即执行一次频道授权状态检查（通常每小时自动触发一次）。"""
     result = await run_channel_status_check()
     return {"status": "ok", "checked": result["checked"], "changed": result["changed"]}
+
+
+def _format_sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.get("/check-channel-status/stream")
+async def stream_check_channel_status(
+    request: Request,
+    token: TokenData = Depends(require_current_user),
+) -> StreamingResponse:
+    """以 SSE 方式流式执行频道授权状态检查。"""
+    async def event_stream():
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def emit(event: str, payload: dict) -> None:
+            await queue.put(_format_sse(event, payload))
+
+        async def run_check() -> None:
+            try:
+                await emit("queued", {"message": "检查任务已创建，等待执行"})
+                await run_channel_status_check(
+                    progress_callback=lambda payload: emit(payload["event"], payload),
+                    should_stop=request.is_disconnected,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Streamed channel status check failed")
+                await emit("error", {"message": "频道状态检查失败，请稍后重试"})
+            finally:
+                await queue.put(None)
+
+        worker = asyncio.create_task(run_check())
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+                if await request.is_disconnected():
+                    break
+        finally:
+            if not worker.done():
+                worker.cancel()
+                try:
+                    await worker
+                except asyncio.CancelledError:
+                    pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

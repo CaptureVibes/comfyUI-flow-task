@@ -32,7 +32,7 @@
           <div class="setting-label">
             <span class="setting-name">平台频道授权状态检查</span>
             <span class="setting-desc">
-              自动每天北京时间 10:00 执行，查询所有已绑定频道的授权状态，将被禁用的频道标记为「已禁用」。
+              自动每小时执行一次，手动触发时会实时推送每个频道的检查结果。
             </span>
           </div>
           <button
@@ -53,6 +53,16 @@
           </svg>
           {{ channelCheckResult.message }}
         </div>
+        <div v-if="channelCheckLogs.length" class="check-log-list">
+          <div
+            v-for="item in channelCheckLogs"
+            :key="item.id"
+            class="check-log-item"
+            :class="item.type"
+          >
+            {{ item.message }}
+          </div>
+        </div>
       </div>
 
       <el-divider />
@@ -61,15 +71,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchSystemSettings, updateSystemSettings, triggerCheckChannelStatus } from '../api/settings'
+import { fetchSystemSettings, streamCheckChannelStatus, updateSystemSettings } from '../api/settings'
 
 const systemSettings = ref({ use_seedance_api: false })
 const systemLoading = ref(false)
 
 const channelChecking = ref(false)
 const channelCheckResult = ref(null)
+const channelCheckLogs = ref([])
+let channelCheckController = null
 
 async function loadSystemSettings() {
   systemLoading.value = true
@@ -98,31 +110,90 @@ async function handleSystemSave() {
 
 async function handleCheckChannelStatus() {
   if (channelChecking.value) return
+  channelCheckController?.abort()
+  channelCheckController = new AbortController()
   channelChecking.value = true
-  channelCheckResult.value = null
+  channelCheckResult.value = { type: 'info', message: '正在建立检查连接…' }
+  channelCheckLogs.value = []
   try {
-    const res = await triggerCheckChannelStatus()
-    const changed = res.changed ?? 0
-    const checked = res.checked ?? 0
-    channelCheckResult.value = {
-      type: 'success',
-      message: checked === 0
-        ? '暂无绑定频道，无需检查'
-        : changed === 0
-          ? `已检查 ${checked} 个频道，全部状态正常`
-          : `已检查 ${checked} 个频道，${changed} 个状态已更新`,
-    }
+    await streamCheckChannelStatus({
+      signal: channelCheckController.signal,
+      onEvent: ({ event, data }) => {
+        if (event === 'queued') {
+          channelCheckResult.value = { type: 'info', message: data?.message || '检查任务已创建，等待执行' }
+          return
+        }
+
+        if (event === 'started') {
+          const total = data?.total ?? 0
+          channelCheckResult.value = {
+            type: 'info',
+            message: total > 0 ? `开始检查，共 ${total} 个频道` : (data?.message || '开始检查频道授权状态'),
+          }
+          return
+        }
+
+        if (event === 'progress') {
+          const changed = data?.changed ?? 0
+          const index = data?.index ?? 0
+          const total = data?.total ?? 0
+          channelCheckResult.value = {
+            type: 'info',
+            message: `正在检查 ${index} / ${total} 个频道，已更新 ${changed} 个状态`,
+          }
+          channelCheckLogs.value = [
+            ...channelCheckLogs.value,
+            {
+              id: `${Date.now()}-${index}-${data?.channel_id || 'unknown'}`,
+              type: data?.result === 'updated' ? 'success' : data?.result === 'request_failed' ? 'error' : 'info',
+              message: data?.message || `已检查 ${data?.platform || 'unknown'}(${data?.channel_id || '-'})`,
+            }
+          ].slice(-200)
+          return
+        }
+
+        if (event === 'completed' || event === 'aborted') {
+          const checked = data?.checked ?? 0
+          const total = data?.total ?? checked
+          const changed = data?.changed ?? 0
+          channelCheckResult.value = {
+            type: event === 'completed' ? 'success' : 'error',
+            message: event === 'completed'
+              ? (
+                checked === 0
+                  ? '暂无绑定频道，无需检查'
+                  : changed === 0
+                    ? `已检查 ${checked} 个频道，全部状态正常`
+                    : `已检查 ${checked} / ${total} 个频道，${changed} 个状态已更新`
+              )
+              : `检查已中断，已处理 ${checked} / ${total} 个频道`,
+          }
+          return
+        }
+
+        if (event === 'error') {
+          throw new Error(data?.message || '检查失败，请稍后重试')
+        }
+      }
+    })
   } catch (e) {
+    if (e?.name === 'AbortError') {
+      return
+    }
     channelCheckResult.value = {
       type: 'error',
-      message: e?.response?.data?.detail || '检查失败，请稍后重试',
+      message: e?.message || e?.response?.data?.detail || '检查失败，请稍后重试',
     }
   } finally {
     channelChecking.value = false
+    channelCheckController = null
   }
 }
 
 onMounted(loadSystemSettings)
+onBeforeUnmount(() => {
+  channelCheckController?.abort()
+})
 </script>
 
 <style scoped>
@@ -227,10 +298,50 @@ onMounted(loadSystemSettings)
   border: 1px solid #bbf7d0;
   color: #15803d;
 }
+.check-result.info {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #4338ca;
+}
 .check-result.error {
   background: #fff1f2;
   border: 1px solid #fda4af;
   color: #be123c;
+}
+
+.check-log-list {
+  margin-top: 10px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.check-log-item {
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #334155;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.check-log-item:last-child {
+  border-bottom: 0;
+}
+
+.check-log-item.success {
+  background: rgba(240, 253, 244, 0.8);
+  color: #166534;
+}
+
+.check-log-item.error {
+  background: rgba(255, 241, 242, 0.85);
+  color: #be123c;
+}
+
+.check-log-item.info {
+  color: #334155;
 }
 
 .evo-pipeline-hint {
