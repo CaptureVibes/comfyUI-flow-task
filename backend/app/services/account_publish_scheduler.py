@@ -371,8 +371,6 @@ async def _build_channels(account_id: uuid.UUID) -> list[dict]:
         )).scalars().all()
     result = []
     for b in bindings:
-        entry = {"platform": b.platform, "channel_id": b.channel_id}
-        if b.channel_source:
-            entry["channel_source"] = b.channel_source
+        entry = {"platform": b.platform, "channel_id": b.channel_id, "channel_source": b.channel_source or b.source or "openapi"}
         result.append(entry)
     return result
