@@ -137,6 +137,94 @@ async def _emit_progress(progress_callback: ProgressCallback | None, payload: di
         await progress_callback(payload)
 
 
+def _authorization_status_to_channel_status(status_val: str) -> str | None:
+    if status_val == "DISABLED":
+        return "disabled"
+    if status_val == "ACTIVE":
+        return "active"
+    return None
+
+
+async def query_channel_authorization(
+    platform: str,
+    channel_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    base_url: str | None = None,
+) -> dict:
+    """查询单个频道授权状态，返回与 _check_one 一致的结构。"""
+    if not channel_id:
+        return {
+            "result": "not_found",
+            "new_status": None,
+            "authorization_status": None,
+        }
+
+    base_url = (base_url or settings.open_api_base_url).rstrip("/")
+    owns_client = client is None
+    client_obj = client or httpx.AsyncClient(timeout=_REQUEST_TIMEOUT)
+
+    try:
+        resp = await client_obj.get(
+            f"{base_url}/open-api/v1/channels/authorization",
+            params={"platform": platform, "channel_id": channel_id},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        status_val: str = (data.get("data") or {}).get("status", "")
+    except Exception as exc:
+        logger.warning(
+            "【频道状态轮询】查询 %s(%s) 失败: %s",
+            platform,
+            channel_id,
+            exc,
+        )
+        return {
+            "result": "request_failed",
+            "new_status": None,
+            "authorization_status": None,
+        }
+    finally:
+        if owns_client:
+            await client_obj.aclose()
+
+    new_status = _authorization_status_to_channel_status(status_val)
+    if new_status is not None:
+        return {
+            "result": "resolved",
+            "new_status": new_status,
+            "authorization_status": status_val,
+        }
+    return {
+        "result": "not_found",
+        "new_status": None,
+        "authorization_status": status_val or None,
+    }
+
+
+async def refresh_reservation_channel_status(
+    reservation: AccountChannelReservation,
+    *,
+    client: httpx.AsyncClient | None = None,
+    base_url: str | None = None,
+) -> str | None:
+    """绑定后立刻同步一次频道状态；仅对 openapi 来源生效。"""
+    source = str(reservation.channel_source or reservation.source or "openapi")
+    if source != "openapi" or not reservation.channel_id:
+        return None
+
+    result = await query_channel_authorization(
+        reservation.platform,
+        reservation.channel_id,
+        client=client,
+        base_url=base_url,
+    )
+    if result["new_status"] is not None:
+        reservation.channel_status = result["new_status"]
+        return result["new_status"]
+    return None
+
+
 async def _run_once(
     *,
     progress_callback: ProgressCallback | None = None,
@@ -266,41 +354,9 @@ async def _check_one(
     base_url: str,
     r: AccountChannelReservation,
 ) -> dict:
-    try:
-        resp = await client.get(
-            f"{base_url}/open-api/v1/channels/authorization",
-            params={"platform": r.platform, "channel_id": r.channel_id},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        status_val: str = (data.get("data") or {}).get("status", "")
-    except Exception as exc:
-        logger.warning(
-            "【频道状态轮询】查询 %s(%s) 失败: %s",
-            r.platform,
-            r.channel_id,
-            exc,
-        )
-        return {
-            "result": "request_failed",
-            "new_status": None,
-            "authorization_status": None,
-        }
-
-    if status_val == "DISABLED":
-        return {
-            "result": "resolved",
-            "new_status": "disabled",
-            "authorization_status": status_val,
-        }
-    if status_val == "ACTIVE":
-        return {
-            "result": "resolved",
-            "new_status": "active",
-            "authorization_status": status_val,
-        }
-    return {
-        "result": "not_found",
-        "new_status": None,
-        "authorization_status": status_val or None,
-    }
+    return await query_channel_authorization(
+        r.platform,
+        r.channel_id or "",
+        client=client,
+        base_url=base_url,
+    )

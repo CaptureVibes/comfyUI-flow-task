@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.account import Account
 from app.models.account_channel_reservation import AccountChannelReservation
+from app.services.channel_status_poller import refresh_reservation_channel_status
 from app.schemas.account import (
     ExternalBindOpenAPIChannelBody,
     ExternalBindOpenAPIChannelResponse,
@@ -234,6 +235,7 @@ async def bind_openapi_channel_openapi(
         )
 
     _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
+    await refresh_reservation_channel_status(reservation)
     await session.commit()
     rows = (
         await session.execute(

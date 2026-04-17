@@ -42,6 +42,7 @@ from app.services.account_service import (
     list_accounts,
     patch_account,
 )
+from app.services.channel_status_poller import refresh_reservation_channel_status
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 logger = logging.getLogger("app.accounts")
@@ -178,6 +179,7 @@ async def _sync_channel_reservations_from_bindings(
             # bound 记录受保护，跳过修改
             continue
         _apply_channel_binding(reservation, binding, now=now)
+        await refresh_reservation_channel_status(reservation)
 
     for platform, reservation in existing_by_platform.items():
         if platform not in desired and reservation.status == "bound" and reservation.confirmed_at is None:
@@ -498,6 +500,7 @@ async def bind_openapi_channel(
             detail=f"该账号 {platform} 平台已绑定，不可修改；请先调用 release 释放",
         )
     _apply_channel_binding(reservation, binding, now=now)
+    await refresh_reservation_channel_status(reservation)
 
     await session.commit()
     await session.refresh(account)
