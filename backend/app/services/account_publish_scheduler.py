@@ -334,6 +334,10 @@ async def _publish_sub_task(
             return
 
         service = VideoPublicationService(session)
+        logger.info(
+            "【定时发布】子任务 %s（账号：%s）调用 create_publication，channels=%s，title=%r",
+            sub_task_id, account_name, channels, title,
+        )
         try:
             publication = await service.create_publication(VideoPublicationCreate(
                 sub_task_id=sub.id,
