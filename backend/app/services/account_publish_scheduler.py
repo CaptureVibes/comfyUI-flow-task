@@ -34,10 +34,6 @@ _TZ = pytz.timezone("Asia/Shanghai")
 _scheduler_task: asyncio.Task | None = None
 _scheduler_stop_event: asyncio.Event | None = None
 
-# account_id -> (cron_fire_key, fire_at_utc)
-_pending_fire: dict[uuid.UUID, tuple[str, datetime]] = {}
-
-
 def start_account_publish_scheduler() -> None:
     global _scheduler_task, _scheduler_stop_event
     if _scheduler_task is not None and not _scheduler_task.done():
@@ -122,19 +118,27 @@ async def _process_account(account: Account, *, now_utc: datetime, now_local: da
 
     account_id = account.id
 
-    # ── 检查是否有待触发的延迟任务 ────────────────────────────────────────────
-    if account_id in _pending_fire:
-        fire_key, fire_at = _pending_fire[account_id]
-        if now_utc >= fire_at:
-            del _pending_fire[account_id]
+    # ── 检查数据库里是否有待执行的延迟任务 ───────────────────────────────────
+    scheduled_at = account.publish_scheduled_at
+    if scheduled_at is not None:
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        if now_utc >= scheduled_at:
             logger.info(
-                "【定时发布】账号 %s（%s）随机延迟结束，开始发布（Cron触发点：%s，北京时间 %s）",
-                account_id, account.account_name, fire_key,
-                now_local.strftime("%H:%M:%S"),
+                "【定时发布】账号 %s（%s）随机延迟结束，开始发布（计划时间：%s UTC）",
+                account_id, account.account_name, scheduled_at.strftime("%H:%M:%S"),
             )
+            # 清空 scheduled_at，写入 last_triggered_at
+            async with SessionLocal() as session:
+                acct = await session.get(Account, account_id)
+                if acct is None:
+                    return
+                acct.publish_scheduled_at = None
+                acct.publish_last_triggered_at = now_utc
+                await session.commit()
             await _do_publish(account)
         else:
-            remaining = (fire_at - now_utc).total_seconds()
+            remaining = (scheduled_at - now_utc).total_seconds()
             logger.debug(
                 "【定时发布】账号 %s（%s）等待随机延迟，剩余 %.0f 秒",
                 account_id, account.account_name, remaining,
@@ -153,7 +157,7 @@ async def _process_account(account: Account, *, now_utc: datetime, now_local: da
         account_id, account.account_name, cron_expr, prev_fire_key, seconds_since_fire,
     )
 
-    # 触发点必须在 poll 窗口内（0 ~ 90s）
+    # 触发点必须在 poll 窗口内
     if seconds_since_fire < 0 or seconds_since_fire >= _POLL_INTERVAL_SECONDS * 1.5:
         return
 
@@ -175,21 +179,17 @@ async def _process_account(account: Account, *, now_utc: datetime, now_local: da
         account_id, account.account_name, prev_fire_key, seconds_since_fire,
     )
 
-    # ── 写入 last_triggered_at（防止同一触发点重复安排）────────────────────
-    async with SessionLocal() as session:
-        acct = await session.get(Account, account_id)
-        if acct is None:
-            return
-        acct.publish_last_triggered_at = now_utc
-        await session.commit()
-    account.publish_last_triggered_at = now_utc
-
-    # ── 随机延迟 ─────────────────────────────────────────────────────────────
+    # ── 随机延迟：计算 fire_at，写入数据库 ──────────────────────────────────
     window_minutes = account.publish_window_minutes or 0
     if window_minutes > 0:
         delay_seconds = random.randint(0, window_minutes * 60)
         fire_at = now_utc + timedelta(seconds=delay_seconds)
-        _pending_fire[account_id] = (prev_fire_key, fire_at)
+        async with SessionLocal() as session:
+            acct = await session.get(Account, account_id)
+            if acct is None:
+                return
+            acct.publish_scheduled_at = fire_at
+            await session.commit()
         logger.info(
             "【定时发布】账号 %s（%s）设置随机延迟 %d 秒（窗口 %d 分钟），将于 %s UTC 发布",
             account_id, account.account_name,
@@ -197,6 +197,13 @@ async def _process_account(account: Account, *, now_utc: datetime, now_local: da
             fire_at.strftime("%H:%M:%S"),
         )
     else:
+        # 无延迟：直接写 last_triggered_at 并发布
+        async with SessionLocal() as session:
+            acct = await session.get(Account, account_id)
+            if acct is None:
+                return
+            acct.publish_last_triggered_at = now_utc
+            await session.commit()
         logger.info("【定时发布】账号 %s（%s）无随机延迟，立即开始发布", account_id, account.account_name)
         await _do_publish(account)
 

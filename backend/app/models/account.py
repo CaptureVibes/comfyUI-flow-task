@@ -44,6 +44,7 @@ class Account(Base):
     publish_window_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     publish_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     publish_last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    publish_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
