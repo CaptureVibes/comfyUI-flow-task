@@ -805,8 +805,12 @@ async function handlePlatformChange(binding) {
   const newPlatform = binding.platform
 
   if (newPlatform && newPlatform !== oldPlatform) {
-    const duplicated = usedPlatformSet.value.has(newPlatform) && newPlatform !== oldPlatform
-    if (duplicated) {
+    // 排除当前 binding 自身占用的 oldPlatform，再检查新平台是否被其他 binding 占用
+    const otherPlatforms = new Set([
+      ...form.social_bindings.filter(b => b !== binding).map(b => b.platform),
+      ...lockedReservations.value.map(r => r.platform),
+    ].filter(Boolean))
+    if (otherPlatforms.has(newPlatform)) {
       ElMessage.warning(`${platformLabel(newPlatform)} 已绑定，每个平台只能绑定一个频道`)
       binding.platform = oldPlatform || ''
       return
@@ -850,7 +854,7 @@ async function addBinding() {
   form.social_bindings.push({
     platform: nextPlatform,
     channel_source: 'openapi',
-    _prevPlatform: '',
+    _prevPlatform: nextPlatform,
     channel_id: '',
     channel_name: '',
     username: ''
