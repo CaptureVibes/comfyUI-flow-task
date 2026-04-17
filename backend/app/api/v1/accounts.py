@@ -253,10 +253,29 @@ async def list_accounts_endpoint(
     page_size: int = Query(20, ge=1, le=9999),
     flag_id: uuid.UUID | None = Query(None),
     search: str | None = Query(None),
+    sort_by: str | None = Query(None),
+    sort_order: str | None = Query(None),
+    gender: str | None = Query(None),
+    account_type: str | None = Query(None),
+    face_mode: str | None = Query(None),
+    platform_binding_status: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
-    items, total = await list_accounts(session, page=page, page_size=page_size, owner_id=owner_id, flag_id=flag_id, search=search or None)
+    items, total = await list_accounts(
+        session,
+        page=page,
+        page_size=page_size,
+        owner_id=owner_id,
+        flag_id=flag_id,
+        search=search or None,
+        sort_by=sort_by or None,
+        sort_order=sort_order or None,
+        gender=gender or None,
+        account_type=account_type or None,
+        face_mode=face_mode or None,
+        platform_binding_status=platform_binding_status or None,
+    )
     # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]
     blogger_map: dict[uuid.UUID, list[BoundBloggerRead]] = {aid: [] for aid in account_ids}

@@ -3,12 +3,27 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import Float, delete, func, nullslast, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
+from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.flag import AccountFlag
 from app.schemas.account import AccountCreate, AccountPatch
+
+# Sortable columns backed by performance_snapshot JSON keys
+_SNAPSHOT_SORT_FIELDS = {
+    "avg_views": "performance_snapshot->>'avg_views'",
+    "avg_like_rate": "performance_snapshot->>'avg_like_rate'",
+    "latest_video_published_at": "performance_snapshot->>'latest_video_published_at'",
+    "followers_count": "performance_snapshot->>'followers_count'",
+    "total_views": "performance_snapshot->>'total_views'",
+}
+
+# Sortable columns on the Account table itself
+_TABLE_SORT_FIELDS = {
+    "created_at": Account.created_at,
+}
 
 
 async def create_account(
@@ -42,23 +57,73 @@ async def list_accounts(
     owner_id: UUID | None = None,
     flag_id: UUID | None = None,
     search: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+    gender: str | None = None,
+    account_type: str | None = None,
+    face_mode: str | None = None,
+    platform_binding_status: str | None = None,
 ) -> tuple[list[Account], int]:
-    stmt = select(Account).order_by(Account.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    # ── Determine sort order ──────────────────────────────────────────────────
+    order_desc = (sort_order or "desc").lower() == "desc"
+
+    if sort_by and sort_by in _SNAPSHOT_SORT_FIELDS:
+        json_expr = _SNAPSHOT_SORT_FIELDS[sort_by]
+        # Extract the raw JSON text value via a literal column expression
+        raw_col = text(json_expr)
+        if sort_by in ("avg_views", "avg_like_rate", "followers_count", "total_views"):
+            # Cast to float so numeric ordering works correctly
+            typed_col = func.cast(func.nullif(raw_col, ""), Float)
+        else:
+            # Date strings in ISO format sort correctly as text
+            typed_col = func.nullif(raw_col, "")
+        order_clause = nullslast(typed_col.desc() if order_desc else typed_col.asc())
+    elif sort_by and sort_by in _TABLE_SORT_FIELDS:
+        col = _TABLE_SORT_FIELDS[sort_by]
+        order_clause = col.desc() if order_desc else col.asc()
+    else:
+        order_clause = Account.created_at.desc()
+
+    stmt = select(Account).order_by(order_clause).offset((page - 1) * page_size).limit(page_size)
     total_stmt = select(func.count(Account.id))
+
+    # ── Filters ───────────────────────────────────────────────────────────────
     if owner_id is not None:
         stmt = stmt.where(Account.owner_id == owner_id)
         total_stmt = total_stmt.where(Account.owner_id == owner_id)
     if flag_id is not None:
-        stmt = stmt.where(Account.id.in_(
-            select(AccountFlag.account_id).where(AccountFlag.flag_id == flag_id)
-        ))
-        total_stmt = total_stmt.where(Account.id.in_(
-            select(AccountFlag.account_id).where(AccountFlag.flag_id == flag_id)
-        ))
+        flag_subq = select(AccountFlag.account_id).where(AccountFlag.flag_id == flag_id)
+        stmt = stmt.where(Account.id.in_(flag_subq))
+        total_stmt = total_stmt.where(Account.id.in_(flag_subq))
     if search:
         pattern = f"%{search}%"
         stmt = stmt.where(Account.account_name.ilike(pattern))
         total_stmt = total_stmt.where(Account.account_name.ilike(pattern))
+    if gender:
+        stmt = stmt.where(Account.gender == gender)
+        total_stmt = total_stmt.where(Account.gender == gender)
+    if account_type:
+        stmt = stmt.where(Account.account_type == account_type)
+        total_stmt = total_stmt.where(Account.account_type == account_type)
+    if face_mode:
+        stmt = stmt.where(Account.face_mode == face_mode)
+        total_stmt = total_stmt.where(Account.face_mode == face_mode)
+    if platform_binding_status:
+        # "bound" = has at least one reservation with status='bound'
+        # "confirmed" = has at least one reservation with status='confirmed'
+        # "unbound" = has no reservations at all
+        if platform_binding_status == "unbound":
+            bound_subq = select(AccountChannelReservation.account_id)
+            stmt = stmt.where(~Account.id.in_(bound_subq))
+            total_stmt = total_stmt.where(~Account.id.in_(bound_subq))
+        elif platform_binding_status in ("bound", "confirmed", "reserved"):
+            status_subq = (
+                select(AccountChannelReservation.account_id)
+                .where(AccountChannelReservation.status == platform_binding_status)
+            )
+            stmt = stmt.where(Account.id.in_(status_subq))
+            total_stmt = total_stmt.where(Account.id.in_(status_subq))
+
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)
     return list(rows), total

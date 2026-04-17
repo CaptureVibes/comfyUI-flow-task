@@ -499,6 +499,38 @@
         </button>
       </div>
 
+      <!-- 字段筛选行 -->
+      <div class="al-col-filters">
+        <select class="al-col-filter-select" v-model="filterGender" @change="onFilterChange">
+          <option value="">性别 · 全部</option>
+          <option value="female">女</option>
+          <option value="male">男</option>
+          <option value="unisex">中性</option>
+        </select>
+        <select class="al-col-filter-select" v-model="filterAccountType" @change="onFilterChange">
+          <option value="">类型 · 全部</option>
+          <option value="exclusive">独享号</option>
+          <option value="shared">共享号</option>
+          <option value="persona">人设号</option>
+        </select>
+        <select class="al-col-filter-select" v-model="filterFaceMode" @change="onFilterChange">
+          <option value="">面孔 · 全部</option>
+          <option value="face">人脸</option>
+          <option value="no_face">非人脸</option>
+        </select>
+        <select class="al-col-filter-select" v-model="filterPlatformBindingStatus" @change="onFilterChange">
+          <option value="">平台绑定 · 全部</option>
+          <option value="bound">已绑定</option>
+          <option value="confirmed">已确认</option>
+          <option value="reserved">已预留</option>
+          <option value="unbound">未绑定</option>
+        </select>
+        <button v-if="hasActiveColFilters" class="al-col-filter-clear" @click="clearColFilters">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          清除筛选
+        </button>
+      </div>
+
       <!-- 多选批量操作栏 -->
       <transition name="bulk-bar">
         <div v-if="selectedIds.size > 0" class="al-bulk-bar">
@@ -534,11 +566,26 @@
             <th class="al-th al-th-media">头像 / 照片</th>
             <th class="al-th al-th-name">账号名称</th>
             <th class="al-th al-th-platform">平台绑定</th>
-            <th class="al-th al-th-stat">粉丝数</th>
-            <th class="al-th al-th-stat">总 Views</th>
-            <th class="al-th al-th-stat">均 Views</th>
-            <th class="al-th al-th-stat">点赞率</th>
-            <th class="al-th al-th-date">最新发布</th>
+            <th class="al-th al-th-stat al-th-sortable" @click="toggleSort('followers_count')">
+              <span class="al-th-label">粉丝数</span>
+              <span class="al-sort-icon"><SortIcon field="followers_count" :sort-by="sortBy" :sort-order="sortOrder" /></span>
+            </th>
+            <th class="al-th al-th-stat al-th-sortable" @click="toggleSort('total_views')">
+              <span class="al-th-label">总 Views</span>
+              <span class="al-sort-icon"><SortIcon field="total_views" :sort-by="sortBy" :sort-order="sortOrder" /></span>
+            </th>
+            <th class="al-th al-th-stat al-th-sortable" @click="toggleSort('avg_views')">
+              <span class="al-th-label">均 Views</span>
+              <span class="al-sort-icon"><SortIcon field="avg_views" :sort-by="sortBy" :sort-order="sortOrder" /></span>
+            </th>
+            <th class="al-th al-th-stat al-th-sortable" @click="toggleSort('avg_like_rate')">
+              <span class="al-th-label">点赞率</span>
+              <span class="al-sort-icon"><SortIcon field="avg_like_rate" :sort-by="sortBy" :sort-order="sortOrder" /></span>
+            </th>
+            <th class="al-th al-th-date al-th-sortable" @click="toggleSort('latest_video_published_at')">
+              <span class="al-th-label">最新发布</span>
+              <span class="al-sort-icon"><SortIcon field="latest_video_published_at" :sort-by="sortBy" :sort-order="sortOrder" /></span>
+            </th>
             <th class="al-th al-th-flags">标识</th>
             <th class="al-th al-th-tags">标签 / 博主</th>
             <th class="al-th al-th-actions">操作</th>
@@ -883,7 +930,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags } from '../api/accounts'
@@ -897,6 +944,61 @@ const route = useRoute()
 const router = useRouter()
 
 const PLATFORM_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' }
+
+// ── Sort icon component ───────────────────────────────────────────────────────
+const SortIcon = defineComponent({
+  props: { field: String, sortBy: String, sortOrder: String },
+  setup(props) {
+    return () => {
+      const active = props.sortBy === props.field
+      const desc = props.sortOrder === 'desc'
+      const color = active ? '#6366f1' : '#cbd5e1'
+      return h('svg', { width: 10, height: 12, viewBox: '0 0 10 12', fill: 'none', style: 'flex-shrink:0' }, [
+        h('path', { d: 'M5 1L2 4h6L5 1z', fill: active && !desc ? '#6366f1' : color }),
+        h('path', { d: 'M5 11L2 8h6L5 11z', fill: active && desc ? '#6366f1' : color }),
+      ])
+    }
+  },
+})
+
+// ── Sort state ────────────────────────────────────────────────────────────────
+const sortBy = ref(null)
+const sortOrder = ref('desc')
+
+function toggleSort(field) {
+  if (sortBy.value === field) {
+    sortOrder.value = sortOrder.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortBy.value = field
+    sortOrder.value = 'desc'
+  }
+  page.value = 1
+  loadData()
+}
+
+// ── Column filters ────────────────────────────────────────────────────────────
+const filterGender = ref('')
+const filterAccountType = ref('')
+const filterFaceMode = ref('')
+const filterPlatformBindingStatus = ref('')
+
+const hasActiveColFilters = computed(() =>
+  filterGender.value || filterAccountType.value || filterFaceMode.value || filterPlatformBindingStatus.value
+)
+
+function onFilterChange() {
+  page.value = 1
+  loadData()
+}
+
+function clearColFilters() {
+  filterGender.value = ''
+  filterAccountType.value = ''
+  filterFaceMode.value = ''
+  filterPlatformBindingStatus.value = ''
+  page.value = 1
+  loadData()
+}
 
 const loading = ref(false)
 const deleting = ref(null)
@@ -1421,6 +1523,11 @@ async function loadData() {
     const params = { page: page.value, page_size: pageSize.value }
     if (filterFlagId.value) params.flag_id = filterFlagId.value
     if (searchQuery.value.trim()) params.search = searchQuery.value.trim()
+    if (sortBy.value) { params.sort_by = sortBy.value; params.sort_order = sortOrder.value }
+    if (filterGender.value) params.gender = filterGender.value
+    if (filterAccountType.value) params.account_type = filterAccountType.value
+    if (filterFaceMode.value) params.face_mode = filterFaceMode.value
+    if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
@@ -1878,6 +1985,70 @@ onMounted(() => {
 .al-th-flags    { width: 160px; }
 .al-th-tags     { width: 220px; }
 .al-th-actions  { width: 160px; text-align: center; }
+
+/* Sortable header */
+.al-th-sortable {
+  cursor: pointer;
+}
+.al-th-sortable:hover {
+  background: #f1f5fb;
+  color: #4f46e5;
+}
+.al-th-label {
+  display: inline;
+}
+.al-sort-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* Column filter bar */
+.al-col-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0 2px;
+}
+.al-col-filter-select {
+  height: 28px;
+  padding: 0 24px 0 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2394a3b8'/%3E%3C/svg%3E") no-repeat right 7px center;
+  background-size: 10px 6px;
+  font-size: 12px;
+  color: #374151;
+  appearance: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  outline: none;
+}
+.al-col-filter-select:hover {
+  border-color: #a5b4fc;
+}
+.al-col-filter-select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99,102,241,0.12);
+}
+.al-col-filter-clear {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  background: #fff;
+  color: #ef4444;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.al-col-filter-clear:hover {
+  background: #fee2e2;
+}
 
 .al-tr {
   cursor: pointer;
