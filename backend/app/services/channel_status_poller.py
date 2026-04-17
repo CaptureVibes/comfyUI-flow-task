@@ -234,6 +234,7 @@ async def _run_once(
                 "total": total,
                 "changed": changed,
                 "platform": r.platform,
+                "channel_name": r.channel_name,
                 "channel_id": r.channel_id,
                 "previous_status": previous_status,
                 "current_status": current_status,

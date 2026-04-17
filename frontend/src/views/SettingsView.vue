@@ -53,7 +53,7 @@
           </svg>
           {{ channelCheckResult.message }}
         </div>
-        <div v-if="channelCheckLogs.length" class="check-log-list">
+        <div v-if="channelCheckLogs.length" ref="channelCheckLogListRef" class="check-log-list">
           <div
             v-for="item in channelCheckLogs"
             :key="item.id"
@@ -63,7 +63,7 @@
             <div class="check-log-top">
               <div class="check-log-channel-wrap">
                 <span class="check-log-platform">{{ formatPlatformLabel(item.platform) }}</span>
-                <span class="check-log-channel">{{ item.channelId }}</span>
+                <span class="check-log-channel-name">{{ item.channelName || '未命名频道' }}</span>
               </div>
               <span class="check-log-result-badge" :class="`tone-${item.type}`">{{ item.resultLabel }}</span>
             </div>
@@ -87,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, onBeforeUnmount, onMounted } from 'vue'
+import { nextTick, ref, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchSystemSettings, streamCheckChannelStatus, updateSystemSettings } from '../api/settings'
 
@@ -97,6 +97,7 @@ const systemLoading = ref(false)
 const channelChecking = ref(false)
 const channelCheckResult = ref(null)
 const channelCheckLogs = ref([])
+const channelCheckLogListRef = ref(null)
 let channelCheckController = null
 
 const PLATFORM_LABELS = {
@@ -171,6 +172,13 @@ function buildCheckSummary(data) {
   return data?.message || '检查已完成。'
 }
 
+async function scrollChannelCheckLogsToBottom() {
+  await nextTick()
+  const el = channelCheckLogListRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
 async function loadSystemSettings() {
   systemLoading.value = true
   try {
@@ -235,13 +243,14 @@ async function handleCheckChannelStatus() {
               id: `${Date.now()}-${index}-${data?.channel_id || 'unknown'}`,
               type: resultTone(data?.result),
               platform: data?.platform || '',
-              channelId: data?.channel_id || '-',
+              channelName: data?.channel_name || '',
               resultLabel: formatResultLabel(data?.result),
               previousStatus: data?.previous_status || null,
               currentStatus: data?.current_status || null,
               summary: buildCheckSummary(data),
             }
           ].slice(-200)
+          void scrollChannelCheckLogsToBottom()
           return
         }
 
@@ -445,10 +454,22 @@ onBeforeUnmount(() => {
 
 .check-log-channel-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+  flex: 1;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+.check-log-channel-name {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 .check-log-platform {
@@ -461,20 +482,6 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
-}
-
-.check-log-channel {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid #d9e3f0;
-  color: #1e293b;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  word-break: break-all;
 }
 
 .check-log-result-badge {
