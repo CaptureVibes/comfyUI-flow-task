@@ -19,8 +19,8 @@ logger = logging.getLogger("app.publication_metrics_scheduler")
 _TZ = pytz.timezone("Asia/Shanghai")
 
 # 每日定时任务触发时间（北京时间，24小时制）
-_HOUR_SYNC_METRICS = 12        # 同步视频指标快照
-_HOUR_SYNC_ACCOUNT_SNAPSHOT = 13  # 计算账号 performance_snapshot
+_HOUR_SYNC_METRICS = 10        # 同步视频指标快照
+_HOUR_SYNC_ACCOUNT_SNAPSHOT = 11  # 计算账号 performance_snapshot（指标同步后1小时）
 
 _scheduler_task: asyncio.Task | None = None
 _scheduler_stop_event: asyncio.Event | None = None
