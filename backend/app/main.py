@@ -117,7 +117,7 @@ async def shutdown_event() -> None:
     await stop_channel_name_sync_scheduler()
 
 
-@app.get("/healthz")
+@app.get("/health")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
