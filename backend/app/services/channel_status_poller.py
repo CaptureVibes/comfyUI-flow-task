@@ -6,7 +6,7 @@ AccountChannelReservation 记录，调用 GET /open-api/v1/channels/authorizatio
 检查授权状态：
   - DISABLED → 将 channel_status 改为 "disabled"
   - ACTIVE    → 将 channel_status 恢复为 "active"
-  - NOT_FOUND → 不修改
+  - 其他/空状态 → 按 "disabled" 处理
   - 请求失败  → 跳过，打印警告日志
 
 也可通过 run_channel_status_check() 在任意时刻手动触发一次。
@@ -138,11 +138,9 @@ async def _emit_progress(progress_callback: ProgressCallback | None, payload: di
 
 
 def _authorization_status_to_channel_status(status_val: str) -> str | None:
-    if status_val == "DISABLED":
-        return "disabled"
     if status_val == "ACTIVE":
         return "active"
-    return None
+    return "disabled"
 
 
 async def query_channel_authorization(
@@ -189,15 +187,9 @@ async def query_channel_authorization(
             await client_obj.aclose()
 
     new_status = _authorization_status_to_channel_status(status_val)
-    if new_status is not None:
-        return {
-            "result": "resolved",
-            "new_status": new_status,
-            "authorization_status": status_val,
-        }
     return {
-        "result": "not_found",
-        "new_status": None,
+        "result": "resolved",
+        "new_status": new_status,
         "authorization_status": status_val or None,
     }
 
