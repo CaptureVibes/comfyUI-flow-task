@@ -1278,6 +1278,12 @@ class VideoPublicationService:
         synced = 0
         failed = 0
         for pub in publications:
+            # 跳过纯 ext_pub 发布（无 openapi 侧），不调 Open API metrics 接口
+            payload = pub.request_payload or {}
+            if payload.get("_has_ext_pub") and not payload.get("_has_openapi"):
+                logger.debug("sync_metrics: skip ext_pub-only publication %s", pub.id)
+                continue
+
             await asyncio.sleep(_SYNC_METRICS_RATE_LIMIT_SEC)
             for attempt in range(_SYNC_METRICS_RETRIES + 1):
                 try:
