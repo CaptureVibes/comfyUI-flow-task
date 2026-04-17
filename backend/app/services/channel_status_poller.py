@@ -32,7 +32,7 @@ logger = logging.getLogger("app.channel_status_poller")
 _CRON_EXPR = "0 * * * *"   # 北京时间每小时整点
 _POLL_INTERVAL_SECONDS = 60  # 每分钟检查一次是否到了触发时间
 _REQUEST_TIMEOUT = 10.0
-_REQUEST_RATE_LIMIT_SEC = 1.0
+_REQUEST_RATE_LIMIT_SEC = 0.4
 _TZ = ZoneInfo("Asia/Shanghai")
 
 _poller_task: asyncio.Task | None = None
@@ -242,7 +242,7 @@ async def _run_once(
                 "message": message,
             })
 
-            # authorization 接口限流：串行调用，最多 1 秒 1 次
+            # authorization 接口限流：串行调用，请求间隔至少 0.4 秒
             if index < len(reservations) - 1 and not aborted:
                 await asyncio.sleep(_REQUEST_RATE_LIMIT_SEC)
 

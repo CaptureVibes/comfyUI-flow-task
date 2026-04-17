@@ -60,7 +60,23 @@
             class="check-log-item"
             :class="item.type"
           >
-            {{ item.message }}
+            <div class="check-log-top">
+              <div class="check-log-channel-wrap">
+                <span class="check-log-platform">{{ formatPlatformLabel(item.platform) }}</span>
+                <span class="check-log-channel">{{ item.channelId }}</span>
+              </div>
+              <span class="check-log-result-badge" :class="`tone-${item.type}`">{{ item.resultLabel }}</span>
+            </div>
+            <div class="check-log-summary">{{ item.summary }}</div>
+            <div v-if="item.currentStatus" class="check-log-status-line">
+              <template v-if="item.previousStatus && item.previousStatus !== item.currentStatus">
+                <span class="check-status-chip is-ghost">{{ formatChannelStatus(item.previousStatus) }}</span>
+                <span class="check-log-arrow">→</span>
+              </template>
+              <span class="check-status-chip" :class="statusChipClass(item.currentStatus)">
+                {{ formatChannelStatus(item.currentStatus) }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -82,6 +98,78 @@ const channelChecking = ref(false)
 const channelCheckResult = ref(null)
 const channelCheckLogs = ref([])
 let channelCheckController = null
+
+const PLATFORM_LABELS = {
+  douyin: '抖音',
+  xiaohongshu: '小红书',
+  rednote: '小红书',
+  kuaishou: '快手',
+  wechat: '微信',
+  weixin: '微信',
+  wechat_channels: '视频号',
+  weixin_channels: '视频号',
+  video_account: '视频号',
+  tiktok: 'TikTok',
+  bilibili: 'Bilibili',
+  youtube: 'YouTube',
+}
+
+const CHANNEL_STATUS_META = {
+  active: { label: '正常授权', className: 'is-active' },
+  disabled: { label: '已禁用', className: 'is-disabled' },
+}
+
+const RESULT_LABELS = {
+  updated: '已同步',
+  unchanged: '状态正常',
+  not_found: '状态未知',
+  request_failed: '检查失败',
+}
+
+function formatPlatformLabel(platform) {
+  if (!platform) return '频道'
+  return PLATFORM_LABELS[platform] || platform.toUpperCase()
+}
+
+function formatChannelStatus(status) {
+  if (!status) return '未知状态'
+  return CHANNEL_STATUS_META[status]?.label || status
+}
+
+function statusChipClass(status) {
+  return CHANNEL_STATUS_META[status]?.className || 'is-neutral'
+}
+
+function resultTone(result) {
+  if (result === 'updated') return 'success'
+  if (result === 'request_failed') return 'error'
+  return 'info'
+}
+
+function formatResultLabel(result) {
+  return RESULT_LABELS[result] || '检查完成'
+}
+
+function buildCheckSummary(data) {
+  const previousStatusLabel = formatChannelStatus(data?.previous_status)
+  const currentStatusLabel = formatChannelStatus(data?.current_status)
+
+  if (data?.result === 'updated') {
+    return previousStatusLabel === currentStatusLabel
+      ? '检测到授权状态变更，系统已完成同步。'
+      : `授权状态已从${previousStatusLabel}同步为${currentStatusLabel}。`
+  }
+  if (data?.result === 'unchanged') {
+    return `授权状态稳定，当前保持${currentStatusLabel}。`
+  }
+  if (data?.result === 'not_found') {
+    return '上游暂未返回明确的授权状态，系统保持本地状态不变。'
+  }
+  if (data?.result === 'request_failed') {
+    return '授权接口请求失败，本地状态未被修改。'
+  }
+  return data?.message || '检查已完成。'
+}
 
 async function loadSystemSettings() {
   systemLoading.value = true
@@ -145,8 +233,13 @@ async function handleCheckChannelStatus() {
             ...channelCheckLogs.value,
             {
               id: `${Date.now()}-${index}-${data?.channel_id || 'unknown'}`,
-              type: data?.result === 'updated' ? 'success' : data?.result === 'request_failed' ? 'error' : 'info',
-              message: data?.message || `已检查 ${data?.platform || 'unknown'}(${data?.channel_id || '-'})`,
+              type: resultTone(data?.result),
+              platform: data?.platform || '',
+              channelId: data?.channel_id || '-',
+              resultLabel: formatResultLabel(data?.result),
+              previousStatus: data?.previous_status || null,
+              currentStatus: data?.current_status || null,
+              summary: buildCheckSummary(data),
             }
           ].slice(-200)
           return
@@ -319,9 +412,10 @@ onBeforeUnmount(() => {
 }
 
 .check-log-item {
-  padding: 9px 12px;
-  font-size: 12px;
-  line-height: 1.45;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   color: #334155;
   border-bottom: 1px solid #e2e8f0;
 }
@@ -331,17 +425,129 @@ onBeforeUnmount(() => {
 }
 
 .check-log-item.success {
-  background: rgba(240, 253, 244, 0.8);
-  color: #166534;
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.92), rgba(240, 253, 244, 0.78));
 }
 
 .check-log-item.error {
-  background: rgba(255, 241, 242, 0.85);
-  color: #be123c;
+  background: linear-gradient(180deg, rgba(255, 241, 242, 0.95), rgba(255, 241, 242, 0.82));
 }
 
 .check-log-item.info {
-  color: #334155;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+}
+
+.check-log-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.check-log-channel-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.check-log-platform {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ddeafe;
+  color: #3155a6;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.check-log-channel {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #d9e3f0;
+  color: #1e293b;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  word-break: break-all;
+}
+
+.check-log-result-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.check-log-result-badge.tone-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.check-log-result-badge.tone-error {
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.check-log-result-badge.tone-info {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.check-log-summary {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.check-log-status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.check-log-arrow {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.check-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.check-status-chip.is-active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.check-status-chip.is-disabled {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.check-status-chip.is-neutral {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.check-status-chip.is-ghost {
+  background: rgba(226, 232, 240, 0.7);
+  color: #64748b;
 }
 
 .evo-pipeline-hint {
