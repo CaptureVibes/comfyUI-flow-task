@@ -333,10 +333,9 @@ async def _publish_sub_task(
         if sub is None or sub.status != "queued":
             return
 
-        task = sub.task
         service = VideoPublicationService(session)
         try:
-            await service.create_publication(VideoPublicationCreate(
+            publication = await service.create_publication(VideoPublicationCreate(
                 sub_task_id=sub.id,
                 video_url=publish_video_url,
                 original_video_url=original_video_url,
@@ -346,13 +345,11 @@ async def _publish_sub_task(
                 tags=hashtags or None,
                 channels=channels,
             ))
-            sub.status = "publishing"
             sub.queue_order = None
-            task.status = "publishing"
             await session.commit()
             logger.info(
-                "【定时发布】子任务 %s（账号：%s）已提交发布 → publishing（标题：%r）",
-                sub_task_id, account_name, title,
+                "【定时发布】子任务 %s（账号：%s）已提交发布 → %s（标题：%r）",
+                sub_task_id, account_name, publication.status, title,
             )
         except Exception as e:
             logger.error(

@@ -61,12 +61,6 @@ async def create_publication(
 
     try:
         publication = await service.create_publication(data)
-
-        # 发布任务创建成功后，将子任务状态更新为发布中
-        sub_task.status = "publishing"
-        sub_task.task.status = "publishing"
-        await db.commit()
-
         return publication
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

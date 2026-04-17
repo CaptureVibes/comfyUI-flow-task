@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.account import Account
@@ -399,6 +400,76 @@ def _compute_publication_status(channels_status: list[dict]) -> str:
     return "partial"
 
 
+def _finalize_ext_pub_channel_statuses(channels_status: list[dict]) -> tuple[list[dict], bool]:
+    """将 ext_pub 侧频道视为提交即完成，不再依赖后续轮询。"""
+    finalized: list[dict] = []
+    changed = False
+    completed_at = utcnow().isoformat()
+
+    for channel in channels_status:
+        if channel.get("_source") != _SOURCE_EXT_PUB:
+            finalized.append(channel)
+            continue
+
+        if channel.get("status") in _FAILED_STATUSES:
+            finalized.append(channel)
+            continue
+
+        updated = dict(channel)
+        if updated.get("status") != "completed":
+            updated["status"] = "completed"
+            changed = True
+        if not updated.get("uploaded_at"):
+            updated["uploaded_at"] = completed_at
+            changed = True
+        if updated.get("error_message") is not None:
+            updated["error_message"] = None
+            changed = True
+        finalized.append(updated)
+
+    return finalized, changed
+
+
+async def _apply_publication_status_to_sub_task(
+    db: AsyncSession,
+    *,
+    sub_task_id: uuid.UUID,
+    publication_status: str,
+) -> None:
+    from app.models.video_task import VideoSubTask, VideoTask
+    from app.services.video_task_service import _compute_parent_status
+
+    target_status: str | None = None
+    if publication_status in ("completed", "partial"):
+        target_status = "published"
+    elif publication_status == "failed":
+        target_status = "publish_failed"
+    elif publication_status in ("pending", "processing", "uploading"):
+        target_status = "publishing"
+
+    if target_status is None:
+        return
+
+    result = await db.execute(
+        select(VideoSubTask)
+        .where(VideoSubTask.id == sub_task_id)
+        .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
+    )
+    sub_task = result.scalar_one_or_none()
+    if sub_task is None:
+        return
+
+    if target_status == "publishing":
+        if sub_task.status in ("queued", "pending_publish"):
+            sub_task.status = "publishing"
+            sub_task.task.status = "publishing"
+        return
+
+    if sub_task.status in ("queued", "pending_publish", "publishing"):
+        sub_task.status = target_status
+        sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
+
+
 class PublishAdapter(ABC):
     """发布适配器抽象基类。
 
@@ -614,6 +685,7 @@ class ExtPubAdapter(PublishAdapter):
         task_id: str | None = str(post_data.get("id")) if post_data.get("id") else None
 
         channel_statuses = self._statuses_from_post_data(post_data, channels)
+        channel_statuses, _ = _finalize_ext_pub_channel_statuses(channel_statuses)
 
         logger.info(
             "ExtPubAdapter.submit: task_id=%s channels=%s",
@@ -696,7 +768,7 @@ class VideoPublicationService:
 
         channels 中每条可携带 channel_source 字段：
           - "openapi"（默认）：走原 Open API 发布
-          - "ext_pub"：走外部发布 API（POST /api/posts）
+          - "ext_pub"：走外部发布 API（POST /api/posts），提交成功即视为完成
 
         同一账号每个平台只能绑定一种来源，但同一次发布可以混合（如
         YouTube 走内部、TikTok 走外部）。两侧并发提交，合并频道级状态
@@ -787,6 +859,11 @@ class VideoPublicationService:
             publication.completed_at = utcnow()
 
         self.db.add(publication)
+        await _apply_publication_status_to_sub_task(
+            self.db,
+            sub_task_id=data.sub_task_id,
+            publication_status=overall_status,
+        )
         await self.db.commit()
         await self.db.refresh(publication)
 
@@ -1099,52 +1176,46 @@ class VideoPublicationService:
         return any(keyword in value.lower() for value in haystacks if value)
 
     async def sync_publication_status(self, publication_id: uuid.UUID) -> VideoPublication:
-        """从两侧外部 API 同步频道级状态，合并计算汇总状态，联动更新 sub_task。"""
+        """同步频道级状态，ext_pub 侧视为提交即完成，仅轮询 openapi 侧。"""
         publication = await self.get_publication(publication_id)
         if not publication:
             raise ValueError("发布任务不存在")
 
         payload = publication.request_payload or {}
 
-        # 新数据：request_payload 里有明确的 _has_openapi / _has_ext_pub 标记
-        # 老数据：两个 key 都不存在，不能凭 "not ext_pub" 推断 openapi 存在；
-        #         改为看 open_api_task_id 是否有值来判断是否有 openapi 侧，
-        #         并且只有当 channels_status 里有 ext_pub 来源的条目才触发 ext_pub 轮询。
+        # ext_pub 侧不再轮询；新老数据都只用 openapi 标记或 task_id 判断是否有活动发布侧。
         if "_has_openapi" in payload or "_has_ext_pub" in payload:
             has_openapi = payload.get("_has_openapi", False)
-            has_ext_pub = payload.get("_has_ext_pub", False)
         else:
-            # 老数据兼容：没有标记字段，保守推断
             has_openapi = bool(publication.open_api_task_id)
-            existing_sources = {c.get("_source") for c in (publication.channels_status or [])}
-            has_ext_pub = _SOURCE_EXT_PUB in existing_sources
 
         existing_statuses: list[dict] = publication.channels_status or []
+        merged, ext_finalized = _finalize_ext_pub_channel_statuses(existing_statuses)
 
-        # 并发轮询两侧
         sync_tasks = []
         if has_openapi:
             sync_tasks.append(("openapi", self._openapi_adapter.sync_status(publication)))
-        if has_ext_pub:
-            sync_tasks.append(("ext_pub", self._ext_pub_adapter.sync_status(publication)))
 
         if not sync_tasks:
-            logger.debug("sync_publication_status: publication %s 无活跃适配器，跳过", publication_id)
-            return publication
+            logger.debug(
+                "sync_publication_status: publication %s 无 openapi 活跃适配器%s",
+                publication_id,
+                "，仅应用 ext_pub 自动完成" if ext_finalized else "，跳过轮询",
+            )
 
-        results = await asyncio.gather(
-            *[t for _, t in sync_tasks],
-            return_exceptions=True,
-        )
+        else:
+            results = await asyncio.gather(
+                *[t for _, t in sync_tasks],
+                return_exceptions=True,
+            )
 
-        merged = existing_statuses
-        for (source, _), result in zip(sync_tasks, results):
-            if isinstance(result, Exception):
-                logger.error("sync_publication_status %s side failed for %s: %s", source, publication_id, result)
-                continue
-            updated_channels: list[dict] = result
-            if updated_channels:
-                merged = _merge_channel_statuses(merged, updated_channels, source)
+            for (source, _), result in zip(sync_tasks, results):
+                if isinstance(result, Exception):
+                    logger.error("sync_publication_status %s side failed for %s: %s", source, publication_id, result)
+                    continue
+                updated_channels: list[dict] = result
+                if updated_channels:
+                    merged = _merge_channel_statuses(merged, updated_channels, source)
 
         # 重新计算汇总状态
         new_status = _compute_publication_status(merged)
@@ -1158,20 +1229,11 @@ class VideoPublicationService:
             publication.completed_at = utcnow()
 
         # 根据终态联动更新子任务状态
-        if new_status in ("completed", "partial", "failed"):
-            from sqlalchemy.orm import selectinload
-            from app.models.video_task import VideoSubTask, VideoTask
-            from app.services.video_task_service import _compute_parent_status
-
-            result = await self.db.execute(
-                select(VideoSubTask)
-                .where(VideoSubTask.id == publication.sub_task_id)
-                .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
-            )
-            sub_task = result.scalar_one_or_none()
-            if sub_task and sub_task.status == "publishing":
-                sub_task.status = "published" if new_status in ("completed", "partial") else "publish_failed"
-                sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
+        await _apply_publication_status_to_sub_task(
+            self.db,
+            sub_task_id=publication.sub_task_id,
+            publication_status=new_status,
+        )
 
         await self.db.commit()
         await self.db.refresh(publication)
@@ -1328,22 +1390,11 @@ class VideoPublicationService:
             publication.id, len(callback_channels), computed_status,
         )
 
-        # 同步更新 sub_task 状态（与 sync_publication_status 保持一致）
-        if computed_status in ("completed", "partial", "failed"):
-            from sqlalchemy.orm import selectinload
-            from app.models.video_task import VideoSubTask, VideoTask
-            from app.services.video_task_service import _compute_parent_status
-
-            result = await self.db.execute(
-                select(VideoSubTask)
-                .where(VideoSubTask.id == publication.sub_task_id)
-                .options(selectinload(VideoSubTask.task).selectinload(VideoTask.sub_tasks))
-            )
-            sub_task = result.scalar_one_or_none()
-            if sub_task and sub_task.status == "publishing":
-                sub_task.status = "published" if computed_status in ("completed", "partial") else "publish_failed"
-                sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
-                logger.info("handle_callback: sub_task %s → %s", sub_task.id, sub_task.status)
+        await _apply_publication_status_to_sub_task(
+            self.db,
+            sub_task_id=publication.sub_task_id,
+            publication_status=computed_status,
+        )
 
         await self.db.commit()
         await self.db.refresh(publication)
