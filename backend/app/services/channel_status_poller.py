@@ -1,7 +1,7 @@
 """
 Channel status poller
 =====================
-每天北京时间 10:00 自动触发，对所有 source=openapi、status=bound 的
+每小时自动触发一次，对所有 source=openapi、status=bound 的
 AccountChannelReservation 记录，调用 GET /open-api/v1/channels/authorization
 检查授权状态：
   - DISABLED → 将 channel_status 改为 "disabled"
@@ -28,9 +28,10 @@ from app.models.account_channel_reservation import AccountChannelReservation
 
 logger = logging.getLogger("app.channel_status_poller")
 
-_CRON_EXPR = "0 10 * * *"   # 北京时间每天 10:00
+_CRON_EXPR = "0 * * * *"   # 北京时间每小时整点
 _POLL_INTERVAL_SECONDS = 60  # 每分钟检查一次是否到了触发时间
 _REQUEST_TIMEOUT = 10.0
+_REQUEST_RATE_LIMIT_SEC = 1.0
 _TZ = ZoneInfo("Asia/Shanghai")
 
 _poller_task: asyncio.Task | None = None
@@ -145,12 +146,11 @@ async def _run_once() -> dict:
     changed = 0
 
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-        for r in reservations:
+        for index, r in enumerate(reservations):
             new_status = await _check_one(client, base_url, r)
             if new_status is None:
-                continue  # 请求失败或 NOT_FOUND，保持原状
-
-            if new_status != r.channel_status:
+                pass  # 请求失败或 NOT_FOUND，保持原状
+            elif new_status != r.channel_status:
                 async with SessionLocal() as session:
                     obj = await session.get(AccountChannelReservation, r.id)
                     if obj is not None:
@@ -164,6 +164,10 @@ async def _run_once() -> dict:
                     new_status,
                 )
                 changed += 1
+
+            # authorization 接口限流：串行调用，最多 1 秒 1 次
+            if index < len(reservations) - 1:
+                await asyncio.sleep(_REQUEST_RATE_LIMIT_SEC)
 
     logger.info("【频道状态轮询】本轮完成，共检查 %d 条，更新 %d 条", checked, changed)
     return {"checked": checked, "changed": changed}
