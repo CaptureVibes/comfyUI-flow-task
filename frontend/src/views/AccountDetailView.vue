@@ -86,7 +86,7 @@
               <strong>{{ tabCounts.publish_failed }}</strong> 发布失败
             </span>
             <span class="ad-hero-stat ad-hero-stat-link" @click="router.push('/dashboard/daily-tasks')">
-              <strong>{{ tabCounts.pending + tabCounts.generating }}</strong> 生成任务
+              <strong>{{ (tabCounts.pending || 0) + (tabCounts.generating || 0) }}</strong> 生成任务
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
             </span>
           </div>
