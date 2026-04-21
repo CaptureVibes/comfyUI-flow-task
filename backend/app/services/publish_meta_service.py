@@ -112,11 +112,7 @@ async def generate_publish_metadata(
             return title, desc, hashtags
 
         except Exception as e:
-            exc_str = str(e)
-            if any(code in exc_str for code in ["400", "401", "403", "404"]):
-                logger.error("【AI预生成标题】不可重试错误（%d次），放弃：%s", attempt, e)
-                raise
-            logger.warning("【AI预生成标题】第%d次失败：%s，%.0fs后重试", attempt, e, retry_delay)
+            logger.warning("【AI预生成标题】第%d次失败：%s，%.0fs后重试", attempt, str(e)[:500], retry_delay)
             await asyncio.sleep(retry_delay)
 
 
@@ -192,3 +188,26 @@ async def trigger_publish_meta_generation(sub_task_id: uuid.UUID) -> None:
         await session.commit()
 
     logger.info("【AI预生成标题】子任务 %s 完成，状态: %s", sub_task_id, meta["status"])
+
+
+async def recover_stuck_publish_meta_on_startup() -> None:
+    """启动时将 status=generating 的子任务重新触发 AI 标题生成（重启后补跑）。"""
+    import asyncio
+    from sqlalchemy import select
+    from app.db.session import SessionLocal
+    from app.models.video_task import VideoSubTask
+
+    async with SessionLocal() as session:
+        rows = (await session.execute(
+            select(VideoSubTask.id).where(
+                VideoSubTask.publish_meta["status"].as_string() == "generating",
+                VideoSubTask.status == "queued",
+            )
+        )).scalars().all()
+
+    if not rows:
+        return
+
+    logger.info("【AI预生成标题】启动补跑：发现 %d 个 generating 状态的子任务", len(rows))
+    for sub_task_id in rows:
+        asyncio.get_running_loop().create_task(trigger_publish_meta_generation(sub_task_id))
