@@ -544,13 +544,13 @@ async def regenerate_publish_meta(
     if sub.status != "queued":
         raise HTTPException(status_code=422, detail="只有队列中的子任务才能重新生成标题")
 
-    # 重置为 pending 状态，异步触发重新生成
+    # 重置为 pending，直接后台生成（不入队，优先执行）
     sub.publish_meta = {"status": "pending"}
     await session.commit()
     await session.refresh(sub)
 
-    from app.services.publish_meta_service import enqueue_publish_meta_task
-    enqueue_publish_meta_task(sub.id)
+    from app.services.publish_meta_service import _process_publish_meta
+    asyncio.create_task(_process_publish_meta(sub.id))
 
     return VideoSubTaskRead.model_validate(sub)
 
