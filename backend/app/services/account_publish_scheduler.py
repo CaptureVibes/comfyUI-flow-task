@@ -231,6 +231,7 @@ async def _do_publish(account: Account) -> None:
                 VideoTask.account_id == account.id,
                 VideoSubTask.status == "queued",
                 VideoSubTask.result_video_url.isnot(None),
+                VideoSubTask.publish_meta["status"].as_string() == "done",
             )
             .order_by(VideoSubTask.queue_order.asc().nullslast())
             .limit(publish_count)
@@ -312,22 +313,11 @@ async def _publish_sub_task(
     else:
         publish_video_url = original_video_url
 
-    # ── 优先使用预生成的 publish_meta，否则实时 AI 生成 ──────────────────────
-    if publish_meta.get("status") == "done" and publish_meta.get("title"):
-        title = publish_meta["title"]
-        description = publish_meta.get("description", "")
-        hashtags = publish_meta.get("hashtags", [])
-        logger.info("【定时发布】子任务 %s 使用预生成标题：%r", sub_task_id, title)
-    elif ai_config:
-        logger.info("【定时发布】子任务 %s 无预生成标题，实时 AI 生成", sub_task_id)
-        from app.services.publish_meta_service import generate_publish_metadata
-        title, description, hashtags = await generate_publish_metadata(
-            video_url=original_video_url,
-            ai_config=ai_config,
-            fallback_title=fallback_title,
-        )
-    else:
-        title, description, hashtags = fallback_title, "", []
+    # ── 使用预生成的 publish_meta 标题（查询已保证 status==done）────────────
+    title = publish_meta.get("title") or fallback_title
+    description = publish_meta.get("description", "")
+    hashtags = publish_meta.get("hashtags", [])
+    logger.info("【定时发布】子任务 %s 使用预生成标题：%r", sub_task_id, title)
 
     # ── 发布 ──────────────────────────────────────────────────────────────────
     async with SessionLocal() as session:

@@ -98,32 +98,29 @@
             </span>
             <span class="tc-card-title">自动发布 AI 生成标题 / 描述 / 标签</span>
           </div>
-          <el-switch v-model="config.auto_publish_enabled" />
         </div>
         <div class="tc-card-body">
           <div class="tc-info-box">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            <p>启用后，自动发布前会调用 AI 分析视频内容，生成标题、描述和 hashtag。AI 必须返回 JSON 格式：<code class="tc-code">{"title":"...","desc":"...","hashtag":["..."]}</code></p>
+            <p>自动发布前会调用 AI 分析视频内容，生成标题、描述和 hashtag。AI 必须返回 JSON 格式：<code class="tc-code">{"title":"...","desc":"...","hashtag":["..."]}</code></p>
           </div>
-          <template v-if="config.auto_publish_enabled">
-            <div class="tc-field" style="margin-top:16px">
-              <label class="tc-label">模型</label>
-              <input
-                v-model="config.auto_publish_model"
-                class="tc-input"
-                placeholder="如: gemini-3.1-pro-preview"
-              />
-            </div>
-            <div class="tc-field">
-              <label class="tc-label">提示词</label>
-              <textarea
-                v-model="config.auto_publish_prompt"
-                class="tc-textarea"
-                rows="8"
-                placeholder="请输入提示词，告诉 AI 如何根据视频内容生成标题、描述和标签。AI 必须输出 JSON 格式。"
-              />
-            </div>
-          </template>
+          <div class="tc-field" style="margin-top:16px">
+            <label class="tc-label">模型</label>
+            <input
+              v-model="config.auto_publish_model"
+              class="tc-input"
+              placeholder="如: gemini-3.1-pro-preview"
+            />
+          </div>
+          <div class="tc-field">
+            <label class="tc-label">提示词</label>
+            <textarea
+              v-model="config.auto_publish_prompt"
+              class="tc-textarea"
+              rows="8"
+              placeholder="请输入提示词，告诉 AI 如何根据视频内容生成标题、描述和标签。AI 必须输出 JSON 格式。"
+            />
+          </div>
         </div>
       </div>
 

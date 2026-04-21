@@ -27,7 +27,11 @@ from app.services.channel_name_sync_scheduler import start_channel_name_sync_sch
 from app.services.topic_service import recover_stuck_keyword_gen_on_startup
 from app.services.video_source_service import recover_stuck_downloads_on_startup
 from app.services.candidate_service import recover_candidate_imports_on_startup, recover_stuck_ai_review_on_startup
-from app.services.publish_meta_service import recover_stuck_publish_meta_on_startup
+from app.services.publish_meta_service import (
+    recover_stuck_publish_meta_on_startup,
+    start_publish_meta_workers,
+    stop_publish_meta_workers,
+)
 
 setup_logging(settings.log_level, settings.log_dir)
 logger = logging.getLogger("app")
@@ -102,6 +106,7 @@ async def startup_event() -> None:
     await recover_stuck_downloads_on_startup()
     await recover_candidate_imports_on_startup()
     await recover_stuck_ai_review_on_startup()
+    await start_publish_meta_workers()
     await recover_stuck_publish_meta_on_startup()
 
 
@@ -114,6 +119,7 @@ async def shutdown_event() -> None:
     await stop_video_stats_collector()
     await stop_account_publish_scheduler()
     await stop_candidate_scheduler()
+    await stop_publish_meta_workers()
     await stop_lark_notify_scheduler()
     await stop_channel_status_poller()
     await stop_channel_name_sync_scheduler()

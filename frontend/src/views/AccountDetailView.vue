@@ -286,18 +286,17 @@
             </div>
 
             <!-- Publish meta chip (queued tab) -->
-            <div v-if="item.sub.publish_meta" class="ad-publish-meta-chip" @click.stop="openMetaDialog(item.sub)">
-              <span class="ad-meta-dot" :class="`ad-meta-dot-${item.sub.publish_meta.status}`"></span>
+            <div v-if="activeTab === 'queued'" class="ad-publish-meta-chip" @click.stop="openMetaDialog(item.sub)">
+              <span class="ad-meta-dot" :class="`ad-meta-dot-${item.sub.publish_meta?.status ?? 'pending'}`"></span>
               <span class="ad-meta-chip-text">
-                <template v-if="item.sub.publish_meta.status === 'done' && item.sub.publish_meta.title">
+                <template v-if="item.sub.publish_meta?.status === 'done' && item.sub.publish_meta.title">
                   {{ item.sub.publish_meta.title }}
                 </template>
-                <template v-else-if="item.sub.publish_meta.status === 'generating'">AI 生成中…</template>
-                <template v-else-if="item.sub.publish_meta.status === 'pending'">等待生成标题</template>
-                <template v-else-if="item.sub.publish_meta.status === 'failed'">标题生成失败</template>
-                <template v-else>AI 标题</template>
+                <template v-else-if="item.sub.publish_meta?.status === 'generating'">AI 生成中…</template>
+                <template v-else-if="item.sub.publish_meta?.status === 'failed'">标题生成失败</template>
+                <template v-else>等待生成标题</template>
               </span>
-              <svg v-if="item.sub.publish_meta.status === 'done'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+              <svg v-if="item.sub.publish_meta?.status === 'done'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
             </div>
 
             <!-- Scoring error message -->
@@ -1371,6 +1370,34 @@ async function handleSaveSchedule() {
   }
 }
 
+let metaPollTimer = null
+
+function scheduleMetaPoll() {
+  if (activeTab.value !== 'queued') return
+  const hasInProgress = tabSubTasks.value.some(s => {
+    const status = s.publish_meta?.status
+    return !status || status === 'pending' || status === 'generating'
+  })
+  if (!hasInProgress) return
+  metaPollTimer = setTimeout(async () => {
+    await loadTab()
+    scheduleMetaPoll()
+  }, 5000)
+}
+
+function clearMetaPollTimer() {
+  if (metaPollTimer) { clearTimeout(metaPollTimer); metaPollTimer = null }
+}
+
+watch(activeTab, () => {
+  clearMetaPollTimer()
+})
+
+watch(tabSubTasks, () => {
+  clearMetaPollTimer()
+  scheduleMetaPoll()
+})
+
 onMounted(async () => {
   await loadAccount()
   await loadTasks()
@@ -1378,6 +1405,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearAIPollTimer()
+  clearMetaPollTimer()
 })
 </script>
 
