@@ -549,8 +549,8 @@ async def regenerate_publish_meta(
     await session.commit()
     await session.refresh(sub)
 
-    from app.services.publish_meta_service import trigger_publish_meta_generation
-    asyncio.create_task(trigger_publish_meta_generation(sub.id))
+    from app.services.publish_meta_service import enqueue_publish_meta_task
+    enqueue_publish_meta_task(sub.id)
 
     return VideoSubTaskRead.model_validate(sub)
 
