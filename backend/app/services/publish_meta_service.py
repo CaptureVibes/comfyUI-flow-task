@@ -207,6 +207,10 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
         sub = row.scalar_one_or_none()
         if sub is None:
             return
+        # 已被手动重新生成完成，跳过
+        if (sub.publish_meta or {}).get("status") == "done":
+            logger.info("【AI预生成标题】子任务 %s 已完成，跳过", sub_task_id)
+            return
 
         video_url = sub.result_video_url
         owner_id = sub.task.owner_id
