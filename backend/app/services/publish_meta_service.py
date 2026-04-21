@@ -112,6 +112,10 @@ async def generate_publish_metadata(
             return title, desc, hashtags
 
         except Exception as e:
+            exc_str = str(e)
+            if any(code in exc_str for code in ["400", "401", "403", "404"]):
+                logger.error("【AI预生成标题】不可重试错误（%d次），放弃：%s", attempt, e)
+                raise
             logger.warning("【AI预生成标题】第%d次失败：%s，%.0fs后重试", attempt, e, retry_delay)
             await asyncio.sleep(retry_delay)
 
