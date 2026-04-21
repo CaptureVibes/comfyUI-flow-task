@@ -288,9 +288,9 @@ class ExtPubAPIClient:
     def _headers(self) -> dict:
         return {"X-API-Key": self.api_key, "Content-Type": "application/json"}
 
-    async def fetch_platform_accounts(self, platform: str | None = None) -> dict:
+    async def fetch_platform_accounts(self, platform: str | None = None, page: int = 1, page_size: int = 100) -> dict:
         """获取平台账号列表（即外部频道列表），可按 platform 过滤"""
-        params: dict = {}
+        params: dict = {"page": page, "page_size": page_size}
         if platform:
             params["platform"] = platform
         async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
@@ -1663,21 +1663,33 @@ class VideoPublicationService:
     ) -> dict:
         """拉取外部发布 API 的平台账号，过滤已占用，归一化后分页返回。
 
-        外部 API 不支持分页查询（GET /api/platform-accounts 默认返回 page_size=20），
-        这里一次性拉取足够大的页（page_size=200），过滤后在本地分页。
+        外部 API 默认 page_size=20，这里循环翻页拉取全量数据后在本地分页。
         """
+        _upstream_page_size = 100
+        upstream_page = 1
+        all_raw: list[dict] = []
+
         try:
-            response = await self.ext_pub.fetch_platform_accounts(platform=platform)
+            while True:
+                response = await self.ext_pub.fetch_platform_accounts(
+                    platform=platform,
+                    page=upstream_page,
+                    page_size=_upstream_page_size,
+                )
+                data = response.get("data") if isinstance(response, dict) else {}
+                items: list[dict] = (data.get("items") if isinstance(data, dict) else None) or []
+                all_raw.extend(items)
+                total = int(data.get("total") or 0) if isinstance(data, dict) else 0
+                if len(items) < _upstream_page_size or (total and upstream_page * _upstream_page_size >= total):
+                    break
+                upstream_page += 1
         except Exception:
             logger.exception("fetch_ext_pub_channels_unified: upstream error")
             return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "page": page, "page_size": page_size}}
 
-        data = response.get("data") if isinstance(response, dict) else {}
-        raw_items: list[dict] = (data.get("items") if isinstance(data, dict) else None) or []
-
         filtered = [
             self._normalize_ext_pub_channel(item)
-            for item in raw_items
+            for item in all_raw
             if isinstance(item, dict) and str(item.get("id") or "").strip() not in excluded
         ]
 
