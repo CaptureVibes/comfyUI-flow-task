@@ -1370,33 +1370,7 @@ async function handleSaveSchedule() {
   }
 }
 
-let metaPollTimer = null
 
-function scheduleMetaPoll() {
-  if (activeTab.value !== 'queued') return
-  const hasInProgress = tabSubTasks.value.some(s => {
-    const status = s.publish_meta?.status
-    return !status || status === 'pending' || status === 'generating'
-  })
-  if (!hasInProgress) return
-  metaPollTimer = setTimeout(async () => {
-    await loadTab()
-    scheduleMetaPoll()
-  }, 5000)
-}
-
-function clearMetaPollTimer() {
-  if (metaPollTimer) { clearTimeout(metaPollTimer); metaPollTimer = null }
-}
-
-watch(activeTab, () => {
-  clearMetaPollTimer()
-})
-
-watch(tabSubTasks, () => {
-  clearMetaPollTimer()
-  scheduleMetaPoll()
-})
 
 onMounted(async () => {
   await loadAccount()
@@ -1405,7 +1379,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearAIPollTimer()
-  clearMetaPollTimer()
 })
 </script>
 
