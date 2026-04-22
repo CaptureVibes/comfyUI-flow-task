@@ -801,23 +801,16 @@ onMounted(async () => {
   width: 72px;
   height: 102px;
   border-radius: 8px;
-  object-fit: cover;
+  object-fit: contain;
   background: #0f172a;
   display: block;
 }
-.ps-video:fullscreen,
-.ps-video:-webkit-full-screen,
-.ps-video:-moz-full-screen {
-  width: auto;
-  height: 100%;
-  object-fit: contain;
-}
-.psd-video:fullscreen,
-.psd-video:-webkit-full-screen,
-.psd-video:-moz-full-screen {
-  width: auto;
-  height: 100%;
-  object-fit: contain;
+video:fullscreen,
+video:-webkit-full-screen,
+video:-moz-full-screen {
+  width: auto !important;
+  height: 100% !important;
+  object-fit: contain !important;
 }
 
 .ps-video-empty {
@@ -1024,7 +1017,7 @@ onMounted(async () => {
   max-width: 180px;
   height: 320px;
   border-radius: 10px;
-  object-fit: cover;
+  object-fit: contain;
   background: #0f172a;
   display: block;
 }
