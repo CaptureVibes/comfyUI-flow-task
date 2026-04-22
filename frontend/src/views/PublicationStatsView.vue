@@ -805,6 +805,20 @@ onMounted(async () => {
   background: #0f172a;
   display: block;
 }
+.ps-video:fullscreen,
+.ps-video:-webkit-full-screen,
+.ps-video:-moz-full-screen {
+  width: auto;
+  height: 100%;
+  object-fit: contain;
+}
+.psd-video:fullscreen,
+.psd-video:-webkit-full-screen,
+.psd-video:-moz-full-screen {
+  width: auto;
+  height: 100%;
+  object-fit: contain;
+}
 
 .ps-video-empty {
   display: grid;
@@ -1007,8 +1021,8 @@ onMounted(async () => {
 
 .psd-video {
   width: 100%;
-  max-width: 260px;
-  height: 160px;
+  max-width: 180px;
+  height: 320px;
   border-radius: 10px;
   object-fit: cover;
   background: #0f172a;
