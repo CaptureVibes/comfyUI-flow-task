@@ -275,12 +275,14 @@ class ExternalAIAccountCandidateItem(BaseModel):
     account_signature: str | None = None
     hashtags: list[str] | None = None
     avatar_url: str | None = None
+    confirmed: bool = False
 
 
 class ExternalReserveAIAccountsResponse(BaseModel):
     items: list[ExternalAIAccountCandidateItem]
     requested_count: int
     returned_count: int
+    confirmed_count: int = 0
 
 
 class ExternalConfirmChannelReservationBody(BaseModel):

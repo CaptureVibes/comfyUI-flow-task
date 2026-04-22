@@ -94,11 +94,12 @@ async def reserve_ai_accounts_for_channel_openapi(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
     session: AsyncSession = Depends(get_db),
 ) -> ExternalReserveAIAccountsResponse:
-    """外部团队按 owner、性别、平台查询可用 AI 博主；不写库、不占用。"""
+    """外部团队按 owner、性别、平台查询可用 AI 博主，并立即 confirm 占用，避免并发重复领取。"""
     _verify_api_key(body.api_key, x_api_key)
     owner_id = _resolve_owner_id(body.owner_id)
 
     platform = body.platform.lower()
+    # FOR UPDATE SKIP LOCKED: 并发请求各自锁定不重叠的行，保证 count 准确
     stmt = (
         select(Account)
         .where(Account.owner_id == owner_id)
@@ -110,25 +111,46 @@ async def reserve_ai_accounts_for_channel_openapi(
         )
         .order_by(Account.created_at.asc())
         .limit(body.count)
+        .with_for_update(skip_locked=True)
     )
-    accounts = (await session.execute(stmt)).scalars().all()
 
-    items = [
-        ExternalAIAccountCandidateItem(
-            account_id=account.id,
-            platform=body.platform,
-            account_name=account.account_name,
-            account_handle=account.account_handle,
-            account_signature=account.account_signature,
-            hashtags=account.hashtags,
-            avatar_url=account.avatar_url,
-        )
-        for account in accounts
-    ]
+    now = datetime.now(timezone.utc)
+    items: list[ExternalAIAccountCandidateItem] = []
+    confirmed_count = 0
+
+    async with session.begin_nested():
+        accounts = (await session.execute(stmt)).scalars().all()
+        for account in accounts:
+            reservation = AccountChannelReservation(
+                account_id=account.id,
+                platform=platform,
+                status="confirmed",
+                source=body.source,
+                channel_source=body.source,
+                reserved_at=now,
+                confirmed_at=now,
+            )
+            session.add(reservation)
+            confirmed_count += 1
+            items.append(
+                ExternalAIAccountCandidateItem(
+                    account_id=account.id,
+                    platform=body.platform,
+                    account_name=account.account_name,
+                    account_handle=account.account_handle,
+                    account_signature=account.account_signature,
+                    hashtags=account.hashtags,
+                    avatar_url=account.avatar_url,
+                    confirmed=True,
+                )
+            )
+
+    await session.commit()
     return ExternalReserveAIAccountsResponse(
         items=items,
         requested_count=body.count,
         returned_count=len(items),
+        confirmed_count=confirmed_count,
     )
 
 
@@ -136,56 +158,12 @@ async def reserve_ai_accounts_for_channel_openapi(
 async def confirm_channel_reservation_openapi(
     body: ExternalConfirmChannelReservationBody,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
-    session: AsyncSession = Depends(get_db),
 ) -> ExternalConfirmChannelReservationResponse:
-    """外部团队逐条确认一个 account_id + platform，占用从这里才真正写库。"""
+    """占用已由 reserve 接口完成，此接口直接返回成功（兼容旧调用方）。"""
     _verify_api_key(body.api_key, x_api_key)
     owner_id = _resolve_owner_id(body.owner_id)
-
-    platform = body.platform.lower()
-    account = await session.scalar(
-        select(Account)
-        .where(Account.id == body.account_id)
-        .where(Account.owner_id == owner_id)
-    )
-    if not account:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
-
-    existing = await session.scalar(
-        select(AccountChannelReservation)
-        .where(AccountChannelReservation.account_id == body.account_id)
-        .where(AccountChannelReservation.platform == platform)
-    )
-    now = datetime.now(timezone.utc)
-    if existing:
-        if existing.status != "bound":
-            existing.status = "confirmed"
-            existing.confirmed_at = existing.confirmed_at or now
-        await session.commit()
-        return ExternalConfirmChannelReservationResponse(
-            status=existing.status,
-            owner_id=owner_id,
-            account_id=body.account_id,
-            platform=body.platform,
-        )
-
-    reservation = AccountChannelReservation(
-        account_id=body.account_id,
-        platform=platform,
-        status="confirmed",
-        source="openapi",
-        channel_source="openapi",
-        reserved_at=now,
-        confirmed_at=now,
-    )
-    session.add(reservation)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该账号平台已被占用") from None
     return ExternalConfirmChannelReservationResponse(
-        status=reservation.status,
+        status="confirmed",
         owner_id=owner_id,
         account_id=body.account_id,
         platform=body.platform,
