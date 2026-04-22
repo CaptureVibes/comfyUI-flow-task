@@ -152,44 +152,65 @@ async def generate_publish_metadata(
 }}
 其中 hashtag 为字符串数组，每个元素不含 # 号。只输出 JSON，不要任何解释。"""
 
+    FALLBACK_MODEL = "gemini-2.5-flash"
+    PRIMARY_MAX = 3   # 主模型最多重试次数
+    FALLBACK_MAX = 3  # 备用模型最多重试次数
     retry_delay = 30.0
-    attempt = 0
-    while True:
-        attempt += 1
-        logger.info("【AI预生成标题】第%d次调用 Gemini API，模型: %s", attempt, ai_config["model"])
-        try:
-            raw = await call_gemini_api(
-                model_name=ai_config["model"],
-                video_url=video_url,
-                prompt=prompt,
-                temperature=0.5,
-            )
-            logger.info("【AI预生成标题】原始响应（第%d次）：%s", attempt, raw[:500])
 
-            json_str = raw.strip()
-            match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
-            if match:
-                json_str = match.group(1)
+    models = [
+        (ai_config["model"], PRIMARY_MAX),
+        (FALLBACK_MODEL, FALLBACK_MAX),
+    ]
 
-            data = _json.loads(json_str)
-            title = str(data.get("title", "") or "").strip()
-            if not title:
-                raise ValueError("AI 返回的 JSON 缺少有效 title 字段")
+    for model_name, max_attempts in models:
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            logger.info("【AI预生成标题】第%d次调用 Gemini API，模型: %s", attempt, model_name)
+            try:
+                raw = await call_gemini_api(
+                    model_name=model_name,
+                    video_url=video_url,
+                    prompt=prompt,
+                    temperature=0.5,
+                )
+                logger.info("【AI预生成标题】原始响应（第%d次）：%s", attempt, raw[:500])
 
-            title = title[:100]
-            desc = str(data.get("desc", "") or data.get("description", "") or "")
-            hashtags_raw = data.get("hashtag", data.get("hashtags", []))
-            if isinstance(hashtags_raw, str):
-                hashtags = [t.strip().lstrip("#") for t in hashtags_raw.split() if t.strip()]
-            else:
-                hashtags = [str(t).strip().lstrip("#") for t in hashtags_raw if t]
+                json_str = raw.strip()
+                match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
+                if match:
+                    json_str = match.group(1)
 
-            logger.info("【AI预生成标题】成功（第%d次） → %r", attempt, title)
-            return title, desc, hashtags
+                data = _json.loads(json_str)
+                title = str(data.get("title", "") or "").strip()
+                if not title:
+                    raise ValueError("AI 返回的 JSON 缺少有效 title 字段")
 
-        except Exception as e:
-            logger.warning("【AI预生成标题】第%d次失败：%s，%.0fs后重试", attempt, str(e)[:500], retry_delay)
-            await asyncio.sleep(retry_delay)
+                title = title[:100]
+                desc = str(data.get("desc", "") or data.get("description", "") or "")
+                hashtags_raw = data.get("hashtag", data.get("hashtags", []))
+                if isinstance(hashtags_raw, str):
+                    hashtags = [t.strip().lstrip("#") for t in hashtags_raw.split() if t.strip()]
+                else:
+                    hashtags = [str(t).strip().lstrip("#") for t in hashtags_raw if t]
+
+                logger.info("【AI预生成标题】成功（第%d次，模型: %s） → %r", attempt, model_name, title)
+                return title, desc, hashtags
+
+            except Exception as e:
+                exc_str = str(e)
+                # 4xx 错误跳出当前模型直接换下一个
+                is_4xx = any(code in exc_str for code in ["400", "401", "403", "404"])
+                if is_4xx:
+                    logger.warning("【AI预生成标题】模型 %s 4xx 错误，换模型重试：%s", model_name, exc_str[:300])
+                    break
+                if attempt >= max_attempts:
+                    logger.warning("【AI预生成标题】模型 %s 已达最大重试次数 %d，换模型重试", model_name, max_attempts)
+                    break
+                logger.warning("【AI预生成标题】第%d次失败（模型: %s）：%s，%.0fs后重试", attempt, model_name, exc_str[:300], retry_delay)
+                await asyncio.sleep(retry_delay)
+
+    raise RuntimeError("AI 生成标题失败：主模型和备用模型均已耗尽重试次数")
 
 
 async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
