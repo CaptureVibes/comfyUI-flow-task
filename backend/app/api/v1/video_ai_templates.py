@@ -32,10 +32,12 @@ from app.schemas.video_ai_template import (
 )
 from app.services.video_ai_service import (
     batch_reanalyze_templates,
+    batch_restart_stage2_templates,
     enqueue_template,
     get_template_state,
     pause_template,
     reanalyze_template,
+    restart_from_stage2,
     restart_template,
     resume_template,
 )
@@ -399,6 +401,17 @@ async def batch_reanalyze(
     return {"status": "accepted"}
 
 
+@router.post("/batch-restart-stage2", status_code=status.HTTP_202_ACCEPTED)
+async def batch_restart_stage2(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict[str, str]:
+    """批量对所有 success 状态的模板执行阶段2重跑（保留视频理解，从抽帧生图重新开始）。"""
+    asyncio.create_task(batch_restart_stage2_templates(
+        owner_id=str(owner_id) if owner_id else None,
+    ))
+    return {"status": "accepted"}
+
+
 @router.get("/all-available", response_model=list[VideoAITemplateListItem])
 async def list_all_available_templates(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
@@ -754,6 +767,19 @@ async def restart_template_endpoint(
 ) -> VideoAITemplateRead:
     tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
     await restart_template(str(tpl.id))
+    await session.refresh(tpl)
+    return await _to_read(session, tpl)
+
+
+@router.post("/{tpl_id}/restart-stage2", response_model=VideoAITemplateRead)
+async def restart_stage2_endpoint(
+    tpl_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> VideoAITemplateRead:
+    """保留阶段一（视频理解），从阶段二（抽帧生图）重新开始。"""
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    await restart_from_stage2(str(tpl.id))
     await session.refresh(tpl)
     return await _to_read(session, tpl)
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-from app.services.google_api import call_google_gemini_api, generate_image_google, get_google_api_key
+from app.services.google_api import call_google_gemini_api, call_google_gemini_api_with_images, generate_image_google, get_google_api_key
 
 logger = logging.getLogger("app.ai_api")
 
@@ -48,6 +48,32 @@ async def call_gemini_api(
         prompt=prompt,
         temperature=temperature,
         video_url=video_url,
+        timeout=timeout,
+    )
+
+
+async def call_gemini_api_with_images(
+    *,
+    model_name: str,
+    prompt: str,
+    image_urls: list[str],
+    temperature: float = 0.3,
+    response_schema: dict | None = None,
+    timeout: float = 180.0,
+) -> str:
+    """Text generation with reference images, optionally with JSON schema."""
+    google_key = get_google_api_key()
+    if not google_key:
+        raise ValueError("AI API 未配置：请在 .env 中设置 GOOGLE_API_KEY。")
+
+    logger.debug("ai_api: calling Google SDK with images (model=%s)", model_name)
+    return await call_google_gemini_api_with_images(
+        api_key=google_key,
+        model_name=model_name,
+        prompt=prompt,
+        image_urls=image_urls,
+        temperature=temperature,
+        response_schema=response_schema,
         timeout=timeout,
     )
 

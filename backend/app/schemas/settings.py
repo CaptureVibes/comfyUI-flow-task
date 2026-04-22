@@ -75,6 +75,24 @@ class PipelineSettingsPayload(BaseModel):
     face_removing_head_top_ratio: float = 0.7
     # 第五阶段：图片超分（Pillow LANCZOS）
     upscaling_scale: int = 1024
+    # 步骤2b：Gemini 识别 Unique 穿搭
+    outfit_select_model: str = "gemini-3.1-pro-preview"
+    outfit_select_prompt: str = ""
+    outfit_select_temperature: float = 0.3
+    # 步骤3a：对每个 unique 穿搭图理解单品
+    outfit_detail_model: str = "gemini-3.1-pro-preview"
+    outfit_detail_prompt: str = ""
+    outfit_detail_temperature: float = 0.3
+    # 步骤3b：单品图生成
+    product_imagegen_model: str = "gemini-3.1-flash-image-preview"
+    product_imagegen_prompt: str = ""
+    product_imagegen_size: str = "1:1"
+    product_imagegen_quality: str = "2K"
+    # 步骤3c：新造型图生成
+    outfit_regen_model: str = "gemini-3.1-flash-image-preview"
+    outfit_regen_prompt: str = ""
+    outfit_regen_size: str = "9:16"
+    outfit_regen_quality: str = "2K"
     # AI 账号生成配置
     ai_account_analysis_sample_size: int = 10
     ai_account_video_prompt: str = ""

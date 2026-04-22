@@ -176,11 +176,23 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 {{ templateStatus === 'fail' ? '从断点继续' : '继续处理' }}
               </button>
+              <button class="vtfd-act-btn vtfd-act-stage2" @click="handleRestartStage2" title="保留视频理解，从抽帧生图开始重新运行">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                重新生图
+              </button>
               <button class="vtfd-act-btn vtfd-act-restart" @click="handleRestart">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
                 从头重跑
               </button>
             </div>
+          </div>
+
+          <!-- Success state: 重新生图入口 -->
+          <div v-if="templateStatus === 'success'" class="vtfd-success-actions">
+            <button class="vtfd-act-btn vtfd-act-stage2" @click="handleRestartStage2" title="保留视频理解，从抽帧生图开始重新运行">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              重新生图（保留视频理解）
+            </button>
           </div>
 
           <!-- AI Understanding Section -->
@@ -220,48 +232,72 @@
         </div>
 
         <!-- Per-stage snapshot galleries -->
-        <div v-if="imagegenShots.length > 0 || splittingShots.length > 0 || faceRemovingShots.length > 0" class="vtfd-card vtfd-fw-card vtfd-shots-card">
+        <div v-if="frameShots.length > 0 || outfitShots.length > 0 || finalOutfits.length > 0 || faceRemovingShots.length > 0" class="vtfd-card vtfd-fw-card vtfd-shots-card">
 
-          <!-- Stage 2: Imagegen -->
-          <div v-if="imagegenShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
+          <!-- Stage 2: 抽帧图 -->
+          <div v-if="frameShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤二生图结果</span>
-              <span class="vtfd-section-count">({{ imagegenShots.length }})</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤② 抽帧图</span>
+              <span class="vtfd-section-count">({{ frameShots.length }})</span>
             </div>
             <div class="vtfd-images-grid">
-              <div v-for="(shot, idx) in imagegenShots" :key="'ig-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
+              <div v-for="(shot, idx) in frameShots" :key="'fs-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
                 <div class="vtfd-shot-img-wrap">
-                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="imagegenShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
+                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="frameShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
                 </div>
+                <div style="font-size:11px;color:#94a3b8;text-align:center;padding:2px 0">帧 {{ shot.frame_index }}</div>
               </div>
             </div>
           </div>
 
-          <!-- Stage 3: Splitting -->
-          <div v-if="splittingShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
+          <!-- Stage 2b: Unique 穿搭识别结果 -->
+          <div v-if="outfitShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤三拆分结果</span>
-              <span class="vtfd-section-count">({{ splittingShots.length }})</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤② Unique 穿搭</span>
+              <span class="vtfd-section-count">({{ outfitShots.length }})</span>
             </div>
             <div class="vtfd-images-grid">
-              <div v-for="(shot, idx) in splittingShots" :key="'sp-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
+              <div v-for="(shot, idx) in outfitShots" :key="'os-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
                 <div class="vtfd-shot-img-wrap">
-                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="splittingShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
+                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="outfitShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
                 </div>
+                <div style="font-size:11px;color:#94a3b8;text-align:center;padding:2px 0">穿搭 {{ idx + 1 }}</div>
               </div>
             </div>
           </div>
 
-          <!-- Stage 4: Face removing -->
-          <div v-if="faceRemovingShots.length > 0" class="vtfd-section vtfd-section-images">
+          <!-- Stage 3: 最终造型图 + 单品展开 -->
+          <div v-if="finalOutfits.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤四去脸结果</span>
-              <span class="vtfd-section-count">({{ faceRemovingShots.length }})</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤③ 最终造型图</span>
+              <span class="vtfd-section-count">({{ finalOutfits.length }})</span>
             </div>
-            <div class="vtfd-images-grid">
-              <div v-for="(shot, idx) in faceRemovingShots" :key="'fr-'+idx" class="vtfd-shot-card vtfd-shot-readonly">
-                <div class="vtfd-shot-img-wrap">
-                  <el-image v-if="shot.image_url" :src="shot.image_url" class="vtfd-shot-img" :preview-src-list="faceRemovingShots.map(s => s.image_url)" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal />
+            <div v-for="(outfit, oidx) in finalOutfits" :key="'fo-'+oidx" style="margin-bottom:20px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <el-image
+                  v-if="outfit.image_url"
+                  :src="outfit.image_url"
+                  style="width:80px;height:80px;border-radius:8px;flex-shrink:0;cursor:pointer"
+                  fit="cover"
+                  preview-teleported
+                  hide-on-click-modal
+                  :preview-src-list="finalOutfits.map(o => o.image_url).filter(Boolean)"
+                  :initial-index="oidx"
+                />
+                <div>
+                  <div style="font-weight:600;color:#1e293b;font-size:13px">穿搭 {{ oidx + 1 }}：{{ outfit.outfit_style || '' }}</div>
+                  <div style="font-size:12px;color:#64748b;margin-top:2px">{{ outfit.solo_products?.length || 0 }} 件单品</div>
+                </div>
+              </div>
+              <div v-if="outfit.solo_products?.length > 0" class="vtfd-images-grid">
+                <div v-for="(product, pidx) in outfit.solo_products" :key="'p-'+oidx+'-'+pidx" class="vtfd-shot-card vtfd-shot-readonly">
+                  <div class="vtfd-shot-img-wrap">
+                    <el-image v-if="product.product_image_url" :src="product.product_image_url" class="vtfd-shot-img" fit="cover" preview-teleported hide-on-click-modal
+                      :preview-src-list="outfit.solo_products.filter(p => p.product_image_url).map(p => p.product_image_url)" :initial-index="pidx" />
+                    <div v-else class="vtfd-shot-placeholder">暂无图</div>
+                  </div>
+                  <div style="font-size:11px;color:#334155;padding:4px 6px;font-weight:500">{{ product.name }}</div>
+                  <div style="font-size:10px;color:#94a3b8;padding:0 6px 4px;line-height:1.4">{{ product.description }}</div>
                 </div>
               </div>
             </div>
@@ -393,6 +429,7 @@ import {
   fetchVideoAITemplate,
   fetchVideoAITemplateState,
   patchVideoAITemplate,
+  restartStage2VideoAITemplate,
   restartVideoAITemplate,
   resumeVideoAITemplate,
   startVideoAITemplate,
@@ -443,23 +480,28 @@ const selectedVideoSource = computed(() =>
 )
 
 const extractedShots = computed(() => form.extracted_shots || [])
-const imagegenShots = computed(() => form.extra?.imagegen_shots || [])
-const splittingShots = computed(() => form.extra?.splitting_shots || [])
+const frameShots = computed(() => form.extra?.frame_shots || [])
+const outfitShots = computed(() => form.extra?.outfit_shots || [])
+const finalOutfits = computed(() => form.extra?.final_outfits || [])
 const faceRemovingShots = computed(() => form.extra?.face_removing_shots || [])
 
 // Processing state
 const isProcessing = computed(() =>
-  templateStatus.value && ['pending', 'understanding', 'imagegen', 'splitting', 'face_removing', 'upscaling'].includes(templateStatus.value)
+  templateStatus.value && [
+    'pending', 'understanding', 'imagegen', 'outfit_selecting',
+    'outfit_detailing', 'product_imagegen', 'outfit_regen',
+  ].includes(templateStatus.value)
 )
 
 const progressPercentage = computed(() => {
   const statusMap = {
-    pending: 5,
-    understanding: 25,
-    imagegen: 50,
-    splitting: 70,
-    face_removing: 80,
-    upscaling: 92,
+    pending: 3,
+    understanding: 15,
+    imagegen: 30,
+    outfit_selecting: 45,
+    outfit_detailing: 60,
+    product_imagegen: 75,
+    outfit_regen: 90,
     success: 100,
     fail: 0,
     paused: 0,
@@ -477,10 +519,11 @@ const progressText = computed(() => {
   const textMap = {
     pending: '等待开始处理...',
     understanding: 'AI 正在理解视频内容...',
-    imagegen: '正在抽帧生图...',
-    splitting: '正在拆分图片...',
-    face_removing: '正在消除人脸...',
-    upscaling: '正在图片超分...',
+    imagegen: '正在抽帧并上传 CDN...',
+    outfit_selecting: 'AI 正在识别 Unique 穿搭...',
+    outfit_detailing: 'AI 正在分析穿搭单品...',
+    product_imagegen: '正在生成单品图...',
+    outfit_regen: '正在生成新造型图...',
     success: '分析完成！',
     fail: '处理失败',
     paused: '已暂停',
@@ -492,10 +535,11 @@ function statusLabel(status) {
   const labels = {
     pending: '排队中',
     understanding: '理解中',
-    imagegen: '生图中',
-    splitting: '拆分中',
-    face_removing: '消脸中',
-    upscaling: '超分中',
+    imagegen: '抽帧中',
+    outfit_selecting: '识别穿搭',
+    outfit_detailing: '分析单品',
+    product_imagegen: '生成单品图',
+    outfit_regen: '生成造型图',
     success: '成功',
     fail: '失败',
     paused: '已暂停',
@@ -608,6 +652,28 @@ async function handleRestart() {
   }
 }
 
+async function handleRestartStage2() {
+  if (!route.params.id) return
+  try {
+    await restartStage2VideoAITemplate(route.params.id)
+    form.extracted_shots = []
+    if (form.extra) {
+      form.extra = { ...form.extra }
+      delete form.extra.frame_shots
+      delete form.extra.outfit_shots
+      delete form.extra.outfit_detailing_progress
+      delete form.extra.product_gen_results
+      delete form.extra.final_outfits
+    }
+    templateStatus.value = 'pending'
+    errorMessage.value = ''
+    startPolling()
+    ElMessage.success('已保留视频理解，从阶段二重新处理')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '操作失败')
+  }
+}
+
 // Shot upload
 function triggerUpload() {
   fileInputRef.value?.click()
@@ -686,7 +752,7 @@ async function loadData() {
     templateStatus.value = data.process_status
     errorMessage.value = data.process_error || ''
 
-    if (['pending', 'understanding', 'imagegen', 'splitting', 'face_removing', 'upscaling'].includes(data.process_status)) {
+    if (['pending', 'understanding', 'imagegen', 'outfit_selecting', 'outfit_detailing', 'product_imagegen', 'outfit_regen'].includes(data.process_status)) {
       startPolling()
     }
   } catch (err) {

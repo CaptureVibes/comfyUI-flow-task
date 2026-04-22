@@ -23,7 +23,7 @@ client = TikTokApifyClient()
 # ── 测试：关键词 + username，最近一个月，按播放量降序 ─────────────────────────
 videos = client.search(
     profiles       = ["__ellaward"],
-    search_queries = ["outfit"],
+    # search_queries = ["outfit"],
     results_per_page = 10,
     date_range     = DateRange.one_month,
     search_sorting = SearchSorting.latest,

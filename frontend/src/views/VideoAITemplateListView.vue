@@ -8,6 +8,10 @@
           <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
           一键重试
         </el-button>
+        <el-button class="vai-retry-btn" :loading="batchStage2ing" @click="handleBatchRestartStage2">
+          <svg v-if="!batchStage2ing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          一键生成造型图
+        </el-button>
         <el-button class="vai-retry-btn" :loading="batchReanalyzing" @click="handleBatchReanalyze">
           <svg v-if="!batchReanalyzing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
           一键重新分析
@@ -43,35 +47,43 @@
       </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'imagegen' }" style="--stat-color: #8b5cf6; --stat-bg: #ede9fe;" @click="toggleFilter('imagegen')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">图片生成</span>
+          <span class="vai-stat-label">抽帧上传</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
         </div>
         <div class="vai-stat-value">{{ templateStats.imagegen || 0 }}</div>
         <div class="vai-stat-sub">imagegen</div>
       </div>
-      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'splitting' }" style="--stat-color: #ec4899; --stat-bg: #fce7f3;" @click="toggleFilter('splitting')">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_selecting' }" style="--stat-color: #ec4899; --stat-bg: #fce7f3;" @click="toggleFilter('outfit_selecting')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">拆分图片</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span class="vai-stat-label">穿搭识别</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.57a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.57a2 2 0 0 0-1.34-2.23z"/></svg>
         </div>
-        <div class="vai-stat-value">{{ templateStats.splitting || 0 }}</div>
-        <div class="vai-stat-sub">splitting</div>
+        <div class="vai-stat-value">{{ templateStats.outfit_selecting || 0 }}</div>
+        <div class="vai-stat-sub">outfit_selecting</div>
       </div>
-      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'face_removing' }" style="--stat-color: #f59e0b; --stat-bg: #fef3c7;" @click="toggleFilter('face_removing')">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_detailing' }" style="--stat-color: #a855f7; --stat-bg: #faf5ff;" @click="toggleFilter('outfit_detailing')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">消除人脸</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><line x1="17" y1="3" x2="21" y2="7"/><line x1="21" y1="3" x2="17" y2="7"/></svg>
+          <span class="vai-stat-label">单品分析</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         </div>
-        <div class="vai-stat-value">{{ templateStats.face_removing || 0 }}</div>
-        <div class="vai-stat-sub">face_removing</div>
+        <div class="vai-stat-value">{{ templateStats.outfit_detailing || 0 }}</div>
+        <div class="vai-stat-sub">outfit_detailing</div>
       </div>
-      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'upscaling' }" style="--stat-color: #0ea5e9; --stat-bg: #e0f2fe;" @click="toggleFilter('upscaling')">
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'product_imagegen' }" style="--stat-color: #f97316; --stat-bg: #fff7ed;" @click="toggleFilter('product_imagegen')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">图片超分</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="vai-stat-label">单品生图</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         </div>
-        <div class="vai-stat-value">{{ templateStats.upscaling || 0 }}</div>
-        <div class="vai-stat-sub">upscaling</div>
+        <div class="vai-stat-value">{{ templateStats.product_imagegen || 0 }}</div>
+        <div class="vai-stat-sub">product_imagegen</div>
+      </div>
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_regen' }" style="--stat-color: #06b6d4; --stat-bg: #ecfeff;" @click="toggleFilter('outfit_regen')">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">造型重生</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.outfit_regen || 0 }}</div>
+        <div class="vai-stat-sub">outfit_regen</div>
       </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'success' }" style="--stat-color: #10b981; --stat-bg: #dcfce7;" @click="toggleFilter('success')">
         <div class="vai-stat-top">
@@ -250,11 +262,12 @@
           <div class="vt-tabs">
             <button
               v-for="tab in [
-                { key: 'step1', label: '① 视频理解' },
-                { key: 'step2', label: '② 抽帧生图' },
-                { key: 'step3', label: '③ 拆分图片' },
-                { key: 'step4', label: '④ 消除人脸' },
-                { key: 'step5', label: '⑤ 图片超分' }
+                { key: 'step1', label: '阶段1 视频理解' },
+                { key: 'step2', label: '阶段2 抽帧上传' },
+                { key: 'step2b', label: '阶段3 穿搭识别' },
+                { key: 'step3a', label: '阶段4 单品理解' },
+                { key: 'step3b', label: '阶段4 单品生图' },
+                { key: 'step3c', label: '阶段4 造型重生' }
               ]"
               :key="tab.key"
               class="vt-tab-btn"
@@ -272,7 +285,7 @@
               <div class="vt-form">
                 <div class="vt-form-item">
                   <label class="vt-label">模型名称</label>
-                  <input type="text" v-model="cfg.understand_model" class="vt-input" placeholder="gemini-3.1-pro-preview（留空使用默认）" />
+                  <input type="text" v-model="cfg.understand_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">提示词 (Prompt)</label>
@@ -285,32 +298,81 @@
               </div>
             </div>
 
-            <!-- Step 2 -->
+            <!-- Step 2：抽帧上传（无需配置，仅说明） -->
             <div v-if="configTab === 'step2'">
               <div class="cfg-step-desc">
-                对视频（超过 15s 只取前 15s）每隔 1.5s 抽一帧，共 10 帧，将所有帧一口气传给模型，生成一张造型图，结果自动填入模板的「造型图」区域。
+                对视频（超过 15s 只取前 15s）每隔 <strong>1 秒</strong>抽一帧，并发上传到 CDN。抽帧图将落库保存，供后续识别穿搭使用。此步骤无需配置。
+              </div>
+            </div>
+
+            <!-- Step 2b：穿搭识别 -->
+            <div v-if="configTab === 'step2b'">
+              <div class="cfg-step-desc">
+                将所有抽帧图发给 Gemini，识别视频中出现的 Unique 穿搭，每套穿搭选出最能代表该穿搭的一帧。必须输出 JSON（使用 json_schema 约束），结果落库保存。
               </div>
               <div class="vt-form">
                 <div class="vt-form-item">
-                  <label class="vt-label">生图模型</label>
-                  <input type="text" v-model="cfg.imagegen_model" class="vt-input" placeholder="gemini-3.1-flash-image-preview（留空使用默认）" />
+                  <label class="vt-label">识别模型</label>
+                  <input type="text" v-model="cfg.outfit_select_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
                 </div>
                 <div class="vt-form-item">
-                  <label class="vt-label">生图提示词 (Prompt)</label>
-                  <textarea v-model="cfg.imagegen_prompt" class="vt-textarea" rows="5" placeholder="根据参考图生成同款风格图片，保持人物姿态、服装和场景风格一致"></textarea>
-                  <div class="cfg-field-hint">所有抽取的帧截图将一起发给模型，此提示词指导生成最终造型图。</div>
+                  <label class="vt-label">识别提示词 (Prompt)</label>
+                  <textarea v-model="cfg.outfit_select_prompt" class="vt-textarea" rows="5" placeholder="以下是从视频中1秒一帧抽取的图片，请识别其中的独特穿搭（outfit）。不同镜头角度的同一套穿搭算同一个，只选出一张最能代表该穿搭的图。请以JSON格式输出 representative_frame_index（从0开始）和 frame_indices 列表。"></textarea>
+                  <div class="cfg-field-hint">留空使用内置默认提示词。输出必须为 JSON，系统已自动约束 json_schema。</div>
                 </div>
                 <div class="vt-form-item">
-                  <label class="vt-label">图片尺寸 (Size)</label>
+                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.outfit_select_temperature).toFixed(1) }}</label>
+                  <input type="range" v-model.number="cfg.outfit_select_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 3a：单品理解 -->
+            <div v-if="configTab === 'step3a'">
+              <div class="cfg-step-desc">
+                对每一个 Unique 穿搭图，让 Gemini 输出整体造型风格描述和所有穿搭单品的名称、描述。输出为 JSON 格式（含 outfit_style 和 solo_products 数组）。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">理解模型</label>
+                  <input type="text" v-model="cfg.outfit_detail_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">理解提示词 (Prompt)</label>
+                  <textarea v-model="cfg.outfit_detail_prompt" class="vt-textarea" rows="5" placeholder="请分析这张穿搭图，输出整体造型风格描述和图中所有穿搭单品的名称及描述。以JSON格式返回，outfit_style为整体风格，solo_products为单品数组，每项含name和description。"></textarea>
+                  <div class="cfg-field-hint">留空使用内置默认提示词。输出 JSON 格式：{ outfit_style: string, solo_products: [{name, description}] }</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.outfit_detail_temperature).toFixed(1) }}</label>
+                  <input type="range" v-model.number="cfg.outfit_detail_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 3b：单品生图 -->
+            <div v-if="configTab === 'step3b'">
+              <div class="cfg-step-desc">
+                针对每个单品，以其描述为提示词 + 造型图为参考，生成该单品的独立展示图。所有单品并发生成。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">单品生图模型</label>
+                  <input type="text" v-model="cfg.product_imagegen_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">单品生图提示词 (Prompt)</label>
+                  <textarea v-model="cfg.product_imagegen_prompt" class="vt-textarea" rows="4" placeholder="根据这张穿搭参考图，生成图中【{name}】单品的独立展示图。描述：{description}。保持原图风格，白色或简洁背景，突出单品细节。"></textarea>
+                  <div class="cfg-field-hint">支持变量 {name} 和 {description}，留空使用内置默认提示词。</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">单品图尺寸 (Size)</label>
                   <div class="vt-select-wrapper" style="width: 220px">
-                    <select v-model="cfg.imagegen_size" class="vt-select">
+                    <select v-model="cfg.product_imagegen_size" class="vt-select">
+                      <option value="1:1">1:1（方形，推荐）</option>
                       <option value="9:16">9:16（竖屏）</option>
-                      <option value="1:1">1:1（方形）</option>
                       <option value="3:4">3:4</option>
                       <option value="4:3">4:3</option>
                       <option value="16:9">16:9（横屏）</option>
-                      <option value="4:1">4:1（超宽）</option>
-                      <option value="8:1">8:1（全景宽）</option>
                     </select>
                     <div class="vt-select-arrow">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -318,82 +380,55 @@
                   </div>
                 </div>
                 <div class="vt-form-item">
-                  <label class="vt-label">图片质量 (Quality)</label>
+                  <label class="vt-label">单品图质量 (Quality)</label>
                   <div class="vt-radio-group">
-                    <label class="vt-radio-label">
-                      <input type="radio" value="0.5K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
-                      <span class="vt-radio-circle"></span>0.5K（快速）
-                    </label>
-                    <label class="vt-radio-label">
-                      <input type="radio" value="1K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
-                      <span class="vt-radio-circle"></span>1K
-                    </label>
-                    <label class="vt-radio-label">
-                      <input type="radio" value="2K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
-                      <span class="vt-radio-circle"></span>2K（推荐）
-                    </label>
-                    <label class="vt-radio-label">
-                      <input type="radio" value="4K" v-model="cfg.imagegen_quality" class="vt-radio-input" />
-                      <span class="vt-radio-circle"></span>4K（高质量）
-                    </label>
+                    <label class="vt-radio-label"><input type="radio" value="0.5K" v-model="cfg.product_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>0.5K</label>
+                    <label class="vt-radio-label"><input type="radio" value="1K" v-model="cfg.product_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>1K</label>
+                    <label class="vt-radio-label"><input type="radio" value="2K" v-model="cfg.product_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>2K（推荐）</label>
+                    <label class="vt-radio-label"><input type="radio" value="4K" v-model="cfg.product_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>4K</label>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Step 3 -->
-            <div v-if="configTab === 'step3'">
+            <!-- Step 3c：新造型图生成 -->
+            <div v-if="configTab === 'step3c'">
               <div class="cfg-step-desc">
-                调用 Segment API 对生图结果进行人物分割，将每个分割区域的图片上传 CDN，结果自动填入模板的「造型图」区域。
+                将每个穿搭的所有单品图 + outfit_style 作为提示词，生成新的整体造型图。新造型图将作为最终结果进入后续步骤。
               </div>
               <div class="vt-form">
                 <div class="vt-form-item">
-                  <label class="vt-label">Segment API 地址</label>
-                  <input type="text" v-model="cfg.splitting_api_url" class="vt-input" placeholder="http://34.21.127.95:8080（留空使用默认）" />
-                  <div class="cfg-field-hint">例如：http://34.21.127.95:8080，实际请求会追加 /api/segment-models</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Step 4 -->
-            <div v-if="configTab === 'step4'">
-              <div class="cfg-step-desc">
-                对每张拆分后的图片调用去脸 API，去除人物头部，处理后的图片 URL 替换原造型图。
-              </div>
-              <div class="vt-form">
-                <div class="vt-form-item">
-                  <label class="vt-label">去脸 API 地址</label>
-                  <input type="text" v-model="cfg.face_removing_api_url" class="vt-input" placeholder="http://34.86.216.234:8001（留空使用默认）" />
-                  <div class="cfg-field-hint">实际请求会追加 /api/v1/style-outfits/processBodyShape</div>
+                  <label class="vt-label">造型重生模型</label>
+                  <input type="text" v-model="cfg.outfit_regen_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
                 </div>
                 <div class="vt-form-item">
-                  <label class="vt-label">scoreThresh（人脸检测阈值）</label>
-                  <input type="number" v-model.number="cfg.face_removing_score_thresh" min="0" max="1" step="0.05" class="vt-input" style="width:160px" />
-                  <div class="cfg-field-hint">0~1，越高越严格，默认 0.3</div>
+                  <label class="vt-label">造型重生提示词 (Prompt)</label>
+                  <textarea v-model="cfg.outfit_regen_prompt" class="vt-textarea" rows="4" placeholder="根据以下单品图片，生成一张完整穿搭造型图。整体风格：{outfit_style}。保持服装风格一致，人物比例自然，背景简洁时尚。"></textarea>
+                  <div class="cfg-field-hint">支持变量 {outfit_style}，留空使用内置默认提示词。所有单品图将作为参考图一起传入。</div>
                 </div>
                 <div class="vt-form-item">
-                  <label class="vt-label">marginScale（边距缩放）</label>
-                  <input type="number" v-model.number="cfg.face_removing_margin_scale" min="0" max="2" step="0.05" class="vt-input" style="width:160px" />
-                  <div class="cfg-field-hint">裁切头部时的边距缩放比例，默认 0.2</div>
+                  <label class="vt-label">造型图尺寸 (Size)</label>
+                  <div class="vt-select-wrapper" style="width: 220px">
+                    <select v-model="cfg.outfit_regen_size" class="vt-select">
+                      <option value="9:16">9:16（竖屏，推荐）</option>
+                      <option value="1:1">1:1（方形）</option>
+                      <option value="3:4">3:4</option>
+                      <option value="4:3">4:3</option>
+                      <option value="16:9">16:9（横屏）</option>
+                    </select>
+                    <div class="vt-select-arrow">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                  </div>
                 </div>
                 <div class="vt-form-item">
-                  <label class="vt-label">headTopRatio（头顶比例）</label>
-                  <input type="number" v-model.number="cfg.face_removing_head_top_ratio" min="0" max="2" step="0.05" class="vt-input" style="width:160px" />
-                  <div class="cfg-field-hint">头顶额外保留比例，默认 0.7</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Step 5 -->
-            <div v-if="configTab === 'step5'">
-              <div class="cfg-step-desc">
-                使用 Pillow LANCZOS 算法将去脸后的每张图片缩放到指定长边像素。超分后的图片为最终造型图。
-              </div>
-              <div class="vt-form">
-                <div class="vt-form-item">
-                  <label class="vt-label">目标长边像素（scale）</label>
-                  <input type="number" v-model.number="cfg.upscaling_scale" min="256" max="4096" step="256" class="vt-input" style="width:160px" />
-                  <div class="cfg-field-hint">目标长边像素，例如 1024 = 1K，2048 = 2K，默认 1024。若原图已达目标尺寸则跳过。</div>
+                  <label class="vt-label">造型图质量 (Quality)</label>
+                  <div class="vt-radio-group">
+                    <label class="vt-radio-label"><input type="radio" value="0.5K" v-model="cfg.outfit_regen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>0.5K</label>
+                    <label class="vt-radio-label"><input type="radio" value="1K" v-model="cfg.outfit_regen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>1K</label>
+                    <label class="vt-radio-label"><input type="radio" value="2K" v-model="cfg.outfit_regen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>2K（推荐）</label>
+                    <label class="vt-radio-label"><input type="radio" value="4K" v-model="cfg.outfit_regen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>4K</label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -493,6 +528,7 @@ import {
   resumeVideoAITemplate,
   deleteVideoAITemplate,
   batchReanalyzeTemplates,
+  batchRestartStage2Templates,
 } from '../api/video_ai_templates'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { isDuplicateRequestError } from '../api/http'
@@ -507,6 +543,7 @@ const loading = ref(false)
 const deleting = ref(null)
 const actioning = ref(null)
 const batchResuming = ref(false)
+const batchStage2ing = ref(false)
 const batchReanalyzing = ref(false)
 const items = ref([])
 const total = ref(0)
@@ -526,19 +563,28 @@ const configLoading = ref(false)
 const configSaving = ref(false)
 
 const cfg = reactive({
+  // 步骤1
   understand_model: '',
   understand_prompt: '',
   understand_temperature: 0.3,
-  imagegen_model: 'gemini-3.1-flash-image-preview',
-  imagegen_prompt: '',
-  imagegen_size: '9:16',
-  imagegen_quality: '2K',
-  splitting_api_url: '',
-  face_removing_api_url: '',
-  face_removing_score_thresh: 0.3,
-  face_removing_margin_scale: 0.2,
-  face_removing_head_top_ratio: 0.7,
-  upscaling_scale: 1024,
+  // 步骤2b：穿搭识别
+  outfit_select_model: 'gemini-2.5-flash-preview-05-20',
+  outfit_select_prompt: '',
+  outfit_select_temperature: 0.3,
+  // 步骤3a：单品理解
+  outfit_detail_model: 'gemini-2.5-flash-preview-05-20',
+  outfit_detail_prompt: '',
+  outfit_detail_temperature: 0.3,
+  // 步骤3b：单品生图
+  product_imagegen_model: 'gemini-2.5-flash-preview-05-20',
+  product_imagegen_prompt: '',
+  product_imagegen_size: '1:1',
+  product_imagegen_quality: '2K',
+  // 步骤3c：新造型图生成
+  outfit_regen_model: 'gemini-2.5-flash-preview-05-20',
+  outfit_regen_prompt: '',
+  outfit_regen_size: '9:16',
+  outfit_regen_quality: '2K',
 })
 
 const hasJsonError = computed(() => false)
@@ -553,16 +599,20 @@ async function openConfig() {
       understand_model: data.understand_model || '',
       understand_prompt: data.understand_prompt || '',
       understand_temperature: data.understand_temperature ?? 0.3,
-      imagegen_model: data.imagegen_model || 'gemini-3.1-flash-image-preview',
-      imagegen_prompt: data.imagegen_prompt || '',
-      imagegen_size: data.imagegen_size || '9:16',
-      imagegen_quality: data.imagegen_quality || '2K',
-      splitting_api_url: data.splitting_api_url || '',
-      face_removing_api_url: data.face_removing_api_url || '',
-      face_removing_score_thresh: data.face_removing_score_thresh ?? 0.3,
-      face_removing_margin_scale: data.face_removing_margin_scale ?? 0.2,
-      face_removing_head_top_ratio: data.face_removing_head_top_ratio ?? 0.7,
-      upscaling_scale: data.upscaling_scale ?? 1024,
+      outfit_select_model: data.outfit_select_model || 'gemini-2.5-flash-preview-05-20',
+      outfit_select_prompt: data.outfit_select_prompt || '',
+      outfit_select_temperature: data.outfit_select_temperature ?? 0.3,
+      outfit_detail_model: data.outfit_detail_model || 'gemini-2.5-flash-preview-05-20',
+      outfit_detail_prompt: data.outfit_detail_prompt || '',
+      outfit_detail_temperature: data.outfit_detail_temperature ?? 0.3,
+      product_imagegen_model: data.product_imagegen_model || 'gemini-2.5-flash-preview-05-20',
+      product_imagegen_prompt: data.product_imagegen_prompt || '',
+      product_imagegen_size: data.product_imagegen_size || '1:1',
+      product_imagegen_quality: data.product_imagegen_quality || '2K',
+      outfit_regen_model: data.outfit_regen_model || 'gemini-2.5-flash-preview-05-20',
+      outfit_regen_prompt: data.outfit_regen_prompt || '',
+      outfit_regen_size: data.outfit_regen_size || '9:16',
+      outfit_regen_quality: data.outfit_regen_quality || '2K',
     })
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
@@ -582,16 +632,20 @@ async function saveConfig() {
       understand_model: cfg.understand_model,
       understand_prompt: cfg.understand_prompt,
       understand_temperature: cfg.understand_temperature,
-      imagegen_model: cfg.imagegen_model,
-      imagegen_prompt: cfg.imagegen_prompt,
-      imagegen_size: cfg.imagegen_size,
-      imagegen_quality: cfg.imagegen_quality,
-      splitting_api_url: cfg.splitting_api_url,
-      face_removing_api_url: cfg.face_removing_api_url,
-      face_removing_score_thresh: cfg.face_removing_score_thresh,
-      face_removing_margin_scale: cfg.face_removing_margin_scale,
-      face_removing_head_top_ratio: cfg.face_removing_head_top_ratio,
-      upscaling_scale: cfg.upscaling_scale,
+      outfit_select_model: cfg.outfit_select_model,
+      outfit_select_prompt: cfg.outfit_select_prompt,
+      outfit_select_temperature: cfg.outfit_select_temperature,
+      outfit_detail_model: cfg.outfit_detail_model,
+      outfit_detail_prompt: cfg.outfit_detail_prompt,
+      outfit_detail_temperature: cfg.outfit_detail_temperature,
+      product_imagegen_model: cfg.product_imagegen_model,
+      product_imagegen_prompt: cfg.product_imagegen_prompt,
+      product_imagegen_size: cfg.product_imagegen_size,
+      product_imagegen_quality: cfg.product_imagegen_quality,
+      outfit_regen_model: cfg.outfit_regen_model,
+      outfit_regen_prompt: cfg.outfit_regen_prompt,
+      outfit_regen_size: cfg.outfit_regen_size,
+      outfit_regen_quality: cfg.outfit_regen_quality,
     })
     ElMessage.success('配置已保存')
     showConfig.value = false
@@ -642,10 +696,14 @@ function toggleFilter(status) {
 const STATUS_CONFIG = {
   pending: { label: '排队中', type: 'info' },
   understanding: { label: '理解视频', type: 'primary' },
-  imagegen: { label: '图片生成', type: '', customColor: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' }, // Purple
-  splitting: { label: '拆分图片', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' }, // Pink
-  face_removing: { label: '消除人脸', type: '', customColor: '#f59e0b', bg: '#fffbeb', border: '#fde68a' }, // Orange
-  upscaling: { label: '图片超分', type: '', customColor: '#0ea5e9', bg: '#f0f9ff', border: '#bae6fd' }, // Sky blue
+  imagegen: { label: '抽帧上传', type: '', customColor: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' },
+  outfit_selecting: { label: '穿搭识别', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' },
+  outfit_detailing: { label: '单品分析', type: '', customColor: '#a855f7', bg: '#faf5ff', border: '#e9d5ff' },
+  product_imagegen: { label: '单品生图', type: '', customColor: '#f97316', bg: '#fff7ed', border: '#fed7aa' },
+  outfit_regen: { label: '造型重生', type: '', customColor: '#06b6d4', bg: '#ecfeff', border: '#a5f3fc' },
+  splitting: { label: '拆分图片', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' }, // legacy
+  face_removing: { label: '消除人脸', type: '', customColor: '#f59e0b', bg: '#fffbeb', border: '#fde68a' }, // legacy
+  upscaling: { label: '图片超分', type: '', customColor: '#0ea5e9', bg: '#f0f9ff', border: '#bae6fd' }, // legacy
   paused: { label: '已暂停', type: 'info' },
   success: { label: '已完成', type: 'success' },
   fail: { label: '失败', type: 'danger' },
@@ -676,7 +734,7 @@ function canStart(item) {
 }
 
 function canPause(item) {
-  return ['pending', 'understanding'].includes(item.process_status)
+  return ['pending', 'understanding', 'imagegen', 'outfit_selecting', 'outfit_detailing', 'product_imagegen', 'outfit_regen'].includes(item.process_status)
 }
 
 function canResume(item) {
@@ -740,6 +798,28 @@ async function handleBatchResume() {
     ElMessage.error(err?.response?.data?.detail || '批量重试失败')
   } finally {
     batchResuming.value = false
+  }
+}
+
+async function handleBatchRestartStage2() {
+  try {
+    await ElMessageBox.confirm(
+      '将对所有"成功"状态的模板重跑阶段2（抽帧生图），保留视频理解结果。确认继续？',
+      '一键生成造型图',
+      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  batchStage2ing.value = true
+  try {
+    await batchRestartStage2Templates()
+    ElMessage.success('已触发批量生成造型图，后台处理中…')
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '触发失败')
+  } finally {
+    batchStage2ing.value = false
   }
 }
 

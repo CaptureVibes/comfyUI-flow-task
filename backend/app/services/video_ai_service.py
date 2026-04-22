@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import json
 import logging
 import os
@@ -37,7 +36,7 @@ _queue_processor_task: asyncio.Task | None = None
 _persist_worker_task: asyncio.Task | None = None
 
 # 并发数：同时处理的最大任务数
-_CONCURRENCY = 25
+_CONCURRENCY = 5
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
 _PERSIST_INTERVAL = 2.0
 
@@ -189,9 +188,14 @@ _IMAGEGEN_POLL_TIMEOUT = 500.0   # 最长等待时间（秒）
 
 
 async def _extract_frames(video_url: str, template_id: str) -> list[str]:
+    """抽帧（使用默认 1.5s 间隔，保持向后兼容）。"""
+    return await _extract_frames_with_interval(video_url, template_id, interval=_FRAME_INTERVAL)
+
+
+async def _extract_frames_with_interval(video_url: str, template_id: str, *, interval: float = 1.0) -> list[str]:
     """
     从视频 URL 抽帧，返回帧图片的 base64 data URL 列表（image/jpeg）。
-    超过 15s 的视频只截取前 15s，每 1.5s 一帧，抛弃尾帧，最多 10 帧。
+    超过 15s 的视频只截取前 15s，按 interval 秒抽一帧，抛弃尾帧。
     使用 ffmpeg 命令行完成：先下载视频到临时文件，再抽帧。
     """
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -220,12 +224,13 @@ async def _extract_frames(video_url: str, template_id: str) -> list[str]:
         effective_duration = min(duration, _MAX_VIDEO_SECONDS)
         logger.info("[%s] Video duration=%.1fs, effective=%.1fs", template_id, duration, effective_duration)
 
-        # 3. 计算帧时间戳：0, 1.5, 3.0 … 最多 10 帧，抛弃尾帧（确保时间戳 < effective_duration）
+        # 3. 计算帧时间戳：0, interval, 2*interval … 抛弃尾帧（确保时间戳 < effective_duration）
+        max_frames = max(1, int(effective_duration / interval) + 1)
         timestamps = []
         t = 0.0
-        while t < effective_duration and len(timestamps) < _MAX_FRAMES:
+        while t < effective_duration and len(timestamps) < max_frames:
             timestamps.append(t)
-            t += _FRAME_INTERVAL
+            t += interval
         logger.info("[%s] Extracting %d frames at timestamps: %s", template_id, len(timestamps), timestamps)
 
         # 4. 用 ffmpeg 批量抽帧
@@ -274,290 +279,327 @@ async def _upload_frame_to_cdn(data_url: str) -> str:
     return result.url
 
 
+_FRAME_INTERVAL_NEW = 1.0  # 新流程：每 1s 一帧
+
+
 async def _run_imagegen_stage(
     *,
     template_id: str,
     video_url: str,
+) -> list[dict]:
+    """
+    第二阶段：1s抽一帧 → 并发上传 CDN。
+    返回 frame_shots 列表，每项格式：{"image_url": str, "frame_index": int}
+    """
+    # 1. 抽帧（1s 间隔）
+    frame_data_urls = await _extract_frames_with_interval(video_url, template_id, interval=_FRAME_INTERVAL_NEW)
+    if not frame_data_urls:
+        raise ValueError("视频抽帧失败，未获取到任何帧图片")
+
+    # 2. 并发上传所有帧到 CDN
+    logger.info("[%s] Uploading %d frames to CDN", template_id, len(frame_data_urls))
+    upload_results = await asyncio.gather(
+        *[_upload_frame_to_cdn(du) for du in frame_data_urls],
+        return_exceptions=True,
+    )
+    frame_shots = []
+    for i, r in enumerate(upload_results):
+        if isinstance(r, Exception):
+            logger.warning("[%s] Frame %d upload failed: %s", template_id, i, r)
+        else:
+            frame_shots.append({"image_url": r, "frame_index": i})
+
+    if not frame_shots:
+        raise ValueError("所有帧上传 CDN 失败")
+    logger.info("[%s] Imagegen stage done: %d frames uploaded to CDN", template_id, len(frame_shots))
+    return frame_shots
+
+
+# JSON schema for outfit selection response
+_OUTFIT_SELECT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "outfits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "representative_frame_index": {"type": "integer"},
+                    "frame_indices": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    },
+                },
+                "required": ["representative_frame_index", "frame_indices"],
+            },
+        },
+    },
+    "required": ["outfits"],
+}
+
+# JSON schema for outfit detail (single outfit)
+_OUTFIT_DETAIL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "outfit_style": {"type": "string"},
+        "solo_products": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "description"],
+            },
+        },
+    },
+    "required": ["outfit_style", "solo_products"],
+}
+
+
+async def _run_outfit_selecting_stage(
+    *,
+    template_id: str,
+    frame_shots: list[dict],
+    model: str,
+    prompt: str,
+    temperature: float,
+) -> list[dict]:
+    """
+    阶段3：将所有帧图发给 Gemini，识别 unique 穿搭并选出代表帧。
+    返回 outfit_shots 列表，每项：{"image_url": str, "frame_index": int, "group_frame_indices": [int]}
+    """
+    from app.services.ai_api import call_gemini_api_with_images
+
+    if not frame_shots:
+        raise ValueError("没有帧图片，无法进行穿搭识别")
+
+    frame_urls = [s["image_url"] for s in frame_shots]
+    url_to_index = {s["image_url"]: s["frame_index"] for s in frame_shots}
+
+    default_prompt = (
+        "以下是从视频中1秒一帧抽取的图片，请识别其中的独特穿搭（outfit）。"
+        "不同镜头角度的同一套穿搭算同一个，只选出一张最能代表该穿搭的图。"
+        "请以JSON格式输出，其中 representative_frame_index 为帧序号（从0开始），"
+        "frame_indices 为属于该穿搭的所有帧序号列表。"
+    )
+    actual_prompt = prompt.strip() if prompt.strip() else default_prompt
+
+    raw = await call_gemini_api_with_images(
+        model_name=model,
+        prompt=actual_prompt,
+        image_urls=frame_urls,
+        temperature=temperature,
+        response_schema=_OUTFIT_SELECT_SCHEMA,
+    )
+
+    import json as _json
+    try:
+        data = _json.loads(raw)
+        outfits = data.get("outfits", [])
+    except Exception as exc:
+        raise ValueError(f"穿搭识别 Gemini 返回非 JSON: {raw[:300]}") from exc
+
+    if not outfits:
+        raise ValueError("Gemini 未识别出任何穿搭")
+
+    outfit_shots = []
+    for outfit in outfits:
+        rep_idx = outfit.get("representative_frame_index", 0)
+        group_indices = outfit.get("frame_indices", [rep_idx])
+        # 找到对应帧
+        if 0 <= rep_idx < len(frame_shots):
+            shot = frame_shots[rep_idx]
+        else:
+            shot = frame_shots[0]
+        outfit_shots.append({
+            "image_url": shot["image_url"],
+            "frame_index": shot["frame_index"],
+            "group_frame_indices": group_indices,
+        })
+
+    logger.info("[%s] Outfit selecting done: %d unique outfits", template_id, len(outfit_shots))
+    return outfit_shots
+
+
+async def _run_outfit_detail_analysis(
+    *,
+    template_id: str,
+    outfit_shots: list[dict],
+    model: str,
+    prompt: str,
+    temperature: float,
+) -> list[dict]:
+    """
+    步骤4a：对每个穿搭图用 Gemini 分析，返回 outfit_details 列表。
+    每项：{image_url, frame_index, group_frame_indices, outfit_style, solo_products:[{name,description}]}
+    """
+    from app.services.ai_api import call_gemini_api_with_images
+    import json as _json
+
+    default_prompt = (
+        "请分析这张穿搭图，输出整体造型风格描述和图中所有穿搭单品的名称及描述。"
+        "以JSON格式返回，outfit_style为整体风格，solo_products为单品数组，每项含name和description。"
+    )
+    actual_prompt = prompt.strip() if prompt.strip() else default_prompt
+
+    result = []
+    for i, outfit in enumerate(outfit_shots):
+        outfit_image_url = outfit["image_url"]
+        logger.info("[%s] Outfit detail analysis [%d/%d]", template_id, i + 1, len(outfit_shots))
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                raw = await call_gemini_api_with_images(
+                    model_name=model,
+                    prompt=actual_prompt,
+                    image_urls=[outfit_image_url],
+                    temperature=temperature,
+                    response_schema=_OUTFIT_DETAIL_SCHEMA,
+                )
+                detail = _json.loads(raw)
+                last_exc = None
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                logger.warning("[%s] Outfit detail [%d] attempt %d/3 failed: %s", template_id, i, attempt, exc)
+                if attempt < 3:
+                    await asyncio.sleep(min(attempt * 2, 10))
+        if last_exc is not None:
+            raise ValueError(f"Outfit detail analysis outfit[{i}] failed: {last_exc}") from last_exc
+
+        outfit_style = detail.get("outfit_style", "")
+        solo_products = detail.get("solo_products", [])
+        logger.info("[%s] Outfit [%d]: style=%s, products=%d", template_id, i, outfit_style[:80], len(solo_products))
+        result.append({
+            "image_url": outfit_image_url,
+            "frame_index": outfit.get("frame_index"),
+            "group_frame_indices": outfit.get("group_frame_indices", []),
+            "outfit_style": outfit_style,
+            "solo_products": solo_products,
+        })
+    return result
+
+
+async def _run_product_imagegen(
+    *,
+    template_id: str,
+    outfit_details: list[dict],
+    outfit_shots: list[dict],
     model: str,
     prompt: str,
     size: str,
     quality: str,
 ) -> list[dict]:
     """
-    第二阶段完整流程：抽帧 → 上传 CDN → 调用图片生成 API → 上传结果到 CDN。
-    返回 extracted_shots 列表，每项格式：{"image_url": str, "description": ""}
+    步骤4b：对每个穿搭的每个单品并发生成单品图。
+    返回与 outfit_details 同构的列表，solo_products 中加入 product_image_url 字段。
     """
     from app.services.ai_api import generate_image
-
-    # 1. 抽帧
-    frame_data_urls = await _extract_frames(video_url, template_id)
-    if not frame_data_urls:
-        raise ValueError("视频抽帧失败，未获取到任何帧图片")
-
-    # 2. 上传所有帧到 CDN（并发）
-    logger.info("[%s] Uploading %d frames to CDN", template_id, len(frame_data_urls))
-    upload_results = await asyncio.gather(
-        *[_upload_frame_to_cdn(du) for du in frame_data_urls],
-        return_exceptions=True,
-    )
-    frame_cdn_urls = []
-    for i, r in enumerate(upload_results):
-        if isinstance(r, Exception):
-            logger.warning("[%s] Frame %d upload failed: %s", template_id, i, r)
-        else:
-            frame_cdn_urls.append(r)
-
-    if not frame_cdn_urls:
-        raise ValueError("所有帧上传 CDN 失败")
-    logger.info("[%s] %d frames uploaded to CDN, calling image gen API", template_id, len(frame_cdn_urls))
-
-    # 3. 生成图片（通过 Google SDK）
-    img_bytes = await generate_image(
-        model_name=model,
-        prompt=prompt,
-        image_urls=frame_cdn_urls,
-        aspect_ratio=size,
-        image_size=quality,
-    )
-    logger.info("[%s] Image gen returned %d bytes, uploading to CDN", template_id, len(img_bytes))
-
-    # 4. 上传结果图到我们的 CDN
     from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
-    svc = UpstreamImageUploadService()
-    _ct, _ext = detect_image_content_type(img_bytes)
-    upload_result = await svc.upload_image(img_bytes, _ct, f"imagegen_result{_ext}")
-    cdn_url = upload_result.url
-    logger.info("[%s] Imagegen result uploaded to CDN: %s", template_id, cdn_url[:80])
-
-    shots = [{"image_url": cdn_url, "description": ""}]
-    logger.info("[%s] Imagegen stage done: 1 shot generated", template_id)
-    return shots
-
-
-async def _run_splitting_stage(
-    *,
-    template_id: str,
-    image_url: str,
-    splitting_api_url: str = "",
-) -> list[dict]:
-    """
-    第三阶段：调用 segment API 对生图结果进行人物分割，
-    将每个 segment 的 base64 上传 CDN，返回 shots 列表。
-    每项格式：{"image_url": str, "description": "", "bbox": [...], "confidence": float}
-    最多重试 3 次。
-    """
-    from app.core.config import settings
-    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
-
-    base_url = splitting_api_url or settings.splitting_api_base_url
-    api_url = f"{base_url.rstrip('/')}/api/segment-models"
-
-    last_exc: Exception | None = None
-    for attempt in range(1, 4):
-        try:
-            logger.info("[%s] Splitting attempt %d/3: calling segment API for image: %s", template_id, attempt, image_url[:80])
-
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                resp = await client.post(api_url, json={"image_url": image_url})
-                if not resp.is_success:
-                    logger.error("[%s] Segment API error: status=%d, body=%s", template_id, resp.status_code, resp.text[:300])
-                resp.raise_for_status()
-                data = resp.json()
-
-            if not data.get("success"):
-                raise ValueError(f"Segment API returned success=false: {data.get('message', '')}")
-
-            segments: list[dict] = data.get("segments", [])
-            if not segments:
-                raise ValueError("Segment API returned no segments")
-
-            logger.info("[%s] Splitting: %d segments received, uploading to CDN", template_id, len(segments))
-
-            svc = UpstreamImageUploadService()
-            shots = []
-            for seg in segments:
-                b64 = seg.get("image_base64", "")
-                if not b64:
-                    logger.warning("[%s] Segment index=%s has no image_base64, skipping", template_id, seg.get("index"))
-                    continue
-                try:
-                    content = base64.b64decode(b64)
-                    _ct, _ext = detect_image_content_type(content)
-                    result = await svc.upload_image(content, _ct, f"segment_{seg.get('index', 0)}{_ext}")
-                    shots.append({
-                        "image_url": result.url,
-                        "description": "",
-                        "bbox": seg.get("bbox"),
-                        "confidence": seg.get("confidence"),
-                        "image_base64": b64,  # 保留 base64 供第四阶段直接使用，避免重复下载
-                    })
-                except Exception as exc:
-                    logger.warning("[%s] Segment index=%s upload failed: %s", template_id, seg.get("index"), exc)
-
-            if not shots:
-                raise ValueError("所有 segment 上传 CDN 失败")
-
-            logger.info("[%s] Splitting stage done: %d shots uploaded", template_id, len(shots))
-            return shots
-
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("[%s] Splitting attempt %d/3 failed: %s", template_id, attempt, exc)
-
-    raise last_exc  # type: ignore[misc]
-
-
-async def _run_face_removing_stage(
-    *,
-    template_id: str,
-    shots: list[dict],
-    face_removing_api_url: str = "",
-    score_thresh: float = 0.3,
-    margin_scale: float = 0.2,
-    head_top_ratio: float = 0.7,
-) -> list[dict]:
-    """
-    第四阶段：对每张 shot 图片调用去脸 API，返回更新后的 shots 列表。
-    processedUrl 替换原 image_url。每张图最多重试 3 次。
-    """
-    base_url = face_removing_api_url or "http://34.86.216.234:8001"
-    api_url = f"{base_url.rstrip('/')}/api/v1/style-outfits/processBodyShape"
-    logger.info("[%s] Face-removing: processing %d shots, api=%s", template_id, len(shots), api_url)
-
-    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
-    upload_svc = UpstreamImageUploadService()
-
-    result_shots = []
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        for i, shot in enumerate(shots):
-            # 优先用分割阶段已有的 base64，避免重复下载
-            image_b64 = shot.get("image_base64", "")
-            if not image_b64:
-                image_url = shot.get("image_url", "")
-                if not image_url:
-                    result_shots.append(shot)
-                    continue
-                logger.info("[%s] Face-removing shot[%d]: no base64, downloading from %s", template_id, i, image_url[:80])
-                dl_resp = await client.get(image_url)
-                dl_resp.raise_for_status()
-                image_b64 = base64.b64encode(dl_resp.content).decode()
-
-            req_payload = {
-                "imageBase64": image_b64,
-                "userId": "default",
-                "scoreThresh": score_thresh,
-                "marginScale": margin_scale,
-                "headTopRatio": head_top_ratio,
-            }
-
-            last_exc: Exception | None = None
-            cdn_url: str | None = None
-            for attempt in range(1, 4):
-                try:
-                    logger.info("[%s] Face-removing shot[%d] attempt %d/3: calling API", template_id, i, attempt)
-                    resp = await client.post(api_url, json=req_payload)
-                    if not resp.is_success:
-                        logger.error("[%s] Face-removing shot[%d] API error: status=%d body=%s", template_id, i, resp.status_code, resp.text[:300])
-                    resp.raise_for_status()
-                    data = resp.json()
-
-                    if data.get("code") != 0 or not data.get("success"):
-                        raise ValueError(f"Face-removing API shot[{i}] error: {data.get('message', '')}")
-
-                    processed_url = data["data"]["processedUrl"]
-                    logger.info("[%s] Face-removing shot[%d] processedUrl: %s", template_id, i, processed_url[:80])
-
-                    # 下载处理后图片并上传到我们的 CDN
-                    dl2 = await client.get(processed_url)
-                    dl2.raise_for_status()
-                    _ct, _ext = detect_image_content_type(dl2.content)
-                    upload_result = await upload_svc.upload_image(dl2.content, _ct, f"face_removed_{i}{_ext}")
-                    cdn_url = upload_result.url
-                    logger.info("[%s] Face-removing shot[%d] uploaded to CDN: %s", template_id, i, cdn_url[:80])
-                    last_exc = None
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    logger.warning("[%s] Face-removing shot[%d] attempt %d/3 failed: %s", template_id, i, attempt, exc)
-
-            if last_exc is not None:
-                raise ValueError(f"Face-removing shot[{i}] failed after 3 attempts: {last_exc}") from last_exc
-
-            # 去掉 image_base64 字段，不存入最终结果
-            shot_out = {k: v for k, v in shot.items() if k != "image_base64"}
-            result_shots.append({**shot_out, "image_url": cdn_url})
-
-    logger.info("[%s] Face-removing stage done: %d shots", template_id, len(result_shots))
-    for i, s in enumerate(result_shots):
-        logger.info("[%s]   shot[%d] final image_url=%s", template_id, i, s.get("image_url", "")[:120])
-    return result_shots
-
-
-async def _run_upscaling_stage(
-    *,
-    template_id: str,
-    shots: list[dict],
-    upscaling_scale: int = 1024,
-) -> list[dict]:
-    """
-    第五阶段：用 Pillow LANCZOS 将每张 shot 图片缩放到目标长边像素，上传 CDN 后替换 image_url。
-    """
-    from PIL import Image
-    from app.services.upload_service import UpstreamImageUploadService
 
     upload_svc = UpstreamImageUploadService()
-    logger.info("[%s] Upscaling: processing %d shots, target_long_side=%d", template_id, len(shots), upscaling_scale)
+    default_prompt = "根据这张穿搭参考图，生成图中【{name}】单品的独立展示图。描述：{description}。保持原图风格，白色或简洁背景，突出单品细节。"
 
-    result_shots = []
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for i, shot in enumerate(shots):
-            image_url = shot.get("image_url", "")
-            if not image_url:
-                result_shots.append(shot)
-                continue
+    result = []
+    for i, detail in enumerate(outfit_details):
+        outfit_image_url = detail["image_url"]
+        solo_products = detail.get("solo_products", [])
 
-            last_exc: Exception | None = None
-            cdn_url: str | None = None
-            for attempt in range(1, 4):
-                try:
-                    # 下载原图
-                    dl_resp = await client.get(image_url)
-                    dl_resp.raise_for_status()
-                    img = Image.open(io.BytesIO(dl_resp.content))
+        async def _gen_one(product: dict, outfit_url: str, idx: int) -> str | None:
+            name = product.get("name", "")
+            desc = product.get("description", "")
+            p_prompt = prompt.strip()
+            if not p_prompt:
+                p_prompt = default_prompt.format(name=name, description=desc)
+            else:
+                p_prompt = p_prompt.replace("{name}", name).replace("{description}", desc)
+            try:
+                img_bytes = await generate_image(
+                    model_name=model,
+                    prompt=p_prompt,
+                    image_urls=[outfit_url],
+                    aspect_ratio=size,
+                    image_size=quality,
+                )
+                _ct, _ext = detect_image_content_type(img_bytes)
+                res = await upload_svc.upload_image(img_bytes, _ct, f"product_{idx}_{name[:20]}{_ext}")
+                return res.url
+            except Exception as exc:
+                logger.warning("[%s] Product image gen failed outfit[%d] '%s': %s", template_id, i, name, exc)
+                return None
 
-                    w, h = img.size
-                    long_side = max(w, h)
-                    if long_side >= upscaling_scale:
-                        logger.info("[%s] Upscaling shot[%d]: already %dx%d >= %d, skip", template_id, i, w, h, upscaling_scale)
-                        cdn_url = image_url  # 无需缩放，保留原 URL
-                        break
+        tasks = [_gen_one(p, outfit_image_url, i) for p in solo_products]
+        img_urls = await asyncio.gather(*tasks)
 
-                    scale_factor = upscaling_scale / long_side
-                    new_w = round(w * scale_factor)
-                    new_h = round(h * scale_factor)
-                    img_up = img.resize((new_w, new_h), Image.LANCZOS)
-                    logger.info("[%s] Upscaling shot[%d]: %dx%d -> %dx%d", template_id, i, w, h, new_w, new_h)
+        products_with_images = [
+            {**p, "product_image_url": url or ""}
+            for p, url in zip(solo_products, img_urls)
+        ]
+        result.append({**detail, "solo_products": products_with_images})
+        logger.info("[%s] Product imagegen outfit[%d]: %d products done", template_id, i, len(solo_products))
+    return result
 
-                    buf = io.BytesIO()
-                    img_up.save(buf, format="PNG")
-                    buf.seek(0)
 
-                    upload_result = await upload_svc.upload_image(buf.read(), "image/png", f"upscaled_{i}.png")
-                    cdn_url = upload_result.url
-                    logger.info("[%s] Upscaling shot[%d] uploaded to CDN: %s", template_id, i, cdn_url[:80])
-                    last_exc = None
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    logger.warning("[%s] Upscaling shot[%d] attempt %d/3 failed: %s", template_id, i, attempt, exc)
+async def _run_outfit_regen(
+    *,
+    template_id: str,
+    outfit_details: list[dict],
+    product_gen_results: list[dict],
+    outfit_shots: list[dict],
+    model: str,
+    prompt: str,
+    size: str,
+    quality: str,
+) -> list[dict]:
+    """
+    步骤4c：对每个穿搭，用所有单品图 + outfit_style 生成新造型图。
+    返回最终 final_outfits 列表，image_url 为新造型图 URL。
+    """
+    from app.services.ai_api import generate_image
+    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
 
-            if last_exc is not None:
-                raise ValueError(f"Upscaling shot[{i}] failed after 3 attempts: {last_exc}") from last_exc
+    upload_svc = UpstreamImageUploadService()
+    default_prompt = "根据以下单品图片，生成一张完整穿搭造型图。整体风格：{outfit_style}。人物使用商场展示用的塑料模特形象（非真人），面部为光滑无表情的标准模特脸，保持服装风格一致，背景简洁时尚。"
 
-            result_shots.append({**shot, "image_url": cdn_url})
+    final_outfits = []
+    for i, detail in enumerate(product_gen_results):
+        outfit_image_url = detail["image_url"]
+        outfit_style = detail.get("outfit_style", "")
+        solo_products = detail.get("solo_products", [])
+        product_cdn_urls = [p["product_image_url"] for p in solo_products if p.get("product_image_url")]
 
-    logger.info("[%s] Upscaling stage done: %d shots", template_id, len(result_shots))
-    return result_shots
+        new_outfit_url = outfit_image_url
+        if product_cdn_urls:
+            r_prompt = prompt.strip()
+            if not r_prompt:
+                r_prompt = default_prompt.format(outfit_style=outfit_style)
+            else:
+                r_prompt = r_prompt.replace("{outfit_style}", outfit_style)
+            try:
+                img_bytes = await generate_image(
+                    model_name=model,
+                    prompt=r_prompt,
+                    image_urls=product_cdn_urls,
+                    aspect_ratio=size,
+                    image_size=quality,
+                )
+                _ct, _ext = detect_image_content_type(img_bytes)
+                res = await upload_svc.upload_image(img_bytes, _ct, f"outfit_regen_{i}{_ext}")
+                new_outfit_url = res.url
+                logger.info("[%s] Outfit regen [%d] uploaded: %s", template_id, i, new_outfit_url[:80])
+            except Exception as exc:
+                logger.warning("[%s] Outfit regen [%d] failed, using original: %s", template_id, i, exc)
+
+        final_outfits.append({
+            **detail,
+            "image_url": new_outfit_url,
+            "original_outfit_image_url": outfit_image_url,
+        })
+    return final_outfits
 
 
 # =============================================================================
@@ -640,41 +682,65 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     await _persist_states([template_id])
                     return
 
-                # 加载用户流程配置（understand_*）
+                # 加载用户流程配置
                 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
-                # 步骤一：视频整体理解（如模板无 owner_id 则使用默认配置）
                 if tpl.owner_id is not None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
                     understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
                     understand_prompt = pipeline_cfg.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
                     understand_temperature = pipeline_cfg.understand_temperature
-                    imagegen_model = pipeline_cfg.imagegen_model or "gemini-3.1-flash-image-preview"
-                    imagegen_prompt = pipeline_cfg.imagegen_prompt or "根据参考图生成同款风格图片"
-                    imagegen_size = pipeline_cfg.imagegen_size or "9:16"
-                    imagegen_quality = pipeline_cfg.imagegen_quality or "2K"
-                    splitting_api_url = pipeline_cfg.splitting_api_url or ""
-                    face_removing_api_url = pipeline_cfg.face_removing_api_url or ""
-                    face_removing_score_thresh = pipeline_cfg.face_removing_score_thresh
-                    face_removing_margin_scale = pipeline_cfg.face_removing_margin_scale
-                    face_removing_head_top_ratio = pipeline_cfg.face_removing_head_top_ratio
-                    upscaling_scale = pipeline_cfg.upscaling_scale or 1024
+                    # 步骤3：穿搭识别
+                    outfit_select_model = pipeline_cfg.outfit_select_model or "gemini-3.1-pro-preview"
+                    outfit_select_prompt = pipeline_cfg.outfit_select_prompt or ""
+                    outfit_select_temperature = pipeline_cfg.outfit_select_temperature
+                    # 步骤4a：穿搭单品理解
+                    outfit_detail_model = pipeline_cfg.outfit_detail_model or "gemini-3.1-pro-preview"
+                    outfit_detail_prompt = pipeline_cfg.outfit_detail_prompt or ""
+                    outfit_detail_temperature = pipeline_cfg.outfit_detail_temperature
+                    # 步骤4b：单品图生成
+                    product_imagegen_model = pipeline_cfg.product_imagegen_model or "gemini-3.1-flash-image-preview"
+                    product_imagegen_prompt = pipeline_cfg.product_imagegen_prompt or ""
+                    product_imagegen_size = pipeline_cfg.product_imagegen_size or "1:1"
+                    product_imagegen_quality = pipeline_cfg.product_imagegen_quality or "2K"
+                    # 步骤4c：新造型图生成
+                    outfit_regen_model = pipeline_cfg.outfit_regen_model or "gemini-3.1-flash-image-preview"
+                    outfit_regen_prompt = pipeline_cfg.outfit_regen_prompt or ""
+                    outfit_regen_size = pipeline_cfg.outfit_regen_size or "9:16"
+                    outfit_regen_quality = pipeline_cfg.outfit_regen_quality or "2K"
                 else:
                     understand_model = "gemini-3.1-pro-preview"
                     understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
                     understand_temperature = 0.3
-                    imagegen_model = "gemini-3.1-flash-image-preview"
-                    imagegen_prompt = "根据参考图生成同款风格图片"
-                    imagegen_size = "9:16"
-                    imagegen_quality = "2K"
-                    splitting_api_url = ""
-                    face_removing_api_url = ""
-                    face_removing_score_thresh = 0.3
-                    face_removing_margin_scale = 0.2
-                    face_removing_head_top_ratio = 0.7
-                    upscaling_scale = 1024
+                    outfit_select_model = "gemini-3.1-pro-preview"
+                    outfit_select_prompt = ""
+                    outfit_select_temperature = 0.3
+                    outfit_detail_model = "gemini-3.1-pro-preview"
+                    outfit_detail_prompt = ""
+                    outfit_detail_temperature = 0.3
+                    product_imagegen_model = "gemini-3.1-flash-image-preview"
+                    product_imagegen_prompt = ""
+                    product_imagegen_size = "1:1"
+                    product_imagegen_quality = "2K"
+                    outfit_regen_model = "gemini-3.1-flash-image-preview"
+                    outfit_regen_prompt = ""
+                    outfit_regen_size = "9:16"
+                    outfit_regen_quality = "2K"
             # 获取当前 state（可能带有已完成阶段信息）
             state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
             completed_stages: list[str] = state.get("completed_stages") or []
+
+            # 断点续跑：从 DB extra 字段恢复中间阶段数据（内存 state 可能已清空）
+            async with SessionLocal() as session:
+                _tpl_for_restore = await session.get(VideoAITemplate, uuid_val)
+                _extra = dict(_tpl_for_restore.extra or {}) if _tpl_for_restore else {}
+            if "imagegen" in completed_stages and not state.get("frame_shots"):
+                state["frame_shots"] = _extra.get("frame_shots") or []
+            if "outfit_selecting" in completed_stages and not state.get("outfit_shots"):
+                state["outfit_shots"] = _extra.get("outfit_shots") or []
+            if "outfit_regen" in completed_stages and not state.get("final_outfits"):
+                state["final_outfits"] = _extra.get("final_outfits") or []
+            if "outfit_detailing" in completed_stages and not state.get("outfit_detailing_progress"):
+                state["outfit_detailing_progress"] = _extra.get("outfit_detailing_progress") or []
 
             # ========== 步骤 1: 视频整体理解（最多重试 3 次）==========
             if "understanding" in completed_stages:
@@ -706,24 +772,20 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         tpl.prompt_description = prompt_description
                         await session.commit()
 
-            # ========== 步骤 2: 抽帧生图（最多重试 3 次）==========
+            # ========== 步骤 2: 抽帧并上传 CDN（1s一帧，最多重试 3 次）==========
             if "imagegen" in completed_stages:
-                shots = state.get("extracted_shots") or []
-                logger.info("[%s] imagegen skipped (already completed), %d shots", template_id, len(shots))
+                frame_shots = state.get("frame_shots") or []
+                logger.info("[%s] imagegen(frame extraction) skipped (already completed), %d frames", template_id, len(frame_shots))
             else:
                 _set_status(template_id, VideoAIProcessStatus.imagegen)
-                logger.info("[%s] imagegen stage started", template_id)
+                logger.info("[%s] imagegen(frame extraction) stage started", template_id)
 
                 last_exc = None
                 for attempt in range(1, 4):
                     try:
-                        shots = await _run_imagegen_stage(
+                        frame_shots = await _run_imagegen_stage(
                             template_id=template_id,
                             video_url=video_url,
-                            model=imagegen_model,
-                            prompt=imagegen_prompt,
-                            size=imagegen_size,
-                            quality=imagegen_quality,
                         )
                         last_exc = None
                         break
@@ -739,152 +801,160 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     raise last_exc
 
                 state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.imagegen))
-                state["extracted_shots"] = shots
+                state["frame_shots"] = frame_shots
                 state["updated_at"] = _utcnow_iso()
                 if "imagegen" not in state.get("completed_stages", []):
                     state.setdefault("completed_stages", []).append("imagegen")
                 _mark_dirty(template_id)
 
-                # 持久化 extracted_shots 到数据库，同时快照到 extra.imagegen_shots
+                # 快照帧图到 extra.frame_shots
                 async with SessionLocal() as session:
                     tpl = await session.get(VideoAITemplate, uuid_val)
                     if tpl:
-                        tpl.extracted_shots = shots
                         extra = dict(tpl.extra or {})
-                        extra["imagegen_shots"] = shots
+                        extra["frame_shots"] = frame_shots
                         tpl.extra = extra
                         await session.commit()
-                logger.info("[%s] imagegen stage completed, %d shots saved", template_id, len(shots))
+                logger.info("[%s] imagegen stage completed, %d frames saved", template_id, len(frame_shots))
 
-            # ========== 步骤 3: 拆分图片（失败则删除模板和视频源）==========
-            if "splitting" in completed_stages:
-                split_shots = state.get("extracted_shots") or []
-                logger.info("[%s] splitting skipped (already completed), %d shots", template_id, len(split_shots))
+            # ========== 步骤 3: Gemini 识别 Unique 穿搭（最多重试 3 次）==========
+            if "outfit_selecting" in completed_stages:
+                outfit_shots = state.get("outfit_shots") or []
+                logger.info("[%s] outfit_selecting skipped (already completed), %d outfits", template_id, len(outfit_shots))
             else:
-                _set_status(template_id, VideoAIProcessStatus.splitting)
-                # imagegen 产出的是 1 张图，取第一张的 image_url 进行拆分
-                imagegen_image_url = shots[0]["image_url"] if shots else None
-                if not imagegen_image_url:
-                    raise ValueError("imagegen 未产出图片，无法进行拆分")
-                logger.info("[%s] splitting stage started, image=%s", template_id, imagegen_image_url[:80])
-                try:
-                    split_shots = await _run_splitting_stage(
-                        template_id=template_id,
-                        image_url=imagegen_image_url,
-                        splitting_api_url=splitting_api_url,
-                    )
-                except Exception as exc:
-                    logger.error("[%s] splitting failed, deleting template and video source: %s", template_id, exc)
-                    await _delete_template_and_video_source(template_id, uuid_val)
-                    video_ai_states.pop(template_id, None)
-                    video_ai_worker_tasks.pop(template_id, None)
-                    return
+                _set_status(template_id, VideoAIProcessStatus.outfit_selecting)
+                logger.info("[%s] outfit_selecting stage started, %d frames", template_id, len(frame_shots))
 
-                if not split_shots:
-                    logger.error("[%s] splitting returned no shots, deleting template and video source", template_id)
-                    await _delete_template_and_video_source(template_id, uuid_val)
-                    video_ai_states.pop(template_id, None)
-                    video_ai_worker_tasks.pop(template_id, None)
-                    return
+                last_exc = None
+                for attempt in range(1, 4):
+                    try:
+                        outfit_shots = await _run_outfit_selecting_stage(
+                            template_id=template_id,
+                            frame_shots=frame_shots,
+                            model=outfit_select_model,
+                            prompt=outfit_select_prompt,
+                            temperature=outfit_select_temperature,
+                        )
+                        last_exc = None
+                        break
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        last_exc = exc
+                        delay = min(attempt * 2, 30)
+                        logger.warning("[%s] outfit_selecting attempt %d/3 failed: %s", template_id, attempt, exc)
+                        if attempt < 3:
+                            await asyncio.sleep(delay)
+                if last_exc is not None:
+                    raise last_exc
 
-                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.splitting))
-                state["extracted_shots"] = split_shots  # 内存保留 base64 供步骤4使用
+                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.outfit_selecting))
+                state["outfit_shots"] = outfit_shots
                 state["updated_at"] = _utcnow_iso()
-                if "splitting" not in state.get("completed_stages", []):
-                    state.setdefault("completed_stages", []).append("splitting")
+                if "outfit_selecting" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("outfit_selecting")
                 _mark_dirty(template_id)
 
-                # 立即持久化到数据库 + 让前端 polling 立刻能看到结果，同时快照到 extra.splitting_shots
-                # 存入 DB 和前端展示时去掉 image_base64（只在内存中传给步骤4）
-                split_shots_for_db = [{k: v for k, v in s.items() if k != "image_base64"} for s in split_shots]
                 async with SessionLocal() as session:
                     tpl = await session.get(VideoAITemplate, uuid_val)
                     if tpl:
-                        tpl.extracted_shots = split_shots_for_db
                         extra = dict(tpl.extra or {})
-                        extra["splitting_shots"] = split_shots_for_db
+                        extra["outfit_shots"] = outfit_shots
                         tpl.extra = extra
                         await session.commit()
-                logger.info("[%s] splitting stage completed, %d shots saved", template_id, len(split_shots))
+                logger.info("[%s] outfit_selecting stage completed, %d unique outfits", template_id, len(outfit_shots))
 
-            # ========== 步骤 4: 去脸（失败则删除模板和视频源）==========
-            if "face_removing" in completed_stages:
-                final_shots = state.get("extracted_shots") or split_shots
-                logger.info("[%s] face_removing skipped (already completed), %d shots", template_id, len(final_shots))
+            # ========== 步骤 4a: 穿搭单品理解（每个穿搭 → outfit_style + solo_products）==========
+            if "outfit_detailing" in completed_stages:
+                outfit_details = state.get("outfit_detailing_progress") or []
+                logger.info("[%s] outfit_detailing skipped (already completed), %d outfits", template_id, len(outfit_details))
             else:
-                _set_status(template_id, VideoAIProcessStatus.face_removing)
-                logger.info("[%s] face_removing stage started, %d shots", template_id, len(split_shots))
-                try:
-                    final_shots = await _run_face_removing_stage(
-                        template_id=template_id,
-                        shots=split_shots,
-                        face_removing_api_url=face_removing_api_url,
-                        score_thresh=face_removing_score_thresh,
-                        margin_scale=face_removing_margin_scale,
-                        head_top_ratio=face_removing_head_top_ratio,
-                    )
-                except Exception as exc:
-                    logger.error("[%s] face_removing failed, deleting template and video source: %s", template_id, exc)
-                    await _delete_template_and_video_source(template_id, uuid_val)
-                    video_ai_states.pop(template_id, None)
-                    video_ai_worker_tasks.pop(template_id, None)
-                    return
-
-                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.face_removing))
-                state["extracted_shots"] = final_shots
+                _set_status(template_id, VideoAIProcessStatus.outfit_detailing)
+                logger.info("[%s] outfit_detailing stage started, %d outfits", template_id, len(outfit_shots))
+                outfit_details = await _run_outfit_detail_analysis(
+                    template_id=template_id,
+                    outfit_shots=outfit_shots,
+                    model=outfit_detail_model,
+                    prompt=outfit_detail_prompt,
+                    temperature=outfit_detail_temperature,
+                )
+                state["outfit_detailing_progress"] = outfit_details
                 state["updated_at"] = _utcnow_iso()
-                if "face_removing" not in state.get("completed_stages", []):
-                    state.setdefault("completed_stages", []).append("face_removing")
+                if "outfit_detailing" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("outfit_detailing")
                 _mark_dirty(template_id)
-
-                # 持久化到数据库，同时快照到 extra.face_removing_shots
                 async with SessionLocal() as session:
                     tpl = await session.get(VideoAITemplate, uuid_val)
                     if tpl:
-                        tpl.extracted_shots = final_shots
                         extra = dict(tpl.extra or {})
-                        extra["face_removing_shots"] = final_shots
+                        extra["outfit_detailing_progress"] = outfit_details
                         tpl.extra = extra
                         await session.commit()
-                logger.info("[%s] face_removing stage completed, %d shots saved", template_id, len(final_shots))
+                logger.info("[%s] outfit_detailing stage completed, %d outfits analyzed", template_id, len(outfit_details))
 
-            # ========== 步骤 5: 图片超分（失败则删除模板和视频源）==========
-            if "upscaling" in completed_stages:
-                upscaled_shots = state.get("extracted_shots") or final_shots
-                logger.info("[%s] upscaling skipped (already completed), %d shots", template_id, len(upscaled_shots))
+            # ========== 步骤 4b: 单品图生成 ==========
+            if "product_imagegen" in completed_stages:
+                product_gen_results = state.get("product_gen_results") or []
+                logger.info("[%s] product_imagegen skipped (already completed)", template_id)
             else:
-                _set_status(template_id, VideoAIProcessStatus.upscaling)
-                logger.info("[%s] upscaling stage started, %d shots", template_id, len(final_shots))
-                try:
-                    upscaled_shots = await _run_upscaling_stage(
-                        template_id=template_id,
-                        shots=final_shots,
-                        upscaling_scale=upscaling_scale,
-                    )
-                except Exception as exc:
-                    logger.error("[%s] upscaling failed, deleting template and video source: %s", template_id, exc)
-                    await _delete_template_and_video_source(template_id, uuid_val)
-                    video_ai_states.pop(template_id, None)
-                    video_ai_worker_tasks.pop(template_id, None)
-                    return
-
-                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.upscaling))
-                state["extracted_shots"] = upscaled_shots
+                _set_status(template_id, VideoAIProcessStatus.product_imagegen)
+                logger.info("[%s] product_imagegen stage started", template_id)
+                product_gen_results = await _run_product_imagegen(
+                    template_id=template_id,
+                    outfit_details=outfit_details,
+                    outfit_shots=outfit_shots,
+                    model=product_imagegen_model,
+                    prompt=product_imagegen_prompt,
+                    size=product_imagegen_size,
+                    quality=product_imagegen_quality,
+                )
+                state["product_gen_results"] = product_gen_results
                 state["updated_at"] = _utcnow_iso()
-                if "upscaling" not in state.get("completed_stages", []):
-                    state.setdefault("completed_stages", []).append("upscaling")
+                if "product_imagegen" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("product_imagegen")
                 _mark_dirty(template_id)
-
-                # 持久化到数据库，超分后的图为最终造型图，快照到 extra.upscaling_shots
                 async with SessionLocal() as session:
                     tpl = await session.get(VideoAITemplate, uuid_val)
                     if tpl:
-                        tpl.extracted_shots = upscaled_shots
                         extra = dict(tpl.extra or {})
-                        extra["upscaling_shots"] = upscaled_shots
+                        extra["product_gen_results"] = product_gen_results
                         tpl.extra = extra
                         await session.commit()
-                logger.info("[%s] upscaling stage completed, %d shots saved", template_id, len(upscaled_shots))
+                logger.info("[%s] product_imagegen stage completed", template_id)
+
+            # ========== 步骤 4c: 新造型图生成 ==========
+            if "outfit_regen" in completed_stages:
+                final_outfits = state.get("final_outfits") or []
+                logger.info("[%s] outfit_regen skipped (already completed), %d outfits", template_id, len(final_outfits))
+            else:
+                _set_status(template_id, VideoAIProcessStatus.outfit_regen)
+                logger.info("[%s] outfit_regen stage started", template_id)
+                final_outfits = await _run_outfit_regen(
+                    template_id=template_id,
+                    outfit_details=outfit_details,
+                    product_gen_results=product_gen_results,
+                    outfit_shots=outfit_shots,
+                    model=outfit_regen_model,
+                    prompt=outfit_regen_prompt,
+                    size=outfit_regen_size,
+                    quality=outfit_regen_quality,
+                )
+                extracted_shots_final = [{"image_url": o["image_url"], "outfit_style": o.get("outfit_style", "")} for o in final_outfits]
+                state["final_outfits"] = final_outfits
+                state["extracted_shots"] = extracted_shots_final
+                state["updated_at"] = _utcnow_iso()
+                if "outfit_regen" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("outfit_regen")
+                _mark_dirty(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        tpl.extracted_shots = extracted_shots_final
+                        extra = dict(tpl.extra or {})
+                        extra["final_outfits"] = final_outfits
+                        tpl.extra = extra
+                        await session.commit()
+                logger.info("[%s] outfit_regen stage completed, %d outfits saved", template_id, len(final_outfits))
 
             # ========== 步骤 N: 成功 ==========
             _set_status(template_id, VideoAIProcessStatus.success)
@@ -1012,10 +1082,76 @@ async def restart_template(template_id: str) -> None:
     await enqueue_template(template_id, clear_stages=True)
 
 
+async def restart_from_stage2(template_id: str) -> None:
+    """
+    从阶段二重跑：保留阶段一（视频理解/prompt_description），
+    清除 imagegen 及之后的所有阶段数据，重新执行抽帧生图→穿搭识别→…流程。
+    """
+    # 先停止正在运行的任务
+    task = video_ai_worker_tasks.get(template_id)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    # 确保内存中有 state（从 DB 恢复）
+    if template_id not in video_ai_states:
+        try:
+            uuid_val = UUID(template_id)
+            async with SessionLocal() as session:
+                tpl = await session.get(VideoAITemplate, uuid_val)
+                if tpl and tpl.process_state:
+                    video_ai_states[template_id] = json.loads(tpl.process_state)
+        except Exception as exc:
+            logger.warning("[%s] restart_from_stage2: failed to restore state: %s", template_id, exc)
+
+    state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
+
+    # 只保留 understanding 阶段，清除其余
+    completed = state.get("completed_stages") or []
+    state["completed_stages"] = [s for s in completed if s == "understanding"]
+    state["frame_shots"] = []
+    state["outfit_shots"] = []
+    state["outfit_detailing_progress"] = []
+    state["product_gen_results"] = []
+    state["final_outfits"] = []
+    state["extracted_shots"] = []
+    state["status"] = VideoAIProcessStatus.pending.value
+    state["error_message"] = ""
+    state["updated_at"] = _utcnow_iso()
+    _mark_dirty(template_id)
+
+    # 同步清理 DB extra 字段（保留 understanding 之外的快照数据不需要了）
+    try:
+        uuid_val = UUID(template_id)
+        async with SessionLocal() as session:
+            tpl = await session.get(VideoAITemplate, uuid_val)
+            if tpl:
+                tpl.process_status = VideoAIProcessStatus.pending
+                tpl.process_error = None
+                tpl.extracted_shots = []
+                extra = dict(tpl.extra or {})
+                for key in ("frame_shots", "outfit_shots", "outfit_detailing_progress",
+                            "product_gen_results", "final_outfits"):
+                    extra.pop(key, None)
+                tpl.extra = extra
+                tpl.process_state = json.dumps(state, ensure_ascii=False)
+                await session.commit()
+    except Exception as exc:
+        logger.warning("[%s] restart_from_stage2: DB cleanup failed: %s", template_id, exc)
+
+    dirty_video_ai_ids.discard(template_id)
+    _ensure_persist_worker()
+    await video_ai_queue.put(template_id)
+    logger.info("[%s] restart_from_stage2 enqueued (keeping understanding stage)", template_id)
+
+
 async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
     """
     仅重新执行视频理解（understanding）步骤，更新 prompt_description，
-    不跑后续的 imagegen/splitting/face_removing/upscaling。
+    不跑后续的抽帧、穿搭识别和生成阶段。
     失败自动重试最多 max_retries 次。
     """
     from uuid import UUID
@@ -1151,6 +1287,47 @@ async def batch_reanalyze_templates(
     return {"total": len(template_ids), "success": success_count, "fail": fail_count, "errors": errors}
 
 
+async def batch_restart_stage2_templates(owner_id: str | None = None) -> dict:
+    """
+    后台批量对所有 success 状态的模板执行 restart_from_stage2（保留视频理解，从阶段2抽帧重跑）。
+    Returns:
+        {"total": N, "success": N, "fail": N}
+    """
+    from sqlalchemy import select as sa_select
+    from uuid import UUID
+
+    async with SessionLocal() as session:
+        stmt = sa_select(VideoAITemplate.id).where(
+            VideoAITemplate.process_status == VideoAIProcessStatus.success
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
+        rows = (await session.execute(stmt)).scalars().all()
+
+    tids = [str(tid) for tid in rows]
+    if not tids:
+        return {"total": 0, "success": 0, "fail": 0}
+
+    logger.info("batch_restart_stage2 started: %d templates", len(tids))
+    sem = asyncio.Semaphore(_CONCURRENCY)
+    success_count = 0
+    fail_count = 0
+
+    async def _worker(tid: str) -> None:
+        nonlocal success_count, fail_count
+        async with sem:
+            try:
+                await restart_from_stage2(tid)
+                success_count += 1
+            except Exception as exc:
+                fail_count += 1
+                logger.error("[%s] batch_restart_stage2 failed: %s", tid, exc)
+
+    await asyncio.gather(*[_worker(tid) for tid in tids])
+    logger.info("batch_restart_stage2 done: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
+    return {"total": len(tids), "success": success_count, "fail": fail_count}
+
+
 def get_template_state(template_id: str) -> dict | None:
     """
     获取模板的内存状态
@@ -1196,6 +1373,7 @@ async def recover_stuck_templates_on_startup() -> None:
         VideoAIProcessStatus.paused,       # 重启时被取消导致的暂停，自动恢复
         VideoAIProcessStatus.understanding,
         VideoAIProcessStatus.imagegen,
+        # 保留历史状态兼容，避免旧任务卡在已废弃阶段时无法重新入队。
         VideoAIProcessStatus.splitting,
         VideoAIProcessStatus.face_removing,
         VideoAIProcessStatus.upscaling,

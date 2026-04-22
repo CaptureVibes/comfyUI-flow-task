@@ -206,43 +206,7 @@ async def get_pipeline_settings(
     session: AsyncSession = Depends(get_db),
 ) -> PipelineSettingsPayload:
     row = await get_or_create_pipeline_settings(session, owner_id=token.user_id)
-    return PipelineSettingsPayload(
-        understand_model=row.understand_model,
-        understand_prompt=row.understand_prompt,
-        understand_temperature=row.understand_temperature,
-        imagegen_model=row.imagegen_model,
-        imagegen_prompt=row.imagegen_prompt,
-        imagegen_size=row.imagegen_size,
-        imagegen_quality=row.imagegen_quality,
-        splitting_api_url=row.splitting_api_url,
-        face_removing_api_url=row.face_removing_api_url,
-        face_removing_score_thresh=row.face_removing_score_thresh,
-        face_removing_margin_scale=row.face_removing_margin_scale,
-        face_removing_head_top_ratio=row.face_removing_head_top_ratio,
-        upscaling_scale=row.upscaling_scale,
-        ai_account_analysis_sample_size=row.ai_account_analysis_sample_size,
-        ai_account_video_prompt=row.ai_account_video_prompt,
-        ai_account_video_model=row.ai_account_video_model,
-        ai_account_name_prompt=row.ai_account_name_prompt,
-        ai_account_avatar_prompt=row.ai_account_avatar_prompt,
-        ai_account_photo_image_prompt=row.ai_account_photo_image_prompt,
-        ai_account_painting_prompt=row.ai_account_painting_prompt,
-        ai_account_name_model=row.ai_account_name_model,
-        ai_account_avatar_model=row.ai_account_avatar_model,
-        ai_account_avatar_size=row.ai_account_avatar_size,
-        ai_account_avatar_quality=row.ai_account_avatar_quality,
-        keyword_gen_model=row.keyword_gen_model,
-        keyword_gen_prompt=row.keyword_gen_prompt,
-        keyword_gen_count=row.keyword_gen_count,
-        keyword_gen_temperature=row.keyword_gen_temperature,
-        face_select_model=row.face_select_model,
-        face_select_prompt=row.face_select_prompt,
-        ai_account_exclusive_name_prompt=row.ai_account_exclusive_name_prompt,
-        ai_account_shared_name_prompt=row.ai_account_shared_name_prompt,
-        hashtag_search_top_n=row.hashtag_search_top_n,
-        hashtag_filter_model=row.hashtag_filter_model,
-        hashtag_filter_prompt=row.hashtag_filter_prompt,
-    )
+    return PipelineSettingsPayload.model_validate(row, from_attributes=True)
 
 
 @router.put("/pipeline", response_model=PipelineSettingsPayload)
@@ -252,43 +216,7 @@ async def put_pipeline_settings(
     session: AsyncSession = Depends(get_db),
 ) -> PipelineSettingsPayload:
     row = await update_pipeline_settings(session, owner_id=token.user_id, payload=payload)
-    return PipelineSettingsPayload(
-        understand_model=row.understand_model,
-        understand_prompt=row.understand_prompt,
-        understand_temperature=row.understand_temperature,
-        imagegen_model=row.imagegen_model,
-        imagegen_prompt=row.imagegen_prompt,
-        imagegen_size=row.imagegen_size,
-        imagegen_quality=row.imagegen_quality,
-        splitting_api_url=row.splitting_api_url,
-        face_removing_api_url=row.face_removing_api_url,
-        face_removing_score_thresh=row.face_removing_score_thresh,
-        face_removing_margin_scale=row.face_removing_margin_scale,
-        face_removing_head_top_ratio=row.face_removing_head_top_ratio,
-        upscaling_scale=row.upscaling_scale,
-        ai_account_analysis_sample_size=row.ai_account_analysis_sample_size,
-        ai_account_video_prompt=row.ai_account_video_prompt,
-        ai_account_video_model=row.ai_account_video_model,
-        ai_account_name_prompt=row.ai_account_name_prompt,
-        ai_account_avatar_prompt=row.ai_account_avatar_prompt,
-        ai_account_photo_image_prompt=row.ai_account_photo_image_prompt,
-        ai_account_painting_prompt=row.ai_account_painting_prompt,
-        ai_account_name_model=row.ai_account_name_model,
-        ai_account_avatar_model=row.ai_account_avatar_model,
-        ai_account_avatar_size=row.ai_account_avatar_size,
-        ai_account_avatar_quality=row.ai_account_avatar_quality,
-        keyword_gen_model=row.keyword_gen_model,
-        keyword_gen_prompt=row.keyword_gen_prompt,
-        keyword_gen_count=row.keyword_gen_count,
-        keyword_gen_temperature=row.keyword_gen_temperature,
-        face_select_model=row.face_select_model,
-        face_select_prompt=row.face_select_prompt,
-        ai_account_exclusive_name_prompt=row.ai_account_exclusive_name_prompt,
-        ai_account_shared_name_prompt=row.ai_account_shared_name_prompt,
-        hashtag_search_top_n=row.hashtag_search_top_n,
-        hashtag_filter_model=row.hashtag_filter_model,
-        hashtag_filter_prompt=row.hashtag_filter_prompt,
-    )
+    return PipelineSettingsPayload.model_validate(row, from_attributes=True)
 
 
 # ---------------------------------------------------------------------------
