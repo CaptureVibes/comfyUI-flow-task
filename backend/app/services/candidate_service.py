@@ -272,7 +272,7 @@ async def _ai_review_single(
     max_attempts = 1
     for attempt in range(1, max_attempts + 1):
         try:
-            logger.info("【候选库AI审核】attempt=%d/%d model=%s video=%s", attempt, max_attempts, model, cdn_url[:80])
+            logger.info("【候选库AI审核】attempt=%d/%d model=%s video=%s", attempt, max_attempts, model, cdn_url)
             text = await call_gemini_api(
                 model_name=model,
                 video_url=cdn_url,
