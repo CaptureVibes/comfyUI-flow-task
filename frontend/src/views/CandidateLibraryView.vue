@@ -323,7 +323,7 @@
             :rows="5"
             placeholder="请输入审核提示词，系统会自动在末尾追加 JSON 输出要求..."
           />
-          <span class="cf-hint">AI 将根据此提示词判断视频是否通过审核（输出 pass: true/false）</span>
+          <span class="cf-hint">AI 将根据此提示词判断视频是否通过审核（输出 pass: true/false）。提示词中可使用 <code>{keyword}</code> 占位符，审核时将自动替换为该视频对应的关键词。</span>
         </div>
       </div>
       <template #footer>

@@ -386,9 +386,10 @@ async def _ai_review_candidates(
 
     async def _review_one(row: CandidateVideo) -> None:
         async with sem:
+            prompt = cfg.ai_review_prompt.replace("{keyword}", row.keyword_text or "")
             passed = await _ai_review_single(
                 video_url=row.video_url,
-                prompt=cfg.ai_review_prompt,
+                prompt=prompt,
                 model=cfg.ai_review_model,
             )
             if not passed:
@@ -1001,7 +1002,7 @@ async def ai_review_candidates_by_ids(
         try:
             ok = await _ai_review_single(
                 video_url=row.video_url,
-                prompt=cfg.ai_review_prompt,
+                prompt=cfg.ai_review_prompt.replace("{keyword}", row.keyword_text or ""),
                 model=cfg.ai_review_model,
                 retry_delay=cfg.retry_delay,
             )
@@ -1150,7 +1151,7 @@ async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
             try:
                 ok = await _ai_review_single(
                     video_url=row.video_url,
-                    prompt=cfg.ai_review_prompt,
+                    prompt=cfg.ai_review_prompt.replace("{keyword}", row.keyword_text or ""),
                     model=cfg.ai_review_model,
                     retry_delay=cfg.retry_delay,
                 )
