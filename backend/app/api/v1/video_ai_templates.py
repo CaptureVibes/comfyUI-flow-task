@@ -32,6 +32,7 @@ from app.schemas.video_ai_template import (
 )
 from app.services.video_ai_service import (
     batch_reanalyze_templates,
+    batch_restart_templates,
     batch_restart_stage2_templates,
     enqueue_template,
     get_template_state,
@@ -395,6 +396,32 @@ async def batch_reanalyze(
         rows = (await session.execute(stmt)).scalars().all()
         template_ids = list({str(tid) for tid in rows})
     asyncio.create_task(batch_reanalyze_templates(
+        owner_id=str(owner_id) if owner_id else None,
+        template_ids=template_ids,
+    ))
+    return {"status": "accepted"}
+
+
+@router.post("/batch-restart", status_code=status.HTTP_202_ACCEPTED)
+async def batch_restart(
+    body: BatchReanalyzeBody = BatchReanalyzeBody(),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """批量全流程重跑（从头到尾入队），传入 target_date 只处理当天任务关联的模板。"""
+    template_ids: list[str] | None = None
+    if body.target_date:
+        from datetime import date as _date
+        parsed_date = _date.fromisoformat(body.target_date)
+        stmt = select(VideoTask.template_id).where(
+            VideoTask.target_date == parsed_date,
+            VideoTask.template_id.is_not(None),
+        )
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+        rows = (await session.execute(stmt)).scalars().all()
+        template_ids = list({str(tid) for tid in rows})
+    asyncio.create_task(batch_restart_templates(
         owner_id=str(owner_id) if owner_id else None,
         template_ids=template_ids,
     ))

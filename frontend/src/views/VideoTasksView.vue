@@ -399,7 +399,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed, batchDeletePendingGenerating } from '../api/video_tasks.js'
-import { batchReanalyzeTemplates } from '../api/video_ai_templates.js'
+import { batchRestartTemplates } from '../api/video_ai_templates.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -642,17 +642,17 @@ async function handleBatchReanalyze() {
   if (!targetDate.value) return
   try {
     await ElMessageBox.confirm(
-      `确定对 ${targetDate.value} 当天所有任务关联的模板重新执行AI视频分析？将覆盖现有分析内容。`,
+      `确定对 ${targetDate.value} 当天所有任务关联的模板重新执行完整AI流程（视频理解→抽帧→穿搭识别→生图）？将覆盖现有内容。`,
       '一键重新分析',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
   batchReanalyzing.value = true
   try {
-    await batchReanalyzeTemplates(targetDate.value)
-    ElMessage.success('已触发当天模板的重新分析，后台处理中')
+    await batchRestartTemplates(targetDate.value)
+    ElMessage.success('已触发当天模板的完整重新处理，后台入队中')
   } catch (err) {
-    ElMessage.error(err?.response?.data?.detail || '触发批量重新分析失败')
+    ElMessage.error(err?.response?.data?.detail || '触发失败')
   } finally {
     batchReanalyzing.value = false
   }

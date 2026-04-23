@@ -1287,6 +1287,44 @@ async def batch_reanalyze_templates(
     return {"total": len(template_ids), "success": success_count, "fail": fail_count, "errors": errors}
 
 
+async def batch_restart_templates(
+    owner_id: str | None = None,
+    template_ids: list[str] | None = None,
+) -> dict:
+    """
+    批量对模板执行全流程重跑（restart_template），将任务入队。
+    传入 template_ids 则只处理这些模板；否则处理该 owner 所有模板。
+    """
+    from sqlalchemy import select as sa_select
+    from uuid import UUID
+
+    async with SessionLocal() as session:
+        stmt = sa_select(VideoAITemplate.id)
+        if owner_id is not None:
+            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
+        if template_ids is not None:
+            stmt = stmt.where(VideoAITemplate.id.in_([UUID(tid) for tid in template_ids]))
+        rows = (await session.execute(stmt)).scalars().all()
+
+    tids = [str(tid) for tid in rows]
+    if not tids:
+        return {"total": 0, "success": 0, "fail": 0}
+
+    logger.info("batch_restart started: %d templates", len(tids))
+    success_count = 0
+    fail_count = 0
+    for tid in tids:
+        try:
+            await restart_template(tid)
+            success_count += 1
+        except Exception as exc:
+            fail_count += 1
+            logger.error("[%s] batch_restart failed: %s", tid, exc)
+
+    logger.info("batch_restart done: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
+    return {"total": len(tids), "success": success_count, "fail": fail_count}
+
+
 async def batch_restart_stage2_templates(owner_id: str | None = None) -> dict:
     """
     后台批量对所有 success 状态的模板执行 restart_from_stage2（保留视频理解，从阶段2抽帧重跑）。
