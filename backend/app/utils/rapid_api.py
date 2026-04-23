@@ -113,6 +113,9 @@ def _parse_video_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "create_time": int(item.get("createTime") or item.get("create_time") or 0),
         })
 
+    for item in result:
+        logger.info("【RapidAPI搜索结果】video_url=%s title=%s duration=%s play=%s",
+                    item["video_url"], item["video_title"][:40], item["duration"], item["play_count"])
     return result
 
 
