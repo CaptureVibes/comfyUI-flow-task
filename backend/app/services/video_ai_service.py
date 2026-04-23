@@ -30,6 +30,8 @@ video_ai_states: dict[str, dict] = {}
 dirty_video_ai_ids: set[str] = set()
 video_ai_worker_tasks: dict[str, asyncio.Task] = {}
 video_ai_queue: asyncio.Queue[str] = asyncio.Queue()
+# pipeline 完成后需要同步 shots 到 video_tasks 的模板 ID 集合
+_sync_shots_on_success: set[str] = set()
 
 # 队列处理器任务和持久化任务
 _queue_processor_task: asyncio.Task | None = None
@@ -607,6 +609,41 @@ async def _run_outfit_regen(
 # =============================================================================
 
 
+async def _sync_task_shots(template_id: str, uuid_val: UUID, final_outfits: list[dict]) -> None:
+    """
+    将 final_outfits 的造型图同步回关联该模板的所有 video_tasks.shots。
+    - has_face=True：shots[0] 是人脸图，保留不动，从 shots[1:] 开始替换为造型图
+    - has_face=False：整个 shots 替换为造型图
+    """
+    from sqlalchemy import select as sa_select
+    from app.models.video_task import VideoTask
+
+    outfit_shots = [
+        {"image_url": o["image_url"], "outfit_style": o.get("outfit_style", "")}
+        for o in final_outfits
+        if o.get("image_url")
+    ]
+    if not outfit_shots:
+        return
+
+    async with SessionLocal() as session:
+        tasks = (await session.execute(
+            sa_select(VideoTask).where(VideoTask.template_id == uuid_val)
+        )).scalars().all()
+
+        for task in tasks:
+            existing = list(task.shots or [])
+            if task.has_face and existing:
+                # 保留首位人脸图，其余替换为造型图
+                task.shots = [existing[0], *outfit_shots]
+            else:
+                task.shots = outfit_shots
+
+        await session.commit()
+
+    logger.info("[%s] synced shots to %d tasks (%d outfits)", template_id, len(tasks), len(outfit_shots))
+
+
 async def _delete_template_and_video_source(template_id: str, uuid_val: UUID) -> None:
     """删除模板及其关联的视频源（用于阶段3/4不可恢复失败时的清理）。"""
     try:
@@ -963,6 +1000,13 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             # 最终持久化
             await _persist_states([template_id])
 
+            # 如果是"一键重新分析"触发的，同步 shots 到关联 video_tasks
+            if template_id in _sync_shots_on_success:
+                _sync_shots_on_success.discard(template_id)
+                _final_outfits = state.get("final_outfits") or []
+                if _final_outfits:
+                    await _sync_task_shots(template_id, uuid_val, _final_outfits)
+
         except asyncio.CancelledError:
             # 任务被取消，标记为暂停
             _set_status(template_id, VideoAIProcessStatus.paused)
@@ -1292,7 +1336,7 @@ async def batch_restart_templates(
     template_ids: list[str] | None = None,
 ) -> dict:
     """
-    批量对模板执行全流程重跑（restart_template），将任务入队。
+    批量全流程重跑：入队 → 等待每个 pipeline 完成 → 同步 shots 到关联 video_tasks。
     传入 template_ids 则只处理这些模板；否则处理该 owner 所有模板。
     """
     from sqlalchemy import select as sa_select
@@ -1315,13 +1359,15 @@ async def batch_restart_templates(
     fail_count = 0
     for tid in tids:
         try:
+            _sync_shots_on_success.add(tid)
             await restart_template(tid)
             success_count += 1
         except Exception as exc:
+            _sync_shots_on_success.discard(tid)
             fail_count += 1
             logger.error("[%s] batch_restart failed: %s", tid, exc)
 
-    logger.info("batch_restart done: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
+    logger.info("batch_restart enqueued: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
     return {"total": len(tids), "success": success_count, "fail": fail_count}
 
 
