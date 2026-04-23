@@ -259,10 +259,11 @@ async def _ai_review_single(
     from app.services.ai_api import call_gemini_api
 
     json_instructions = (
-        "\n\n请必须以JSON格式输出审核结果，只需包含一个字段：\n"
+        "\n\n请必须以JSON格式输出审核结果，包含以下字段：\n"
         "- \"pass\": 布尔值（true 表示通过审核，false 表示不通过）\n"
+        "- \"reason\": 字符串（简短说明原因，不超过50字）\n"
         "示例输出：\n"
-        "{\"pass\": true}"
+        "{\"pass\": false, \"reason\": \"视频内容与关键词不相关\"}"
     )
     final_prompt = prompt + json_instructions
 
@@ -292,7 +293,8 @@ async def _ai_review_single(
 
             result = _json.loads(cleaned)
             passed = bool(result.get("pass", True))
-            logger.info("【候选库AI审核】结果: pass=%s", passed)
+            reason = result.get("reason", "")
+            logger.info("【候选库AI审核】结果: pass=%s reason=%s", passed, reason)
             return passed
 
         except Exception as exc:
