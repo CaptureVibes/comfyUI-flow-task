@@ -103,6 +103,12 @@ export async function unbindTagFromAccount(accountId, tagId) {
   await http.delete(`/accounts/${accountId}/tags/${tagId}`)
 }
 
+export async function exportVideoUrls(accountIds) {
+  const body = accountIds && accountIds.length > 0 ? { account_ids: accountIds } : {}
+  const response = await http.post('/accounts/export-video-urls', body, { responseType: 'blob' })
+  return response.data
+}
+
 export async function supplementTemplates(accountIds, templateType = 'shared', maxNewVideos = 10) {
   const { data } = await http.post('/accounts/supplement-templates', {
     account_ids: accountIds,

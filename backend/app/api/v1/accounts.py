@@ -1354,3 +1354,115 @@ async def bulk_bind_hashtags(
 
     await session.commit()
     return {"updated_count": len(accounts), "message": f"已为 {len(accounts)} 个账号绑定 {len(clean_tags)} 个标签"}
+
+
+class ExportVideoUrlsBody(BaseModel):
+    account_ids: list[uuid.UUID] | None = None  # None = 全部
+
+
+@router.post("/export-video-urls")
+async def export_video_urls(
+    body: ExportVideoUrlsBody = ExportVideoUrlsBody(),
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """导出 AI 博主关联的 TikTok 博主原视频 local_video_url，生成合并单元格 Excel。"""
+    import io
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from app.models.video_source import VideoSource
+
+    owner_id = current_user.user_id
+
+    # 查所有目标账号
+    stmt = select(Account).where(Account.owner_id == owner_id)
+    if body.account_ids:
+        stmt = stmt.where(Account.id.in_(body.account_ids))
+    stmt = stmt.order_by(Account.created_at.asc())
+    accounts = (await session.execute(stmt)).scalars().all()
+
+    # 对每个账号查绑定的 TiktokBlogger，再查 VideoSource
+    rows: list[tuple[Account, TiktokBlogger | None, str]] = []  # (account, blogger, local_video_url)
+    for acc in accounts:
+        bloggers_stmt = (
+            select(TiktokBlogger)
+            .join(AccountBloggerBinding, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
+            .where(AccountBloggerBinding.account_id == acc.id)
+        )
+        bloggers = (await session.execute(bloggers_stmt)).scalars().all()
+
+        if not bloggers:
+            rows.append((acc, None, ""))
+            continue
+
+        for blogger in bloggers:
+            vs_stmt = (
+                select(VideoSource.local_video_url)
+                .where(VideoSource.tiktok_blogger_id == blogger.id)
+                .where(VideoSource.local_video_url.is_not(None))
+                .where(VideoSource.local_video_url != "")
+                .order_by(VideoSource.created_at.asc())
+            )
+            urls = (await session.execute(vs_stmt)).scalars().all()
+            if urls:
+                for url in urls:
+                    rows.append((acc, blogger, url))
+            else:
+                rows.append((acc, blogger, ""))
+
+    # 生成 Excel
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "AI博主视频导出"
+
+    header_fill = PatternFill("solid", fgColor="4F46E5")
+    header_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    wrap = Alignment(vertical="top", wrap_text=True)
+
+    headers = ["AI博主名称", "性别", "TikTok博主", "原视频URL"]
+    ws.append(headers)
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 10
+    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["D"].width = 80
+    ws.row_dimensions[1].height = 22
+
+    # 写数据并合并单元格
+    data_row = 2
+    # 按 account 分组计算行范围
+    from itertools import groupby
+    acc_grouped: list[tuple[Account, list[tuple[Account, TiktokBlogger | None, str]]]] = []
+    for acc_obj, group in groupby(rows, key=lambda r: r[0].id):
+        group_rows = list(group)
+        acc_grouped.append((group_rows[0][0], group_rows))
+
+    for acc, group in acc_grouped:
+        start_row = data_row
+        for _, blogger, url in group:
+            ws.cell(row=data_row, column=1, value=acc.account_name).alignment = center
+            ws.cell(row=data_row, column=2, value=acc.gender).alignment = center
+            ws.cell(row=data_row, column=3, value=blogger.blogger_name if blogger else "").alignment = center
+            ws.cell(row=data_row, column=4, value=url).alignment = wrap
+            data_row += 1
+
+        end_row = data_row - 1
+        if end_row > start_row:
+            ws.merge_cells(f"A{start_row}:A{end_row}")
+            ws.merge_cells(f"B{start_row}:B{end_row}")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=ai_blogger_videos.xlsx"},
+    )
