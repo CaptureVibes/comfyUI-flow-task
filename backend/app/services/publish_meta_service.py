@@ -166,15 +166,10 @@ Prioritize the most suitable tags from this list when relevant:
 Here is the video description:
 """
 
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title":   {"type": "string"},
-        "desc":    {"type": "string"},
-        "hashtag": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["title", "desc", "hashtag"],
-}
+_JSON_SUFFIX = """
+
+Output strictly as JSON (no markdown, no explanation):
+{"title": "...", "desc": "...", "hashtag": ["tag1", "tag2"]}"""
 
 
 async def generate_publish_metadata(
@@ -188,7 +183,7 @@ async def generate_publish_metadata(
     """
     from app.services.ai_api import call_gemini_api
 
-    prompt = f"{_SYSTEM_PROMPT}\n{video_prompt.strip()}"
+    prompt = f"{_SYSTEM_PROMPT}\n{video_prompt.strip()}{_JSON_SUFFIX}"
 
     FALLBACK_MODEL = "gemini-2.5-flash"
     PRIMARY_MAX = 3
@@ -210,11 +205,16 @@ async def generate_publish_metadata(
                     model_name=model_name,
                     prompt=prompt,
                     temperature=0.5,
-                    response_schema=_RESPONSE_SCHEMA,
                 )
                 logger.info("【AI预生成标题】原始响应（第%d次）：%s", attempt, raw[:500])
 
-                data = _json.loads(raw)
+                json_str = raw.strip()
+                # 兼容模型输出 markdown 代码块
+                import re as _re
+                m = _re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
+                if m:
+                    json_str = m.group(1)
+                data = _json.loads(json_str)
                 title = str(data.get("title", "") or "").strip()[:100]
                 if not title:
                     raise ValueError("AI 返回的 JSON 缺少有效 title 字段")

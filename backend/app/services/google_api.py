@@ -73,7 +73,9 @@ async def call_google_gemini_api(
             )
             text = response.text
             logger.info("Google SDK text response: %s", (text or "")[:500])
-            return text or ""
+            if not text:
+                raise ValueError(f"模型 {model_name} 返回空响应")
+            return text
 
         except asyncio.CancelledError:
             raise
