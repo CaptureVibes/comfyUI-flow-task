@@ -22,8 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
 from app.models.candidate_video import CandidateVideo, CandidateVideoStatus
-from app.services import rapid_api
-from app.utils.apify import TikTokApifyClient, TikTokFilter, DateRange, SortOrder
+from app.utils import rapid_api
+from app.utils.apify import TikTokFilter, DateRange, SortOrder
+from app.utils.tiktok_search import search_by_keyword, search_by_profiles
 from app.core.config import settings as app_settings
 from app.services.image_upload_service import image_upload_service
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
@@ -80,16 +81,14 @@ async def _collect_bloggers(
     logger.info("【候选库】开始收集博主，keyword=%s，目标博主数=%d，排除已有博主数=%d",
                 keyword, max_bloggers, len(excluded))
 
-    apify = TikTokApifyClient()
     round_num = 0
 
     while len(seen) < max_bloggers:
         round_num += 1
         prev_count = len(seen)
 
-        videos = await asyncio.to_thread(
-            apify.search,
-            search_queries=[keyword],
+        videos = await search_by_keyword(
+            keyword,
             results_per_page=max(200, max_bloggers * 10),
         )
 
@@ -182,7 +181,6 @@ async def _search_blogger_videos(
                 unique_id, cfg.max_videos_per_blogger, cfg.max_duration_seconds,
                 cfg.min_play_count, cfg.publish_after_date or "不限")
 
-    apify = TikTokApifyClient()
     seen_urls: set[str] = set()
     collected: list[dict[str, Any]] = []
     round_num = 0
@@ -191,8 +189,7 @@ async def _search_blogger_videos(
         round_num += 1
         prev_count = len(collected)
 
-        videos = await asyncio.to_thread(
-            apify.search,
+        videos = await search_by_profiles(
             profiles=[unique_id],
             results_per_page=30,
             oldest_date=oldest_date,
@@ -1340,7 +1337,6 @@ async def supplement_templates_for_account(
     seen_urls: set[str] = set()       # 跨轮去重（web_video_url）
     attempted_urls: set[str] = set()  # 已尝试过（无论成功失败）
     pending_urls: list[str] = []
-    apify = TikTokApifyClient()
     results_per_page = max_new_videos * 10
     round_num = 0
 
@@ -1352,19 +1348,17 @@ async def supplement_templates_for_account(
 
             try:
                 if template_type == "exclusive":
-                    videos = await asyncio.to_thread(
-                        apify.search,
+                    videos = await search_by_profiles(
                         profiles=[search_keyword],
                         results_per_page=results_per_page,
                     )
                 else:
-                    videos = await asyncio.to_thread(
-                        apify.search,
-                        search_queries=[search_keyword],
+                    videos = await search_by_keyword(
+                        search_keyword,
                         results_per_page=results_per_page,
                     )
             except Exception as exc:
-                logger.warning("【补充模板】Apify搜索失败 keyword=%s round=%d: %s", search_keyword, round_num, exc)
+                logger.warning("【补充模板】搜索失败 keyword=%s round=%d: %s", search_keyword, round_num, exc)
                 break
 
             # 过滤已见过 / 已尝试过的，web_video_url 去重

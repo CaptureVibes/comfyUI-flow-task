@@ -116,12 +116,11 @@ async def search_hashtags_for_accounts(
     handles = [b.blogger_handle for b in unique_bloggers]
     logger.info("[hashtag_search] 开始搜索，博主 handles=%s top_n=%d", handles, top_n)
 
-    # 用 asyncio.to_thread 调用同步的 Apify SDK
-    from app.utils.apify import TikTokApifyClient, TikTokFilter, SortOrder, DateRange
+    from app.utils.apify import TikTokFilter, SortOrder, DateRange
+    from app.utils.tiktok_search import search_by_profiles
 
-    def _apify_search() -> list:
-        client = TikTokApifyClient()
-        videos = client.search(
+    try:
+        videos = await search_by_profiles(
             profiles=handles,
             results_per_page=top_n,
             date_range=DateRange.all_time,
@@ -130,21 +129,17 @@ async def search_hashtags_for_accounts(
                 sort_descending=True,
             ),
         )
-        return videos
-
-    try:
-        videos = await asyncio.to_thread(_apify_search)
     except Exception as exc:
-        logger.error("[hashtag_search] Apify 搜索失败: %s", exc)
+        logger.error("[hashtag_search] 搜索失败: %s", exc)
         return {
             "raw_hashtags": [],
             "filtered_hashtags": [],
             "blogger_handles": handles,
             "video_count": 0,
-            "error": f"Apify 搜索失败：{exc}",
+            "error": f"搜索失败：{exc}",
         }
 
-    logger.info("[hashtag_search] Apify 返回 %d 个视频", len(videos))
+    logger.info("[hashtag_search] 返回 %d 个视频", len(videos))
 
     # 过滤：只保留作者 handle 确实在目标集合内的视频
     target_handles_lower = {h.lower() for h in handles}
@@ -240,11 +235,11 @@ async def _search_hashtags_for_handles(
 
     logger.info("%s 开始搜索，博主 handles=%s top_n=%d", log_prefix, handles, top_n)
 
-    from app.utils.apify import DateRange, SortOrder, TikTokApifyClient, TikTokFilter
+    from app.utils.apify import DateRange, SortOrder, TikTokFilter
+    from app.utils.tiktok_search import search_by_profiles
 
-    def _apify_search() -> list:
-        client = TikTokApifyClient()
-        return client.search(
+    try:
+        videos = await search_by_profiles(
             profiles=handles,
             results_per_page=top_n,
             date_range=DateRange.all_time,
@@ -253,20 +248,17 @@ async def _search_hashtags_for_handles(
                 sort_descending=True,
             ),
         )
-
-    try:
-        videos = await asyncio.to_thread(_apify_search)
     except Exception as exc:
-        logger.error("%s Apify 搜索失败: %s", log_prefix, exc)
+        logger.error("%s 搜索失败: %s", log_prefix, exc)
         return {
             "raw_hashtags": [],
             "filtered_hashtags": [],
             "blogger_handles": handles,
             "video_count": 0,
-            "error": f"Apify 搜索失败：{exc}",
+            "error": f"搜索失败：{exc}",
         }
 
-    logger.info("%s Apify 返回 %d 个视频", log_prefix, len(videos))
+    logger.info("%s 返回 %d 个视频", log_prefix, len(videos))
 
     target_handles_lower = {h.lower() for h in handles}
     filtered_videos = [

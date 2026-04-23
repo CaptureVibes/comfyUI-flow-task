@@ -62,3 +62,9 @@ def setup_logging(level: str, log_dir: str) -> None:
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(log_level)
+
+    for name in ("apify_client", "apify"):
+        logger = logging.getLogger(name)
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(log_level)
