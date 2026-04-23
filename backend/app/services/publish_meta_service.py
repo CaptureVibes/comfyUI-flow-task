@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-import re
 import uuid
 from collections import deque
 
@@ -129,32 +128,71 @@ async def _load_auto_publish_config(owner_id: uuid.UUID | None) -> dict | None:
 
 # ── AI 生成逻辑 ────────────────────────────────────────────────────────────────
 
+_SYSTEM_PROMPT = """
+You are an expert YouTube Shorts copywriter for North American audiences.
+I will provide a text description of a video. Based on that description, generate the following 3 items for a YouTube Shorts post:
+
+Title
+Description
+Hashtags
+Follow these rules exactly:
+Title
+
+Use English
+Keep it as short as possible, ideally 10 to 30 characters
+Plain text only
+No emojis
+No special symbols
+Prefer a question format, since questions usually attract more views
+Start with a strong hook when possible, such as: THIS, Stop, Try, Which, This or That
+Match North American audience preferences
+Make it catchy and suitable for YouTube Shorts
+Description
+
+Use English
+Maximum 20 words
+Keep it short and natural
+Match North American audience preferences
+Highlight the main appeal of the video
+Do not sound too wordy or promotional
+Hashtags
+
+Generate 3 to 5 English hashtags
+Do not exceed 5 hashtags
+Make them highly relevant to the video content
+Prioritize the most suitable tags from this list when relevant:
+#fashion #ootd #outfit #style #stunningoutfit #outfittrend #streetfashionoutfit #fashionhacks
+
+Here is the video description:
+"""
+
+_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title":   {"type": "string"},
+        "desc":    {"type": "string"},
+        "hashtag": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "desc", "hashtag"],
+}
+
+
 async def generate_publish_metadata(
-    video_url: str,
+    video_prompt: str,
     ai_config: dict,
     fallback_title: str,
 ) -> tuple[str, str, list[str]]:
     """
-    调用 Gemini API 分析视频，生成 title/description/hashtags。
-    返回 (title, description, hashtags)。失败时无限重试。
+    根据视频描述文本调用 Gemini API，生成 title/description/hashtags。
+    返回 (title, description, hashtags)。失败时有限重试。
     """
     from app.services.ai_api import call_gemini_api
 
-    user_prompt = ai_config["prompt"].strip()
-    prompt = f"""{user_prompt}
-
----
-请严格按照以下 JSON 格式输出，不要输出任何其他内容，不要有 markdown 代码块包裹：
-{{
-  "title": "视频标题（简洁吸引人，不超过100字符）",
-  "desc": "视频描述（详细介绍视频内容，可适当使用 emoji）",
-  "hashtag": ["标签1", "标签2", "标签3"]
-}}
-其中 hashtag 为字符串数组，每个元素不含 # 号。只输出 JSON，不要任何解释。"""
+    prompt = f"{_SYSTEM_PROMPT}\n{video_prompt.strip()}"
 
     FALLBACK_MODEL = "gemini-2.5-flash"
-    PRIMARY_MAX = 3   # 主模型最多重试次数
-    FALLBACK_MAX = 3  # 备用模型最多重试次数
+    PRIMARY_MAX = 3
+    FALLBACK_MAX = 3
     retry_delay = 30.0
 
     models = [
@@ -170,29 +208,18 @@ async def generate_publish_metadata(
             try:
                 raw = await call_gemini_api(
                     model_name=model_name,
-                    video_url=video_url,
                     prompt=prompt,
                     temperature=0.5,
+                    response_schema=_RESPONSE_SCHEMA,
                 )
                 logger.info("【AI预生成标题】原始响应（第%d次）：%s", attempt, raw[:500])
 
-                json_str = raw.strip()
-                match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", json_str)
-                if match:
-                    json_str = match.group(1)
-
-                data = _json.loads(json_str)
-                title = str(data.get("title", "") or "").strip()
+                data = _json.loads(raw)
+                title = str(data.get("title", "") or "").strip()[:100]
                 if not title:
                     raise ValueError("AI 返回的 JSON 缺少有效 title 字段")
-
-                title = title[:100]
-                desc = str(data.get("desc", "") or data.get("description", "") or "")
-                hashtags_raw = data.get("hashtag", data.get("hashtags", []))
-                if isinstance(hashtags_raw, str):
-                    hashtags = [t.strip().lstrip("#") for t in hashtags_raw.split() if t.strip()]
-                else:
-                    hashtags = [str(t).strip().lstrip("#") for t in hashtags_raw if t]
+                desc = str(data.get("desc", "") or "")
+                hashtags = [str(t).strip().lstrip("#") for t in data.get("hashtag", []) if t]
 
                 logger.info("【AI预生成标题】成功（第%d次，模型: %s） → %r", attempt, model_name, title)
                 return title, desc, hashtags
@@ -233,12 +260,12 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
             logger.info("【AI预生成标题】子任务 %s 已完成，跳过", sub_task_id)
             return
 
-        video_url = sub.result_video_url
+        video_prompt = (sub.task.prompt or "").strip()
         owner_id = sub.task.owner_id
-        fallback_title = (sub.task.prompt or "")[:100] or "视频"
+        fallback_title = video_prompt[:100] or "视频"
 
-    if not video_url:
-        logger.info("【AI预生成标题】子任务 %s 无视频 URL，跳过", sub_task_id)
+    if not video_prompt:
+        logger.info("【AI预生成标题】子任务 %s 的 task.prompt 为空，跳过", sub_task_id)
         async with SessionLocal() as session:
             sub = await session.get(VideoSubTask, sub_task_id)
             if sub is not None:
@@ -260,12 +287,12 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
         sub.publish_meta = {"status": "generating"}
         await session.commit()
 
-    logger.info("【AI预生成标题】子任务 %s 开始生成标题，视频: %s", sub_task_id, video_url[:80])
+    logger.info("【AI预生成标题】子任务 %s 开始生成标题，prompt 前50字: %s", sub_task_id, video_prompt[:50])
 
     # 4. 调用 AI 生成
     try:
         title, description, hashtags = await generate_publish_metadata(
-            video_url=video_url,
+            video_prompt=video_prompt,
             ai_config=ai_config,
             fallback_title=fallback_title,
         )
@@ -298,7 +325,7 @@ async def recover_stuck_publish_meta_on_startup() -> None:
     - generating 状态：插入队列头部（优先处理）
     - pending 状态：插入队列尾部
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, or_
 
     async with SessionLocal() as session:
         # generating 优先
@@ -311,8 +338,11 @@ async def recover_stuck_publish_meta_on_startup() -> None:
 
         pending_ids = (await session.execute(
             select(VideoSubTask.id).where(
-                VideoSubTask.publish_meta["status"].as_string() == "pending",
                 VideoSubTask.status == "queued",
+                or_(
+                    VideoSubTask.publish_meta.is_(None),
+                    VideoSubTask.publish_meta["status"].as_string() == "pending",
+                ),
             )
         )).scalars().all()
 
@@ -320,7 +350,7 @@ async def recover_stuck_publish_meta_on_startup() -> None:
         return
 
     logger.info(
-        "【AI预生成标题】启动补跑：generating=%d，pending=%d",
+        "【AI预生成标题】启动补跑：generating=%d，pending/null=%d",
         len(generating_ids), len(pending_ids),
     )
 

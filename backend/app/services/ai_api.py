@@ -34,6 +34,7 @@ async def call_gemini_api(
     prompt: str,
     temperature: float = 0.3,
     video_url: str | None = None,
+    response_schema: dict | None = None,
     timeout: float = 120.0,
 ) -> str:
     """Unified text generation via Google Gemini SDK."""
@@ -48,6 +49,7 @@ async def call_gemini_api(
         prompt=prompt,
         temperature=temperature,
         video_url=video_url,
+        response_schema=response_schema,
         timeout=timeout,
     )
 

@@ -931,9 +931,17 @@ class VideoTaskService:
             max_order_val = max_order.scalar()
             sub.queue_order = (max_order_val or 0) + 1
 
+        if sub.status == "queued":
+            sub.publish_meta = {"status": "pending"}
+
         sub.task.status = _compute_parent_status(sub.task.sub_tasks)
         await self.db.commit()
         await self.db.refresh(sub)
+
+        if sub.status == "queued":
+            from app.services.publish_meta_service import enqueue_publish_meta_task
+            enqueue_publish_meta_task(sub.id)
+
         return sub
 
     async def list_reviewing_subtasks(
@@ -1050,6 +1058,7 @@ class VideoTaskService:
         queued_subs = {p[0].id for p in step1_queued + step3_queued}
         abandoned_subs = {p[0].id for p in remaining}  # all remaining from step1 that weren't in step3
 
+        newly_queued_ids: list = []
         counts = {"queued": 0, "abandoned": 0}
         for task in tasks:
             for st in task.sub_tasks:
@@ -1057,9 +1066,11 @@ class VideoTaskService:
                     continue
                 if st.id in queued_subs:
                     st.status = "queued"
+                    st.publish_meta = {"status": "pending"}
                     if st.queue_order is None:
                         st.queue_order = next_order
                         next_order += 1
+                    newly_queued_ids.append(st.id)
                     counts["queued"] += 1
                 else:
                     st.status = "abandoned"
@@ -1067,6 +1078,10 @@ class VideoTaskService:
             task.status = _compute_parent_status(task.sub_tasks)
 
         await self.db.commit()
+
+        from app.services.publish_meta_service import enqueue_publish_meta_task
+        for sid in newly_queued_ids:
+            enqueue_publish_meta_task(sid)
         return {"queued": counts["queued"], "abandoned": counts["abandoned"], "total": counts["queued"] + counts["abandoned"]}
 
     async def get_operator_stats(

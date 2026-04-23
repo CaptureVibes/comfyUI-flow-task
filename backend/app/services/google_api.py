@@ -32,13 +32,15 @@ async def call_google_gemini_api(
     prompt: str,
     temperature: float = 0.3,
     video_url: str | None = None,
+    response_schema: dict | None = None,
     timeout: float = 120.0,
 ) -> str:
     """
     Call Google Gemini SDK for text generation.
 
     Supports text-only and video+text calls (via file URI).
-    Returns extracted text content. Retries indefinitely on transient errors.
+    Pass response_schema (JSON Schema dict) to enable structured JSON output.
+    Returns extracted text content. Retries on transient errors.
     """
     client = _make_client(api_key)
 
@@ -47,7 +49,11 @@ async def call_google_gemini_api(
         parts.append(types.Part.from_uri(file_uri=video_url, mime_type="video/mp4"))
     parts.append(types.Part.from_text(text=prompt))
 
-    config = types.GenerateContentConfig(temperature=temperature)
+    config_kwargs: dict = {"temperature": temperature}
+    if response_schema is not None:
+        config_kwargs["response_mime_type"] = "application/json"
+        config_kwargs["response_schema"] = response_schema
+    config = types.GenerateContentConfig(**config_kwargs)
 
     masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
     logger.info(
