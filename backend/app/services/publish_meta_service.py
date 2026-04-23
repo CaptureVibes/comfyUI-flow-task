@@ -128,44 +128,6 @@ async def _load_auto_publish_config(owner_id: uuid.UUID | None) -> dict | None:
 
 # ── AI 生成逻辑 ────────────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """
-You are an expert YouTube Shorts copywriter for North American audiences.
-I will provide a text description of a video. Based on that description, generate the following 3 items for a YouTube Shorts post:
-
-Title
-Description
-Hashtags
-Follow these rules exactly:
-Title
-
-Use English
-Keep it as short as possible, ideally 10 to 30 characters
-Plain text only
-No emojis
-No special symbols
-Prefer a question format, since questions usually attract more views
-Start with a strong hook when possible, such as: THIS, Stop, Try, Which, This or That
-Match North American audience preferences
-Make it catchy and suitable for YouTube Shorts
-Description
-
-Use English
-Maximum 20 words
-Keep it short and natural
-Match North American audience preferences
-Highlight the main appeal of the video
-Do not sound too wordy or promotional
-Hashtags
-
-Generate 3 to 5 English hashtags
-Do not exceed 5 hashtags
-Make them highly relevant to the video content
-Prioritize the most suitable tags from this list when relevant:
-#fashion #ootd #outfit #style #stunningoutfit #outfittrend #streetfashionoutfit #fashionhacks
-
-Here is the video description:
-"""
-
 _JSON_SUFFIX = """
 
 Output strictly as JSON (no markdown, no explanation):
@@ -183,7 +145,8 @@ async def generate_publish_metadata(
     """
     from app.services.ai_api import call_gemini_api
 
-    prompt = f"{_SYSTEM_PROMPT}\n{video_prompt.strip()}{_JSON_SUFFIX}"
+    system_prompt = (ai_config.get("prompt") or "").strip()
+    prompt = f"{system_prompt}\n{video_prompt.strip()}{_JSON_SUFFIX}"
 
     FALLBACK_MODEL = "gemini-2.5-flash"
     PRIMARY_MAX = 3

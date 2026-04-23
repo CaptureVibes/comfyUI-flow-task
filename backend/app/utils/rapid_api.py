@@ -158,6 +158,51 @@ async def search_videos(
     return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
 
 
+async def download_video(source_url: str, out_path: str) -> str:
+    """通过 RapidAPI /api/download/video 获取无水印直链并下载到 out_path（.mp4）。
+    返回实际写入的文件路径。
+    """
+    if not settings.rapidapi_key:
+        raise RuntimeError("RAPIDAPI_KEY not configured")
+
+    logger.info("download_video: calling RapidAPI download API for %s", source_url)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{_BASE_URL}/api/download/video",
+            params={"url": source_url},
+            headers={**_make_headers(), "Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    logger.info("download_video: RapidAPI download response keys=%s", list(body.keys()))
+
+    data = body.get("data") or body
+    direct_url = (
+        data.get("hdplay")
+        or data.get("play")
+        or data.get("wmplay")
+        or data.get("video_url")
+        or None
+    )
+    if not direct_url:
+        raise RuntimeError(f"RapidAPI download API returned no video URL: {body}")
+
+    logger.info("download_video: got direct_url=%s", direct_url[:120])
+
+    file_path = out_path if out_path.endswith(".mp4") else out_path + ".mp4"
+
+    async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
+        async with client.stream("GET", direct_url) as resp:
+            resp.raise_for_status()
+            with open(file_path, "wb") as f:
+                async for chunk in resp.aiter_bytes(chunk_size=1024 * 256):
+                    f.write(chunk)
+
+    logger.info("download_video: saved to %s", file_path)
+    return file_path
+
+
 async def get_user_info(
     unique_id: str,
     retry_delay: float = 5.0,

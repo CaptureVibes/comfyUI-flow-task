@@ -19,13 +19,10 @@ from sqlalchemy import delete as sa_delete, or_, select, update as sa_update, te
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import httpx
-
 from app.models.candidate_video import CandidateVideo, CandidateVideoStatus
 from app.utils import rapid_api
 from app.utils.apify import TikTokFilter, DateRange, SortOrder
 from app.utils.tiktok_search import search_by_keyword, search_by_profiles
-from app.core.config import settings as app_settings
 from app.services.image_upload_service import image_upload_service
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
 
@@ -242,52 +239,9 @@ async def _search_blogger_videos(
 # ---------------------------------------------------------------------------
 
 async def _download_and_upload_video(video_url: str) -> str:
-    """通过 TikTok API 下载视频（video_url 为 TikTok 页面地址），上传到 CDN，返回 CDN URL。"""
-    import tempfile, os
-    from app.services import tiktok_api_client
-
-    # 用 tiktok_api_client 下载到临时文件（内部会调 tikwm/RapidAPI 获取真实直链）
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-        tmp_path = tmp.name
-    try:
-        await tiktok_api_client.download_video(video_url, tmp_path)
-        with open(tmp_path, "rb") as f:
-            video_bytes = f.read()
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-    # 上传到 CDN（视频用 upload-video 接口）
-    upload_url = app_settings.video_upload_api_url
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            upload_url,
-            files={"file": ("video.mp4", video_bytes, "video/mp4")},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-    # 递归查找 URL
-    def _find_url(obj: Any) -> str | None:
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if k in {"url", "image_url", "file_url", "src"} and isinstance(v, str) and v.startswith("http"):
-                    return v
-                found = _find_url(v)
-                if found:
-                    return found
-        if isinstance(obj, list):
-            for item in obj:
-                found = _find_url(item)
-                if found:
-                    return found
-        return None
-
-    cdn_url = _find_url(data)
-    if not cdn_url:
-        raise RuntimeError(f"视频 CDN 上传失败，响应: {data}")
-    logger.info("视频已上传 CDN: %s -> %s", video_url[:60], cdn_url)
-    return cdn_url
+    """下载 TikTok 视频并上传到 CDN，返回 CDN URL。tikwm → RapidAPI → Apify fallback。"""
+    from app.utils.tiktok_download import download_and_upload
+    return await download_and_upload(video_url)
 
 
 async def _ai_review_single(
