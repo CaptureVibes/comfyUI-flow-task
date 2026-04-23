@@ -142,6 +142,35 @@ async def _upload_to_cdn(file_path: str, filename: str) -> str:
 # 公共接口
 # ---------------------------------------------------------------------------
 
+async def download_to_file(tiktok_url: str, out_path: str) -> str:
+    """下载 TikTok 视频到本地文件，返回实际写入路径（.mp4）。
+
+    fallback 顺序：tikwm → RapidAPI → Apify
+    """
+    providers = [
+        ("tikwm", _tikwm_get_direct_url),
+        ("rapidapi", _rapidapi_get_direct_url),
+        ("apify", _apify_get_direct_url),
+    ]
+    errors: list[str] = []
+
+    for name, get_url_fn in providers:
+        try:
+            logger.info("tiktok_download: trying provider=%s url=%s", name, tiktok_url[:80])
+            direct_url = await get_url_fn(tiktok_url)
+            file_path = await _stream_download(direct_url, out_path)
+            logger.info("tiktok_download: downloaded provider=%s path=%s", name, file_path)
+            return file_path
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            msg = f"{name}: {exc}"
+            errors.append(msg)
+            logger.warning("tiktok_download: provider=%s failed: %s", name, exc)
+
+    raise RuntimeError(f"All TikTok download providers failed for {tiktok_url}: {'; '.join(errors)}")
+
+
 async def download_and_upload(tiktok_url: str, filename: str | None = None) -> str:
     """下载 TikTok 视频并上传到 CDN，返回 CDN 永久 URL。
 
