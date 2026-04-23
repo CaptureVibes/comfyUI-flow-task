@@ -249,11 +249,10 @@ async def _ai_review_single(
     prompt: str,
     model: str,
     retry_delay: float = 5.0,
-) -> bool:
+) -> tuple[bool, str]:
     """
     调用 Gemini API 审核单条视频。
-    返回 True 表示通过，False 表示不通过。
-    遇到网络错误时无限重试。
+    返回 (passed, reason)。遇到网络错误时无限重试。
     """
     import json as _json
     from app.services.ai_api import call_gemini_api
@@ -293,9 +292,9 @@ async def _ai_review_single(
 
             result = _json.loads(cleaned)
             passed = bool(result.get("pass", True))
-            reason = result.get("reason", "")
+            reason = str(result.get("reason", "") or "")
             logger.info("【候选库AI审核】结果: pass=%s reason=%s", passed, reason)
-            return passed
+            return passed, reason
 
         except Exception as exc:
             if attempt >= max_attempts:
@@ -340,14 +339,14 @@ async def _ai_review_candidates(
     async def _review_one(row: CandidateVideo) -> None:
         async with sem:
             prompt = cfg.ai_review_prompt.replace("{keyword}", row.keyword_text or "")
-            passed = await _ai_review_single(
+            passed, reason = await _ai_review_single(
                 video_url=row.video_url,
                 prompt=prompt,
                 model=cfg.ai_review_model,
             )
             if not passed:
                 to_delete.append(row)
-                logger.info("【候选库AI审核】视频 %s 未通过审核，将删除", row.video_id)
+                logger.info("【候选库AI审核】视频 %s 未通过审核，将删除，reason=%s", row.video_id, reason)
 
     tasks = [asyncio.create_task(_review_one(r)) for r in rows]
     await asyncio.gather(*tasks)
@@ -953,7 +952,7 @@ async def ai_review_candidates_by_ids(
         await session.commit()
 
         try:
-            ok = await _ai_review_single(
+            ok, reason = await _ai_review_single(
                 video_url=row.video_url,
                 prompt=cfg.ai_review_prompt.replace("{keyword}", row.keyword_text or ""),
                 model=cfg.ai_review_model,
@@ -988,7 +987,7 @@ async def ai_review_candidates_by_ids(
                 await session.execute(
                     sa_update(CandidateVideo)
                     .where(CandidateVideo.id == row.id)
-                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=None)
+                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=reason or None)
                 )
                 await session.commit()
                 failed += 1
@@ -1102,7 +1101,7 @@ async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
             cfg = _SearchConfig(pipeline_settings)
 
             try:
-                ok = await _ai_review_single(
+                ok, reason = await _ai_review_single(
                     video_url=row.video_url,
                     prompt=cfg.ai_review_prompt.replace("{keyword}", row.keyword_text or ""),
                     model=cfg.ai_review_model,
@@ -1148,10 +1147,10 @@ async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
                 await session.execute(
                     sa_update(CandidateVideo)
                     .where(CandidateVideo.id == candidate_id)
-                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=None)
+                    .values(status=CandidateVideoStatus.ai_failed, ai_reviewed=True, ai_error=reason or None)
                 )
                 await session.commit()
-                logger.info("【全量审核】审核拒绝 candidate_id=%s", candidate_id)
+                logger.info("【全量审核】审核拒绝 candidate_id=%s reason=%s", candidate_id, reason)
 
 
 async def trigger_bulk_ai_review(
