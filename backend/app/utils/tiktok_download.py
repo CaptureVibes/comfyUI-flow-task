@@ -84,7 +84,8 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
 
     def _run_sync() -> str:
         client = ApifyClient(settings.apify_token)
-        run = client.actor(_APIFY_ACTOR_ID).call(run_input={
+        logger.info("apify: actor.start() ...")
+        run_info = client.actor(_APIFY_ACTOR_ID).start(run_input={
             "postURLs": [tiktok_url],
             "resultsPerPage": 1,
             "shouldDownloadVideos": True,
@@ -95,6 +96,10 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
             "downloadSubtitlesOptions": "NEVER_DOWNLOAD_SUBTITLES",
             "commentsPerPost": 0,
         })
+        run_id = run_info["id"]
+        logger.info("apify: actor started runId=%s, waiting...", run_id)
+        run = client.run(run_id).wait_for_finish()
+        logger.info("apify: actor finished runId=%s status=%s", run_id, run.get("status"))
 
         # 先从 dataset 找 videoUrl / downloadUrl
         items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
