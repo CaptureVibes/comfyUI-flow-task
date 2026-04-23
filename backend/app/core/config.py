@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     tikwm_api_key: str = ""       # tikwm.com API key（可选，不传也可访问）
     rapidapi_key: str = ""        # RapidAPI key，用于 tiktok-api23 fallback
     apify_token: str = ""         # Apify API token，用于 clockworks/tiktok-scraper
+    tiktok_search_use_rapidapi: bool = True  # False 则跳过 RapidAPI，直接用 Apify 搜索
 
     # Lark 通知
     lark_webhook_url: str = ""    # Lark 机器人 Webhook 地址（为空则不发通知）

@@ -100,6 +100,21 @@ async def search_by_keyword(
         search_sorting:   搜索排序方式（仅 Apify 支持，RapidAPI 忽略）
     """
     from app.utils import rapid_api
+    from app.core.config import settings
+
+    if not settings.tiktok_search_use_rapidapi:
+        logger.info("【tiktok_search】TIKTOK_SEARCH_USE_RAPIDAPI=false，直接走 Apify keyword=%s", keyword)
+        apify = TikTokApifyClient()
+        videos = await asyncio.to_thread(
+            apify.search,
+            search_queries=[keyword],
+            results_per_page=results_per_page,
+            oldest_date=oldest_date,
+            search_sorting=search_sorting,
+            filter_params=filter_params,
+        )
+        logger.info("【tiktok_search】keyword=%s Apify 返回=%d条", keyword, len(videos))
+        return videos
 
     # --- RapidAPI 尝试（翻页直到凑够 results_per_page 或无更多数据）---
     try:
