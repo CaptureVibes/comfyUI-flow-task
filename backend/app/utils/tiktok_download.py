@@ -29,16 +29,19 @@ _APIFY_ACTOR_ID = "dltik/tiktok-video-downloader"
 
 async def _tikwm_get_direct_url(tiktok_url: str) -> str:
     """tikwm POST /api/ 获取 hdplay/play 直链。"""
+    logger.info("tikwm: POST %s/  url=%s", _TIKWM_BASE, tiktok_url[:80])
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(_TIKWM_BASE + "/", data={"url": tiktok_url, "hd": 1})
         resp.raise_for_status()
         body = resp.json()
-    if body.get("code") != 0:
-        raise RuntimeError(f"tikwm error code={body.get('code')} msg={body.get('msg')}")
+    code = body.get("code")
+    if code != 0:
+        raise RuntimeError(f"tikwm error code={code} msg={body.get('msg')}")
     data = body["data"]
     url = data.get("hdplay") or data.get("play")
     if not url:
         raise RuntimeError("tikwm returned no video URL")
+    logger.info("tikwm: got direct_url=%s", url[:100])
     return url
 
 
@@ -46,6 +49,7 @@ async def _rapidapi_get_direct_url(tiktok_url: str) -> str:
     """RapidAPI /api/download/video 获取无水印直链。"""
     if not settings.rapidapi_key:
         raise RuntimeError("RAPIDAPI_KEY not configured")
+    logger.info("rapidapi: GET /api/download/video  url=%s", tiktok_url[:80])
     headers = {
         "X-RapidAPI-Key": settings.rapidapi_key,
         "X-RapidAPI-Host": _RAPIDAPI_HOST,
@@ -57,12 +61,14 @@ async def _rapidapi_get_direct_url(tiktok_url: str) -> str:
             params={"url": tiktok_url},
             headers=headers,
         )
+        logger.info("rapidapi: status=%d", resp.status_code)
         resp.raise_for_status()
         body = resp.json()
     data = body.get("data") or body
     url = data.get("hdplay") or data.get("play") or data.get("wmplay") or data.get("video_url")
     if not url:
         raise RuntimeError(f"RapidAPI returned no video URL: {list(body.keys())}")
+    logger.info("rapidapi: got direct_url=%s", url[:100])
     return url
 
 
@@ -72,6 +78,7 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
     """
     if not settings.apify_token:
         raise RuntimeError("APIFY_TOKEN not configured")
+    logger.info("apify: calling actor=%s  url=%s", _APIFY_ACTOR_ID, tiktok_url[:80])
 
     from apify_client import ApifyClient
 
@@ -87,7 +94,9 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
             raise RuntimeError(f"Apify actor returned no fileUrl: {list(item.keys())}")
         return url
 
-    return await asyncio.to_thread(_run_sync)
+    url = await asyncio.to_thread(_run_sync)
+    logger.info("apify: got direct_url=%s", url[:100])
+    return url
 
 
 # ---------------------------------------------------------------------------
