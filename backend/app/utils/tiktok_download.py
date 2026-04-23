@@ -20,7 +20,7 @@ logger = logging.getLogger("app.tiktok_download")
 _TIKWM_BASE = "https://www.tikwm.com/api"
 _RAPIDAPI_HOST = "tiktok-api23.p.rapidapi.com"
 _RAPIDAPI_BASE = f"https://{_RAPIDAPI_HOST}"
-_APIFY_ACTOR_ID = "dltik/tiktok-video-downloader"
+_APIFY_ACTOR_ID = "GdWCkxBtKWOsKjdch"  # clockworks/tiktok-scraper
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +73,8 @@ async def _rapidapi_get_direct_url(tiktok_url: str) -> str:
 
 
 async def _apify_get_direct_url(tiktok_url: str) -> str:
-    """Apify dltik/tiktok-video-downloader actor 获取视频直链。
-    该 actor 用 yt-dlp 下载后存到 Apify storage，返回 fileUrl。
+    """用 clockworks/tiktok-scraper 开启 shouldDownloadVideos，
+    从 KV store 拿视频文件 URL。
     """
     if not settings.apify_token:
         raise RuntimeError("APIFY_TOKEN not configured")
@@ -84,15 +84,44 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
 
     def _run_sync() -> str:
         client = ApifyClient(settings.apify_token)
-        run = client.actor(_APIFY_ACTOR_ID).call(run_input={"url": tiktok_url})
+        run = client.actor(_APIFY_ACTOR_ID).call(run_input={
+            "postURLs": [tiktok_url],
+            "resultsPerPage": 1,
+            "shouldDownloadVideos": True,
+            "shouldDownloadCovers": False,
+            "shouldDownloadSlideshowImages": False,
+            "shouldDownloadAvatars": False,
+            "shouldDownloadMusicCovers": False,
+            "downloadSubtitlesOptions": "NEVER_DOWNLOAD_SUBTITLES",
+            "commentsPerPost": 0,
+        })
+
+        # 先从 dataset 找 videoUrl / downloadUrl
         items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
-        if not items:
-            raise RuntimeError("Apify actor returned empty dataset")
-        item = items[0]
-        url = item.get("fileUrl") or item.get("videoUrl") or item.get("url")
-        if not url:
-            raise RuntimeError(f"Apify actor returned no fileUrl: {list(item.keys())}")
-        return url
+        logger.info("apify: dataset items=%d", len(items))
+        if items:
+            item = items[0]
+            url = (
+                item.get("videoUrl")
+                or item.get("downloadUrl")
+                or item.get("videoMeta", {}).get("downloadAddr")
+                or item.get("videoMeta", {}).get("playAddr")
+            )
+            if url:
+                return url
+
+        # fallback：从 KV store 找视频文件
+        kv_store_id = run.get("defaultKeyValueStoreId")
+        if kv_store_id:
+            kv = client.key_value_store(kv_store_id)
+            for record in kv.list_keys().get("items", []):
+                key = record.get("key", "")
+                if key.endswith(".mp4") or "video" in key.lower():
+                    file_url = f"https://api.apify.com/v2/key-value-stores/{kv_store_id}/records/{key}"
+                    logger.info("apify: found video in KV store key=%s", key)
+                    return file_url
+
+        raise RuntimeError(f"Apify actor returned no video URL. dataset={len(items)} items")
 
     url = await asyncio.to_thread(_run_sync)
     logger.info("apify: got direct_url=%s", url[:100])
