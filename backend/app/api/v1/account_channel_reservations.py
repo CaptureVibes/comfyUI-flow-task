@@ -104,6 +104,7 @@ async def reserve_ai_accounts_for_channel_openapi(
         select(Account)
         .where(Account.owner_id == owner_id)
         .where(Account.gender == body.gender)
+        .where(Account.ai_generation_status == "completed")
         .where(
             ~exists()
             .where(AccountChannelReservation.account_id == Account.id)
