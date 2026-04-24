@@ -62,7 +62,7 @@ class PlatformStatItem(BaseModel):
     platform: str
     bound: int
     confirmed: int
-    inactive: int
+    no_stock: int   # 已绑定但无有效库存（队列中无 publish_meta.status=done 的 subtask）
     unbound: int
 
 
@@ -84,10 +84,23 @@ async def get_platform_stats(
         total_stmt = total_stmt.where(Account.owner_id == owner_id)
     total_accounts: int = (await session.scalar(total_stmt)) or 0
 
-    # 对每个平台统计 reservation 各状态
+    # 有效库存子查询：account_id 存在 queued 且 publish_meta.status=done 的 subtask
+    has_stock_subq = (
+        select(VideoTask.account_id)
+        .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+        .where(
+            VideoSubTask.status == "queued",
+            VideoSubTask.publish_meta.op("->>")(  # type: ignore[attr-defined]
+                "status"
+            ) == "done",
+        )
+        .where(VideoTask.account_id.is_not(None))
+    )
+
     items: list[PlatformStatItem] = []
     for platform in PLATFORMS:
-        base_stmt = (
+        # 统计各 reservation 状态
+        res_stmt = (
             select(
                 AccountChannelReservation.status,
                 AccountChannelReservation.channel_status,
@@ -101,33 +114,44 @@ async def get_platform_stats(
             )
         )
         if owner_id is not None:
-            base_stmt = base_stmt.where(Account.owner_id == owner_id)
+            res_stmt = res_stmt.where(Account.owner_id == owner_id)
 
-        rows = (await session.execute(base_stmt)).all()
+        rows = (await session.execute(res_stmt)).all()
 
         bound = 0
         confirmed = 0
-        inactive = 0
         has_reservation = 0
 
-        for res_status, ch_status, cnt in rows:
+        for res_status, _ch_status, cnt in rows:
             has_reservation += cnt
             if res_status == "bound":
-                if ch_status != "active":
-                    inactive += cnt
-                else:
-                    bound += cnt
+                bound += cnt
             elif res_status == "confirmed":
                 confirmed += cnt
 
-        unbound = total_accounts - has_reservation
+        # 已绑定中，有有效库存的账号数
+        stock_stmt = (
+            select(func.count(func.distinct(AccountChannelReservation.account_id)))
+            .join(Account, Account.id == AccountChannelReservation.account_id)
+            .where(
+                AccountChannelReservation.platform == platform,
+                AccountChannelReservation.status == "bound",
+                AccountChannelReservation.account_id.in_(has_stock_subq),
+            )
+        )
+        if owner_id is not None:
+            stock_stmt = stock_stmt.where(Account.owner_id == owner_id)
+        bound_with_stock: int = (await session.scalar(stock_stmt)) or 0
+
+        no_stock = max(bound - bound_with_stock, 0)
+        unbound = max(total_accounts - has_reservation, 0)
 
         items.append(PlatformStatItem(
             platform=platform,
             bound=bound,
             confirmed=confirmed,
-            inactive=inactive,
-            unbound=max(unbound, 0),
+            no_stock=no_stock,
+            unbound=unbound,
         ))
 
     return PlatformStatsResponse(platforms=items)

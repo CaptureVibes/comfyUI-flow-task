@@ -78,17 +78,17 @@
             <span class="ps-stat-value">{{ stat.confirmed }}</span>
           </div>
           <div class="ps-stat-item">
-            <span class="ps-stat-label">未激活</span>
-            <span class="ps-stat-value ps-stat-warn">{{ stat.inactive }}</span>
+            <span class="ps-stat-label">无库存</span>
+            <span class="ps-stat-value ps-stat-warn">{{ stat.no_stock }}</span>
           </div>
           <div class="ps-stat-item">
             <span class="ps-stat-label">未绑定</span>
             <span class="ps-stat-value ps-stat-muted">{{ stat.unbound }}</span>
           </div>
         </div>
-        <div class="ps-status-hint" v-if="stat.inactive > 0">
+        <div class="ps-status-hint" v-if="stat.no_stock > 0">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          {{ stat.inactive }} 个{{ PLATFORM_META[stat.platform]?.label }} AI 博主当前无有效库存
+          {{ stat.no_stock }} 个{{ PLATFORM_META[stat.platform]?.label }} AI 博主当前无有效库存
         </div>
         <div class="ps-status-hint ps-status-ok" v-else-if="stat.bound > 0">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
@@ -1895,13 +1895,20 @@ async function handleSupplement() {
 const platformStats = ref([])
 const platformStatsLoading = ref(false)
 
+const PLATFORM_STATS_MOCK = [
+  { platform: 'tiktok',    bound: 0, confirmed: 0, no_stock: 0, unbound: 0 },
+  { platform: 'youtube',   bound: 0, confirmed: 0, no_stock: 0, unbound: 0 },
+  { platform: 'instagram', bound: 0, confirmed: 0, no_stock: 0, unbound: 0 },
+]
+
 async function loadPlatformStats() {
+  platformStats.value = PLATFORM_STATS_MOCK
   platformStatsLoading.value = true
   try {
     const data = await fetchPlatformStats()
-    platformStats.value = data.platforms || []
+    platformStats.value = data.platforms || PLATFORM_STATS_MOCK
   } catch {
-    // silently ignore
+    // 后端未启动时保留 mock，不白屏
   } finally {
     platformStatsLoading.value = false
   }
