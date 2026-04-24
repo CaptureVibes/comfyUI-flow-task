@@ -116,7 +116,7 @@ async def list_accounts(
             bound_subq = select(AccountChannelReservation.account_id)
             stmt = stmt.where(~Account.id.in_(bound_subq))
             total_stmt = total_stmt.where(~Account.id.in_(bound_subq))
-        elif platform_binding_status in ("bound", "confirmed", "reserved"):
+        elif platform_binding_status in ("bound", "confirmed"):
             status_subq = (
                 select(AccountChannelReservation.account_id)
                 .where(AccountChannelReservation.status == platform_binding_status)

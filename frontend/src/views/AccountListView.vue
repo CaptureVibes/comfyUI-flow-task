@@ -562,7 +562,6 @@
           <option value="">平台绑定 · 全部</option>
           <option value="bound">已绑定</option>
           <option value="confirmed">已确认</option>
-          <option value="reserved">已预留</option>
           <option value="unbound">未绑定</option>
         </select>
         <button v-if="hasActiveColFilters" class="al-col-filter-clear" @click="clearColFilters">
