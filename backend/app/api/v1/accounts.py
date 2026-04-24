@@ -48,6 +48,91 @@ router = APIRouter(prefix="/accounts", tags=["accounts"])
 logger = logging.getLogger("app.accounts")
 
 
+def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
+    """For queries: admin sees all (None = no filter), regular user sees own only."""
+    return None if current_user.is_admin else current_user.user_id
+
+
+def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID:
+    """For writes: always bind to the actual user, even if admin."""
+    return current_user.user_id
+
+
+class PlatformStatItem(BaseModel):
+    platform: str
+    bound: int
+    confirmed: int
+    inactive: int
+    unbound: int
+
+
+class PlatformStatsResponse(BaseModel):
+    platforms: list[PlatformStatItem]
+
+
+@router.get("/platform-stats", response_model=PlatformStatsResponse)
+async def get_platform_stats(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> PlatformStatsResponse:
+    """按平台统计账号绑定状态数量。"""
+    PLATFORMS = ["tiktok", "youtube", "instagram"]
+
+    # 总账号数（用于计算未绑定 = 总数 - 有该平台 reservation 的数）
+    total_stmt = select(func.count(Account.id))
+    if owner_id is not None:
+        total_stmt = total_stmt.where(Account.owner_id == owner_id)
+    total_accounts: int = (await session.scalar(total_stmt)) or 0
+
+    # 对每个平台统计 reservation 各状态
+    items: list[PlatformStatItem] = []
+    for platform in PLATFORMS:
+        base_stmt = (
+            select(
+                AccountChannelReservation.status,
+                AccountChannelReservation.channel_status,
+                func.count(AccountChannelReservation.id),
+            )
+            .join(Account, Account.id == AccountChannelReservation.account_id)
+            .where(AccountChannelReservation.platform == platform)
+            .group_by(
+                AccountChannelReservation.status,
+                AccountChannelReservation.channel_status,
+            )
+        )
+        if owner_id is not None:
+            base_stmt = base_stmt.where(Account.owner_id == owner_id)
+
+        rows = (await session.execute(base_stmt)).all()
+
+        bound = 0
+        confirmed = 0
+        inactive = 0
+        has_reservation = 0
+
+        for res_status, ch_status, cnt in rows:
+            has_reservation += cnt
+            if res_status == "bound":
+                if ch_status != "active":
+                    inactive += cnt
+                else:
+                    bound += cnt
+            elif res_status == "confirmed":
+                confirmed += cnt
+
+        unbound = total_accounts - has_reservation
+
+        items.append(PlatformStatItem(
+            platform=platform,
+            bound=bound,
+            confirmed=confirmed,
+            inactive=inactive,
+            unbound=max(unbound, 0),
+        ))
+
+    return PlatformStatsResponse(platforms=items)
+
+
 class BindBloggerBody(BaseModel):
     tiktok_blogger_id: uuid.UUID
 
@@ -226,16 +311,6 @@ def _ai_generation_response(account_id: uuid.UUID, state: dict, account) -> AIGe
         selected_photo_candidate_id=state.get("selected_photo_candidate_id"),
         combined_description=state.get("combined_description", ""),
     )
-
-
-def _get_owner_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID | None:
-    """For queries: admin sees all (None = no filter), regular user sees own only."""
-    return None if current_user.is_admin else current_user.user_id
-
-
-def _get_creator_id(current_user: TokenData = Depends(get_current_user)) -> uuid.UUID:
-    """For writes: always bind to the actual user, even if admin."""
-    return current_user.user_id
 
 
 @router.post("", response_model=AccountRead, status_code=201)

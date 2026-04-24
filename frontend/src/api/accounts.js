@@ -171,3 +171,8 @@ export async function bindOpenAPIChannel(accountId, payload) {
 export async function deleteChannelReservation(accountId, reservationId) {
   await http.delete(`/accounts/${accountId}/channel-reservations/${reservationId}`)
 }
+
+export async function fetchPlatformStats() {
+  const { data } = await http.get('/accounts/platform-stats')
+  return data
+}

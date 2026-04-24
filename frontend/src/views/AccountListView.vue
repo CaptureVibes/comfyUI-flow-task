@@ -50,6 +50,57 @@
       </div>
     </div>
 
+    <!-- 平台统计卡片 -->
+    <div class="ps-row" v-loading="platformStatsLoading">
+      <div
+        v-for="stat in platformStats"
+        :key="stat.platform"
+        class="ps-card"
+      >
+        <div class="ps-card-header">
+          <div class="ps-platform-icon" v-html="PLATFORM_META[stat.platform]?.icon || ''"></div>
+          <span class="ps-platform-name">{{ PLATFORM_META[stat.platform]?.label || stat.platform }}</span>
+          <span
+            class="ps-platform-tag"
+            :style="{
+              color: PLATFORM_META[stat.platform]?.tagColor,
+              background: PLATFORM_META[stat.platform]?.tagBg,
+            }"
+          >{{ PLATFORM_META[stat.platform]?.tag }}</span>
+        </div>
+        <div class="ps-stats">
+          <div class="ps-stat-item">
+            <span class="ps-stat-label">已绑定</span>
+            <span class="ps-stat-value">{{ stat.bound }}</span>
+          </div>
+          <div class="ps-stat-item">
+            <span class="ps-stat-label">已确认</span>
+            <span class="ps-stat-value">{{ stat.confirmed }}</span>
+          </div>
+          <div class="ps-stat-item">
+            <span class="ps-stat-label">未激活</span>
+            <span class="ps-stat-value ps-stat-warn">{{ stat.inactive }}</span>
+          </div>
+          <div class="ps-stat-item">
+            <span class="ps-stat-label">未绑定</span>
+            <span class="ps-stat-value ps-stat-muted">{{ stat.unbound }}</span>
+          </div>
+        </div>
+        <div class="ps-status-hint" v-if="stat.inactive > 0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          {{ stat.inactive }} 个{{ PLATFORM_META[stat.platform]?.label }} AI 博主当前无有效库存
+        </div>
+        <div class="ps-status-hint ps-status-ok" v-else-if="stat.bound > 0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
+          库存状态充足，运作良好
+        </div>
+        <div class="ps-status-hint ps-status-info" v-else-if="stat.unbound > 0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          {{ stat.unbound }} 个新账号待初始化设置
+        </div>
+      </div>
+    </div>
+
     <!-- AI博主配置弹窗 -->
     <el-dialog
       v-model="showAISettingsDialog"
@@ -922,7 +973,7 @@
 import { computed, defineComponent, h, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1841,9 +1892,49 @@ async function handleSupplement() {
   }
 }
 
+const platformStats = ref([])
+const platformStatsLoading = ref(false)
+
+async function loadPlatformStats() {
+  platformStatsLoading.value = true
+  try {
+    const data = await fetchPlatformStats()
+    platformStats.value = data.platforms || []
+  } catch {
+    // silently ignore
+  } finally {
+    platformStatsLoading.value = false
+  }
+}
+
+const PLATFORM_META = {
+  tiktok: {
+    label: 'TikTok',
+    tag: 'TRENDING',
+    tagColor: '#1a1a1a',
+    tagBg: '#f0f0f0',
+    icon: `<svg width="28" height="28" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#010101"/><path d="M22.5 8.5a5.5 5.5 0 0 1-3.5-1.3V19a5 5 0 1 1-4-4.9V11a8 8 0 1 0 7.5 8V8.5z" fill="white"/></svg>`,
+  },
+  youtube: {
+    label: 'YouTube',
+    tag: 'GLOBAL',
+    tagColor: '#dc2626',
+    tagBg: '#fef2f2',
+    icon: `<svg width="28" height="28" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#FF0000"/><path d="M26 11.5s-.3-1.9-1.1-2.7c-1-.9-2.2-.9-2.7-1C19.6 7.5 16 7.5 16 7.5s-3.6 0-6.2.3c-.5.1-1.7.1-2.7 1-.8.8-1.1 2.7-1.1 2.7S6 13.7 6 16v2.2c0 2.3.3 4.5.3 4.5s.3 1.9 1.1 2.7c1 .9 2.4.9 3 1 2.1.2 9 .2 9 .2s3.6 0 6.2-.3c.5-.1 1.7-.1 2.7-1 .8-.8 1.1-2.7 1.1-2.7S30 20.3 30 18v-2.1c0-2.3-.3-4.5-.3-4.5zM13.5 20V12l7 4-7 4z" fill="white"/></svg>`,
+  },
+  instagram: {
+    label: 'Instagram',
+    tag: 'VISUAL',
+    tagColor: '#c026d3',
+    tagBg: '#fdf4ff',
+    icon: `<svg width="28" height="28" viewBox="0 0 32 32" fill="none"><defs><linearGradient id="ig-grad" x1="0" y1="32" x2="32" y2="0" gradientUnits="userSpaceOnUse"><stop stop-color="#f9ce34"/><stop offset="0.33" stop-color="#ee2a7b"/><stop offset="1" stop-color="#6228d7"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#ig-grad)"/><rect x="8" y="8" width="16" height="16" rx="4.5" stroke="white" stroke-width="2" fill="none"/><circle cx="16" cy="16" r="4" stroke="white" stroke-width="2" fill="none"/><circle cx="21" cy="11" r="1.2" fill="white"/></svg>`,
+  },
+}
+
 onMounted(() => {
   loadFlags()
   loadData()
+  loadPlatformStats()
 })
 </script>
 
@@ -1852,6 +1943,105 @@ onMounted(() => {
   padding: 28px 32px;
   min-height: 100%;
   animation: rise 0.3s ease;
+}
+
+/* ── 平台统计卡片 ─────────────────────────────────────────────── */
+.ps-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+  min-height: 60px;
+}
+
+.ps-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ps-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ps-platform-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.ps-platform-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: #111;
+  flex: 1;
+}
+
+.ps-platform-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.ps-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.ps-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-stat-label {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.ps-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111;
+  line-height: 1;
+}
+
+.ps-stat-warn {
+  color: #3b82f6;
+}
+
+.ps-stat-muted {
+  color: #6b7280;
+}
+
+.ps-status-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #92400e;
+  background: #fffbeb;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.ps-status-ok {
+  color: #166534;
+  background: #f0fdf4;
+}
+
+.ps-status-info {
+  color: #1e40af;
+  background: #eff6ff;
 }
 
 .al-header {
