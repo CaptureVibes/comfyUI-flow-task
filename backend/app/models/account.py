@@ -29,7 +29,6 @@ class Account(Base):
     model_appearance: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # 博主照片（AI选出的候选）
-    painting_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # 彩绘图（用于视频第一个shot）
     performance_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     hashtags: Mapped[list | None] = mapped_column(JSON, nullable=True)  # TikTok hashtag 列表
 

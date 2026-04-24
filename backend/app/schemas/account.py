@@ -95,7 +95,7 @@ class SelectPhotoCandidateBody(BaseModel):
     candidate_id: str
 
 
-AIResumeStage = Literal["current", "video_analyzing", "name_generating", "photo_generating", "painting_generating", "avatar_generating"]
+AIResumeStage = Literal["current", "photo_generating", "video_analyzing", "avatar_generating", "name_generating"]
 
 
 class ResumeAIGenerationBody(BaseModel):
@@ -128,9 +128,11 @@ class AIGenerateStatusResponse(BaseModel):
     analysis_video_ids: list[str] = Field(default_factory=list)
     analysis_items: list[AIGenerationAnalysisItem] = Field(default_factory=list)
     generated_name: str = ""
+    generated_handle: str = ""
+    generated_signature: str = ""
+    generated_gender: str = ""
     generated_avatar_url: str = ""
     generated_photo_url: str = ""
-    generated_painting_url: str = ""
     photo_candidate_count: int = 0
     photo_candidates: list[AIGenerationPhotoCandidate] = Field(default_factory=list)
     selected_photo_candidate_id: str | None = None
@@ -359,7 +361,6 @@ class AccountRead(BaseModel):
     model_appearance: str | None
     avatar_url: str | None
     photo_url: str | None = None
-    painting_url: str | None = None
     social_bindings: list | None = None
     channel_reservations: list[AccountChannelReservationRead] = []
     performance_snapshot: AccountPerformanceSnapshot | None = None

@@ -40,16 +40,14 @@ _RUNNING_STATUSES = {
     "video_analyzing",
     "name_generating",
     "photo_generating",
-    "painting_generating",
     "avatar_generating",
 }
 
 _RESUMABLE_STAGES = {
     "current",
+    "photo_generating",
     "video_analyzing",
     "name_generating",
-    "photo_generating",
-    "painting_generating",
     "avatar_generating",
 }
 
@@ -106,13 +104,14 @@ def _new_state(account_id: str, status: str) -> dict[str, Any]:
         "video_descriptions": [],
         "combined_description": "",
         "generated_name": "",
+        "generated_handle": "",
+        "generated_signature": "",
         "generated_gender": "",
         "photo_candidate_count": _PHOTO_CANDIDATE_COUNT,
         "photo_candidates": [],
         "selected_photo_candidate_id": None,
         "generated_avatar_url": "",
         "generated_photo_url": "",
-        "generated_painting_url": "",
         "completed_stages": [],
         "updated_at": _utcnow_iso(),
     }
@@ -179,26 +178,54 @@ def get_ai_account_state(account_id: str) -> dict[str, Any] | None:
 async def _unique_account_name(
     session: "AsyncSession",
     base_name: str,
+    owner_id: "UUID | None",
     exclude_id: "UUID | None" = None,
 ) -> str:
-    """返回不重复的账号名。若 base_name 已存在则追加 -1、-2 …"""
-    from sqlalchemy import select, func
+    """返回同 owner 下不重复的账号名。若 base_name 已存在则追加 -1、-2 …"""
+    from sqlalchemy import select
     from app.models.account import Account
 
-    def _build_stmt(name: str):
-        stmt = select(func.count()).select_from(Account).where(Account.account_name == name)
-        if exclude_id is not None:
-            stmt = stmt.where(Account.id != exclude_id)
-        return stmt
-
-    if not (await session.scalar(_build_stmt(base_name))):
-        return base_name
-
+    base_name = base_name[:200]
+    candidate = base_name
     suffix = 1
     while True:
-        candidate = f"{base_name}-{suffix}"
-        if not (await session.scalar(_build_stmt(candidate))):
+        stmt = select(Account.id).where(Account.account_name == candidate)
+        if owner_id is not None:
+            stmt = stmt.where(Account.owner_id == owner_id)
+        if exclude_id is not None:
+            stmt = stmt.where(Account.id != exclude_id)
+        stmt = stmt.limit(1)
+        if not (await session.scalar(stmt)):
             return candidate
+        suffix_token = f"-{suffix}"
+        candidate = f"{base_name[:200 - len(suffix_token)]}{suffix_token}"
+        suffix += 1
+
+
+async def _unique_account_handle(
+    session: "AsyncSession",
+    base_handle: str,
+    owner_id: "UUID | None",
+    exclude_id: "UUID | None" = None,
+) -> str:
+    """返回同 owner 下不重复的 handle。若 base_handle 已存在则追加 _1、_2 …"""
+    from sqlalchemy import select
+    from app.models.account import Account
+
+    base_handle = base_handle[:200]
+    candidate = base_handle
+    suffix = 1
+    while True:
+        stmt = select(Account.id).where(Account.account_handle == candidate)
+        if owner_id is not None:
+            stmt = stmt.where(Account.owner_id == owner_id)
+        if exclude_id is not None:
+            stmt = stmt.where(Account.id != exclude_id)
+        stmt = stmt.limit(1)
+        if not (await session.scalar(stmt)):
+            return candidate
+        suffix_token = f"_{suffix}"
+        candidate = f"{base_handle[:200 - len(suffix_token)]}{suffix_token}"
         suffix += 1
 
 
@@ -224,17 +251,32 @@ async def _persist_states(account_ids: list[str]) -> None:
             acc.ai_generation_error = state.get("error_message") or None
             acc.ai_generation_state = state
             if state.get("generated_name"):
-                acc.account_name = await _unique_account_name(
-                    session, state["generated_name"], exclude_id=acc.id
+                unique_name = await _unique_account_name(
+                    session,
+                    state["generated_name"],
+                    owner_id=acc.owner_id,
+                    exclude_id=acc.id,
                 )
+                state["generated_name"] = unique_name
+                acc.account_name = unique_name
+            if state.get("generated_handle"):
+                unique_handle = await _unique_account_handle(
+                    session,
+                    state["generated_handle"],
+                    owner_id=acc.owner_id,
+                    exclude_id=acc.id,
+                )
+                state["generated_handle"] = unique_handle
+                acc.account_handle = unique_handle
+            if state.get("generated_signature"):
+                acc.account_signature = state["generated_signature"]
             if state.get("generated_gender"):
                 acc.gender = state["generated_gender"]
             if state.get("generated_avatar_url"):
                 acc.avatar_url = state["generated_avatar_url"]
             if state.get("generated_photo_url"):
                 acc.photo_url = state["generated_photo_url"]
-            if state.get("generated_painting_url"):
-                acc.painting_url = state["generated_painting_url"]
+            acc.ai_generation_state = state
         await session.commit()
 
 
@@ -481,61 +523,45 @@ async def _stage_video_analysis(
 
 async def _stage_name_generation(
     account_id: str,
-    combined_description: str,
-    model_name: str,
-    name_prompt: str,
-) -> str:
+    avatar_url: str,
+    photo_url: str,
+) -> dict[str, str]:
     state = _ensure_state_shape(ai_account_states.get(account_id), account_id)
-    if "name_generating" in state.get("completed_stages", []) and state.get("generated_name"):
+    if (
+        "name_generating" in state.get("completed_stages", [])
+        and state.get("generated_name")
+        and state.get("generated_handle")
+        and state.get("generated_gender")
+    ):
         ai_account_states[account_id] = state
-        return state.get("generated_name", "")
+        return {
+            "name": state.get("generated_name", ""),
+            "handle": state.get("generated_handle", ""),
+            "signature": state.get("generated_signature", ""),
+            "gender": state.get("generated_gender", ""),
+        }
 
     _set_status(account_id, "name_generating")
-    json_instruction = (
-        '\n\n请以 JSON 格式返回，格式为：{"name": "博主名字", "gender": "male/female/unisex"}，'
-        '其中 gender 根据博主内容风格判断，只能是 male、female、unisex 三者之一，不要输出其他内容。'
-    )
-    full_prompt = (
-        f"{name_prompt}{json_instruction}\n\n参考视频内容描述：\n{combined_description}"
-        if name_prompt
-        else f"根据以下视频内容描述，为这个博主取一个有吸引力的名字，并判断其受众性别定位。{json_instruction}\n\n视频内容描述：\n{combined_description}"
-    )
 
-    last_exc: Exception | None = None
-    name = ""
-    gender = ""
-    for attempt in range(1, 4):
-        try:
-            raw = await _call_gemini_text(
-                model_name=model_name,
-                prompt=full_prompt,
-                temperature=0.9,
-            )
-            # 解析 JSON，兼容 Gemini 返回 markdown 代码块的情况
-            import json, re as _re
-            json_str = raw.strip()
-            m = _re.search(r"\{.*\}", json_str, _re.DOTALL)
-            if m:
-                json_str = m.group(0)
-            parsed = json.loads(json_str)
-            name = str(parsed.get("name") or "").strip()
-            raw_gender = str(parsed.get("gender") or "").strip().lower()
-            gender = raw_gender if raw_gender in ("male", "female", "unisex") else ""
-            last_exc = None
-            break
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("[%s] name_generating attempt %d/3 failed: %s", account_id, attempt, exc)
-    if last_exc is not None:
-        raise last_exc
+    from app.services.name_handle_service import generate_name_handle_for_account
+
+    result = await generate_name_handle_for_account(
+        account_id,
+        avatar_url=avatar_url,
+        photo_url=photo_url,
+    )
+    if not result or not result.get("name") or not result.get("handle") or not result.get("gender"):
+        raise ValueError("名称/handle/性别生成失败，无法完成 AI 博主生成")
 
     state = ai_account_states[account_id]
-    state["generated_name"] = name
-    state["generated_gender"] = gender
+    state["generated_name"] = result.get("name", "")
+    state["generated_handle"] = result.get("handle", "")
+    state["generated_signature"] = result.get("signature", "")
+    state["generated_gender"] = result.get("gender", "")
     _mark_stage_completed(state, "name_generating")
     ai_account_states[account_id] = state
     await _save_state(account_id)
-    return name
+    return result
 
 
 async def _run_photo_candidate(
@@ -724,55 +750,6 @@ async def _stage_photo_generation(
     await _save_state(account_id)
 
 
-async def _stage_painting_generation(
-    account_id: str,
-    selected_photo_url: str,
-    painting_prompt: str,
-    avatar_model: str,
-    avatar_size: str,
-    avatar_quality: str,
-) -> str:
-    """基于选中的照片候选生成彩绘图，结果写入 state['generated_painting_url']。"""
-    state = _ensure_state_shape(ai_account_states.get(account_id), account_id)
-    if "painting_generating" in state.get("completed_stages", []) and state.get("generated_painting_url"):
-        ai_account_states[account_id] = state
-        return state.get("generated_painting_url", "")
-
-    _set_status(account_id, "painting_generating")
-
-    prompt = painting_prompt or "请基于参考照片生成一张高质量彩绘风格人物图，保持人物面部特征一致。"
-
-    last_exc: Exception | None = None
-    img_bytes: bytes = b""
-    for attempt in range(1, 4):
-        try:
-            img_bytes = await _generate_avatar_image(
-                prompt=prompt,
-                model=avatar_model,
-                size=avatar_size,
-                quality=avatar_quality,
-                image_urls=[selected_photo_url],
-            )
-            last_exc = None
-            break
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("[%s] painting_generating attempt %d/3 failed: %s", account_id, attempt, exc)
-            if not _should_retry_image_submit(exc):
-                break
-
-    if last_exc is not None:
-        raise last_exc
-
-    cdn_url = await _upload_image_bytes_to_cdn(img_bytes, "painting.png")
-    state = ai_account_states[account_id]
-    state["generated_painting_url"] = cdn_url
-    _mark_stage_completed(state, "painting_generating")
-    ai_account_states[account_id] = state
-    await _save_state(account_id)
-    return cdn_url
-
-
 async def _stage_avatar_generation(
     account_id: str,
     combined_description: str,
@@ -860,11 +837,8 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=acc.owner_id)
                     video_prompt = pipeline_cfg.ai_account_video_prompt or "请用中文详细描述这个视频的内容，包括场景、人物特征、服装风格、行为动作等。"
                     video_model = pipeline_cfg.ai_account_video_model or "gemini-3.1-pro-preview"
-                    name_prompt = pipeline_cfg.ai_account_name_prompt or ""
                     avatar_prompt = pipeline_cfg.ai_account_avatar_prompt or ""
                     photo_image_prompt = pipeline_cfg.ai_account_photo_image_prompt or ""
-                    painting_prompt = pipeline_cfg.ai_account_painting_prompt or ""
-                    name_model = pipeline_cfg.ai_account_name_model or "gemini-3.1-pro-preview"
                     avatar_model = pipeline_cfg.ai_account_avatar_model or "gemini-3.1-flash-image-preview"
                     avatar_size = pipeline_cfg.ai_account_avatar_size or "1:1"
                     avatar_quality = pipeline_cfg.ai_account_avatar_quality or "1K"
@@ -872,11 +846,8 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                 else:
                     video_prompt = "请用中文详细描述这个视频的内容，包括场景、人物特征、服装风格、行为动作等。"
                     video_model = "gemini-3.1-pro-preview"
-                    name_prompt = ""
                     avatar_prompt = ""
                     photo_image_prompt = ""
-                    painting_prompt = ""
-                    name_model = "gemini-3.1-pro-preview"
                     avatar_model = "gemini-3.1-flash-image-preview"
                     avatar_size = "1:1"
                     avatar_quality = "1K"
@@ -925,22 +896,6 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
             ai_account_states[account_id] = state
             await _save_state(account_id)
 
-            analysis_videos = _pick_analysis_videos(all_videos, max(1, int(state.get("analysis_sample_size") or _DEFAULT_ANALYSIS_SAMPLE_SIZE)))
-            combined_description = await _stage_video_analysis(
-                account_id=account_id,
-                analysis_videos=analysis_videos,
-                sample_size=max(1, int(state.get("analysis_sample_size") or _DEFAULT_ANALYSIS_SAMPLE_SIZE)),
-                model_name=video_model,
-                prompt=video_prompt,
-            )
-
-            await _stage_name_generation(
-                account_id=account_id,
-                combined_description=combined_description,
-                model_name=name_model,
-                name_prompt=name_prompt,
-            )
-
             await _stage_photo_generation(
                 account_id=account_id,
                 tag_ids=tag_ids,
@@ -960,23 +915,29 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
             if not selected_photo_url:
                 raise ValueError("已选择的照片候选不存在，无法继续生成头像")
 
-            painting_url = await _stage_painting_generation(
+            analysis_videos = _pick_analysis_videos(all_videos, max(1, int(state.get("analysis_sample_size") or _DEFAULT_ANALYSIS_SAMPLE_SIZE)))
+            combined_description = await _stage_video_analysis(
                 account_id=account_id,
-                selected_photo_url=selected_photo_url,
-                painting_prompt=painting_prompt,
-                avatar_model=avatar_model,
-                avatar_size=avatar_size,
-                avatar_quality=avatar_quality,
+                analysis_videos=analysis_videos,
+                sample_size=max(1, int(state.get("analysis_sample_size") or _DEFAULT_ANALYSIS_SAMPLE_SIZE)),
+                model_name=video_model,
+                prompt=video_prompt,
             )
 
-            await _stage_avatar_generation(
+            avatar_url = await _stage_avatar_generation(
                 account_id=account_id,
                 combined_description=combined_description,
-                reference_photo_url=painting_url or selected_photo_url,
+                reference_photo_url=selected_photo_url,
                 avatar_model=avatar_model,
                 avatar_prompt=avatar_prompt,
                 avatar_size=avatar_size,
                 avatar_quality=avatar_quality,
+            )
+
+            await _stage_name_generation(
+                account_id=account_id,
+                avatar_url=avatar_url,
+                photo_url=selected_photo_url,
             )
 
             _set_status(account_id, "completed")
@@ -1030,13 +991,14 @@ async def enqueue_ai_account_generation(account_id: str, tag_ids: list[str]) -> 
     state["video_descriptions"] = []
     state["combined_description"] = ""
     state["generated_name"] = ""
+    state["generated_handle"] = ""
+    state["generated_signature"] = ""
     state["generated_gender"] = ""
     state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
     state["photo_candidates"] = []
     state["selected_photo_candidate_id"] = None
     state["generated_avatar_url"] = ""
     state["generated_photo_url"] = ""
-    state["generated_painting_url"] = ""
     state["completed_stages"] = []
     state["updated_at"] = _utcnow_iso()
     ai_account_states[account_id] = state
@@ -1073,6 +1035,13 @@ async def _clear_account_generated_assets(
         await session.commit()
 
 
+def _clear_generated_identity(state: dict[str, Any]) -> None:
+    state["generated_name"] = ""
+    state["generated_handle"] = ""
+    state["generated_signature"] = ""
+    state["generated_gender"] = ""
+
+
 def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str) -> tuple[dict[str, Any], dict[str, bool]]:
     state = _ensure_state_shape(state, state.get("account_id", ""))
     clear_flags = {"photo": False, "avatar": False}
@@ -1088,55 +1057,38 @@ def _prepare_state_for_resume_from_stage(state: dict[str, Any], from_stage: str)
         state["analysis_items"] = []
         state["video_descriptions"] = []
         state["combined_description"] = ""
-        state["generated_name"] = ""
-        state["generated_gender"] = ""
-        state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
-        state["photo_candidates"] = []
-        state["selected_photo_candidate_id"] = None
-        state["generated_photo_url"] = ""
-        state["generated_painting_url"] = ""
+        _clear_generated_identity(state)
         state["generated_avatar_url"] = ""
-        state["completed_stages"] = []
-        clear_flags["photo"] = True
+        state["completed_stages"] = [
+            stage for stage in state.get("completed_stages", [])
+            if stage == "photo_generating"
+        ]
         clear_flags["avatar"] = True
     elif from_stage == "name_generating":
-        state["generated_name"] = ""
-        state["generated_gender"] = ""
-        state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
-        state["photo_candidates"] = []
-        state["selected_photo_candidate_id"] = None
-        state["generated_photo_url"] = ""
-        state["generated_painting_url"] = ""
-        state["generated_avatar_url"] = ""
-        state["completed_stages"] = [stage for stage in state.get("completed_stages", []) if stage == "video_analyzing"]
-        clear_flags["photo"] = True
-        clear_flags["avatar"] = True
+        _clear_generated_identity(state)
+        state["completed_stages"] = [
+            stage for stage in state.get("completed_stages", [])
+            if stage in {"photo_generating", "video_analyzing", "avatar_generating"}
+        ]
     elif from_stage == "photo_generating":
+        _clear_generated_identity(state)
         state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
         state["photo_candidates"] = []
         state["selected_photo_candidate_id"] = None
         state["generated_photo_url"] = ""
-        state["generated_painting_url"] = ""
         state["generated_avatar_url"] = ""
         state["completed_stages"] = [
             stage for stage in state.get("completed_stages", [])
-            if stage in {"video_analyzing", "name_generating"}
+            if stage == "video_analyzing"
         ]
         clear_flags["photo"] = True
-        clear_flags["avatar"] = True
-    elif from_stage == "painting_generating":
-        state["generated_painting_url"] = ""
-        state["generated_avatar_url"] = ""
-        state["completed_stages"] = [
-            stage for stage in state.get("completed_stages", [])
-            if stage in {"video_analyzing", "name_generating", "photo_generating"}
-        ]
         clear_flags["avatar"] = True
     elif from_stage == "avatar_generating":
+        _clear_generated_identity(state)
         state["generated_avatar_url"] = ""
         state["completed_stages"] = [
             stage for stage in state.get("completed_stages", [])
-            if stage in {"video_analyzing", "name_generating", "photo_generating", "painting_generating"}
+            if stage in {"photo_generating", "video_analyzing"}
         ]
         clear_flags["avatar"] = True
 
@@ -1200,6 +1152,8 @@ async def restart_ai_account_generation(account_id: str, tag_ids: list[str] | No
     state["video_descriptions"] = []
     state["combined_description"] = ""
     state["generated_name"] = ""
+    state["generated_handle"] = ""
+    state["generated_signature"] = ""
     state["generated_gender"] = ""
     state["photo_candidate_count"] = _PHOTO_CANDIDATE_COUNT
     state["photo_candidates"] = []

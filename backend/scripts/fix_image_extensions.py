@@ -124,7 +124,7 @@ async def fix_accounts(session, client: httpx.AsyncClient) -> int:
     # 只处理有需要修复的字段的账号
     candidates = [
         acc for acc in rows
-        if any(_needs_fix(getattr(acc, f) or "") for f in ("avatar_url", "photo_url", "painting_url"))
+        if any(_needs_fix(getattr(acc, f) or "") for f in ("avatar_url", "photo_url"))
     ]
     logger.info("accounts: 共 %d 条，需检查 %d 条", len(rows), len(candidates))
 
@@ -132,7 +132,7 @@ async def fix_accounts(session, client: httpx.AsyncClient) -> int:
 
     async def _fix_one(acc: Account) -> None:
         nonlocal changed
-        fields = [f for f in ("avatar_url", "photo_url", "painting_url") if _needs_fix(getattr(acc, f) or "")]
+        fields = [f for f in ("avatar_url", "photo_url") if _needs_fix(getattr(acc, f) or "")]
         tasks = {f: asyncio.create_task(_download_and_reupload(client, getattr(acc, f))) for f in fields}
         results = {f: await t for f, t in tasks.items()}
 

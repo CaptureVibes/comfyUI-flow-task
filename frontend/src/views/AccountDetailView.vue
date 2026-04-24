@@ -35,19 +35,6 @@
             </div>
             <span class="ad-media-label">照片</span>
           </button>
-          <button
-            type="button"
-            class="ad-media-card ad-media-photo"
-            :class="{ 'is-clickable': !!account.painting_url }"
-            @click="openMediaPreview(account.painting_url, `${account.account_name}彩绘图`)"
-          >
-            <img v-if="account.painting_url" :src="account.painting_url" class="ad-photo-img" />
-            <div v-else class="ad-photo-placeholder">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.7"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
-              <span>暂无彩绘图</span>
-            </div>
-            <span class="ad-media-label">彩绘图</span>
-          </button>
         </div>
 
         <div class="ad-hero-info">
@@ -947,7 +934,6 @@ function aiStatusLabel(status) {
     name_generating: '生成名称中',
     photo_generating: '生成照片候选中',
     awaiting_photo_selection: '等待人工选择照片',
-    painting_generating: '生成彩绘图中',
     avatar_generating: '生成头像中',
     completed: '已完成',
     failed: '失败',
@@ -974,7 +960,7 @@ function clearAIPollTimer() {
 
 function scheduleAIPoll() {
   clearAIPollTimer()
-  const running = ['pending', 'video_analyzing', 'name_generating', 'photo_generating', 'painting_generating', 'avatar_generating']
+  const running = ['pending', 'video_analyzing', 'name_generating', 'photo_generating', 'avatar_generating']
   if (!running.includes(aiState.value?.status)) return
   aiPollTimer = setTimeout(async () => {
     await loadAIState()
@@ -990,7 +976,6 @@ async function loadAIState() {
     if (account.value) account.value.ai_generation_status = data.status
     if (data.generated_name && account.value) account.value.account_name = data.generated_name
     if (data.generated_photo_url && account.value) account.value.photo_url = data.generated_photo_url
-    if (data.generated_painting_url && account.value) account.value.painting_url = data.generated_painting_url
     if (data.generated_avatar_url && account.value) account.value.avatar_url = data.generated_avatar_url
     if (['completed', 'failed', 'awaiting_photo_selection'].includes(data.status)) {
       clearAIPollTimer()

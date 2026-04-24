@@ -100,7 +100,6 @@ class PipelineSettingsPayload(BaseModel):
     ai_account_name_prompt: str = ""
     ai_account_avatar_prompt: str = ""
     ai_account_photo_image_prompt: str = ""
-    ai_account_painting_prompt: str = ""
     ai_account_name_model: str = "gemini-3.1-pro-preview"
     ai_account_avatar_model: str = "gemini-3.1-flash-image-preview"
     ai_account_avatar_size: str = "1:1"

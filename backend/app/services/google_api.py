@@ -21,6 +21,21 @@ def _make_client(api_key: str) -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
+def _is_quota_error(exc: Exception) -> bool:
+    exc_str = str(exc)
+    return (
+        "429" in exc_str
+        or "RESOURCE_EXHAUSTED" in exc_str
+        or "Too Many Requests" in exc_str
+    )
+
+
+def _retry_delay_seconds(exc: Exception, attempt: int) -> int:
+    if _is_quota_error(exc):
+        return 30
+    return min(attempt * 2, 30)
+
+
 # =============================================================================
 # 文本生成（支持可选视频/图片 URL）
 # =============================================================================
@@ -91,7 +106,7 @@ async def call_google_gemini_api(
             if attempt >= max_attempts:
                 logger.error("Google SDK text 已达最大重试次数 %d，放弃: model=%s %s", max_attempts, model_name, exc)
                 raise
-            delay = min(attempt * 2, 30)
+            delay = _retry_delay_seconds(exc, attempt)
             logger.warning("Google SDK text attempt %d/%d failed (%ds后重试): %s", attempt, max_attempts, delay, exc)
             await asyncio.sleep(delay)
 
@@ -160,7 +175,7 @@ async def call_google_gemini_api_with_images(
             if attempt >= max_attempts:
                 logger.error("Google SDK text+images 已达最大重试次数 %d，放弃: %s", max_attempts, exc)
                 raise
-            delay = min(attempt * 2, 30)
+            delay = _retry_delay_seconds(exc, attempt)
             logger.warning("Google SDK text+images attempt %d/%d failed (%ds后重试): %s", attempt, max_attempts, delay, exc)
             await asyncio.sleep(delay)
 
@@ -248,6 +263,6 @@ async def generate_image_google(
             if attempt >= max_attempts:
                 logger.error("Google SDK image gen 已达最大重试次数 %d，放弃: %s", max_attempts, exc)
                 raise
-            delay = min(attempt * 2, 30)
+            delay = _retry_delay_seconds(exc, attempt)
             logger.warning("Google SDK image gen attempt %d/%d failed (%ds后重试): %s", attempt, max_attempts, delay, exc)
             await asyncio.sleep(delay)

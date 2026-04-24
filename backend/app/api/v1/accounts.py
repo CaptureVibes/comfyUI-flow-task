@@ -216,9 +216,11 @@ def _ai_generation_response(account_id: uuid.UUID, state: dict, account) -> AIGe
         analysis_video_ids=state.get("analysis_video_ids", []) or [],
         analysis_items=state.get("analysis_items", []) or [],
         generated_name=state.get("generated_name", ""),
+        generated_handle=state.get("generated_handle", account.account_handle or ""),
+        generated_signature=state.get("generated_signature", account.account_signature or ""),
+        generated_gender=state.get("generated_gender", account.gender or ""),
         generated_avatar_url=state.get("generated_avatar_url", account.avatar_url or ""),
         generated_photo_url=state.get("generated_photo_url", account.photo_url or ""),
-        generated_painting_url=state.get("generated_painting_url", account.painting_url or ""),
         photo_candidate_count=state.get("photo_candidate_count", 0),
         photo_candidates=state.get("photo_candidates", []) or [],
         selected_photo_candidate_id=state.get("selected_photo_candidate_id"),
@@ -690,7 +692,7 @@ async def trigger_ai_generation(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """触发 AI 生成博主名称、头像和照片。"""
+    """触发 AI 生成博主照片候选、头像和账号资料。"""
     from app.services.ai_account_service import enqueue_ai_account_generation
 
     await get_account_or_404(session, account_id, owner_id)

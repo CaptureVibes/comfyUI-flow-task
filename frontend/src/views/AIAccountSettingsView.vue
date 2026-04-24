@@ -117,25 +117,6 @@
         </div>
       </div>
 
-      <!-- 彩绘图生成阶段 -->
-      <div class="aias-card">
-        <div class="aias-section">
-          <div class="aias-section-header">
-            <span class="aias-section-tag">阶段四·五：彩绘图生成</span>
-            <span class="aias-section-desc">基于选中的照片候选，用 Nano2 生成彩绘风格图，作为视频第一帧参考图</span>
-          </div>
-          <el-form-item label="彩绘图提示词">
-            <el-input
-              v-model="form.ai_account_painting_prompt"
-              type="textarea"
-              :rows="4"
-              placeholder="请输入彩绘图生成提示词，留空则使用默认提示词..."
-              class="aias-input"
-            />
-          </el-form-item>
-        </div>
-      </div>
-
       <!-- 批量生成名称/Handle/签名 Prompt 配置 -->
       <div class="aias-card">
         <div class="aias-section">
@@ -230,8 +211,6 @@ const form = reactive({
   ai_account_avatar_quality: '1K',
   // 照片生成
   ai_account_photo_image_prompt: '',
-  // 彩绘图生成
-  ai_account_painting_prompt: '',
   // 批量生成名称/handle/签名
   ai_account_exclusive_name_prompt: '',
   ai_account_shared_name_prompt: '',
@@ -257,7 +236,6 @@ async function loadSettings() {
     form.ai_account_avatar_size = data.ai_account_avatar_size || '1:1'
     form.ai_account_avatar_quality = data.ai_account_avatar_quality || '1K'
     form.ai_account_photo_image_prompt = data.ai_account_photo_image_prompt || ''
-    form.ai_account_painting_prompt = data.ai_account_painting_prompt || ''
     form.ai_account_exclusive_name_prompt = data.ai_account_exclusive_name_prompt || ''
     form.ai_account_shared_name_prompt = data.ai_account_shared_name_prompt || ''
     form.hashtag_search_top_n = data.hashtag_search_top_n ?? 100
@@ -286,7 +264,6 @@ async function handleSave() {
       ai_account_avatar_size: form.ai_account_avatar_size,
       ai_account_avatar_quality: form.ai_account_avatar_quality,
       ai_account_photo_image_prompt: form.ai_account_photo_image_prompt,
-      ai_account_painting_prompt: form.ai_account_painting_prompt,
       ai_account_exclusive_name_prompt: form.ai_account_exclusive_name_prompt,
       ai_account_shared_name_prompt: form.ai_account_shared_name_prompt,
       hashtag_search_top_n: form.hashtag_search_top_n,
