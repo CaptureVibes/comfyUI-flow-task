@@ -807,6 +807,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     tpl = await session.get(VideoAITemplate, uuid_val)
                     if tpl:
                         tpl.prompt_description = prompt_description
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
                         await session.commit()
 
             # ========== 步骤 2: 抽帧并上传 CDN（1s一帧，最多重试 3 次）==========
@@ -851,6 +852,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         extra = dict(tpl.extra or {})
                         extra["frame_shots"] = frame_shots
                         tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
                         await session.commit()
                 logger.info("[%s] imagegen stage completed, %d frames saved", template_id, len(frame_shots))
 
@@ -898,6 +900,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         extra = dict(tpl.extra or {})
                         extra["outfit_shots"] = outfit_shots
                         tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
                         await session.commit()
                 logger.info("[%s] outfit_selecting stage completed, %d unique outfits", template_id, len(outfit_shots))
 
@@ -926,6 +929,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         extra = dict(tpl.extra or {})
                         extra["outfit_detailing_progress"] = outfit_details
                         tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
                         await session.commit()
                 logger.info("[%s] outfit_detailing stage completed, %d outfits analyzed", template_id, len(outfit_details))
 
@@ -956,6 +960,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         extra = dict(tpl.extra or {})
                         extra["product_gen_results"] = product_gen_results
                         tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
                         await session.commit()
                 logger.info("[%s] product_imagegen stage completed", template_id)
 
@@ -990,6 +995,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         extra = dict(tpl.extra or {})
                         extra["final_outfits"] = final_outfits
                         tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
                         await session.commit()
                 logger.info("[%s] outfit_regen stage completed, %d outfits saved", template_id, len(final_outfits))
 
