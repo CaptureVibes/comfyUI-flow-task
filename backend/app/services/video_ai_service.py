@@ -1457,6 +1457,10 @@ async def recover_stuck_templates_on_startup() -> None:
         VideoAIProcessStatus.paused,       # 重启时被取消导致的暂停，自动恢复
         VideoAIProcessStatus.understanding,
         VideoAIProcessStatus.imagegen,
+        VideoAIProcessStatus.outfit_selecting,
+        VideoAIProcessStatus.outfit_detailing,
+        VideoAIProcessStatus.product_imagegen,
+        VideoAIProcessStatus.outfit_regen,
         # 保留历史状态兼容，避免旧任务卡在已废弃阶段时无法重新入队。
         VideoAIProcessStatus.splitting,
         VideoAIProcessStatus.face_removing,
