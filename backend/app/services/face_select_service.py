@@ -10,12 +10,10 @@
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
 
-import httpx
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,19 +24,6 @@ from app.services.pipeline_settings_service import get_or_create_pipeline_settin
 from app.services.video_ai_service import _extract_frames, _upload_frame_to_cdn
 
 logger = logging.getLogger("app.face_select")
-
-
-async def _get_api_key() -> tuple[str, str, bool]:
-    """
-    返回 (api_key, api_base_url, use_google)。
-    API key 从 .env 的 GOOGLE_API_KEY 获取。
-    """
-    from app.core.config import settings
-
-    google_key = settings.google_api_key
-    if not google_key:
-        raise RuntimeError("GOOGLE_API_KEY 未配置，请在 .env 中设置")
-    return google_key, "https://generativelanguage.googleapis.com", True
 
 
 async def select_face_for_tag(
@@ -103,9 +88,7 @@ async def select_face_for_tag(
         model = "gemini-3.1-pro-preview"
         prompt = ""
 
-    api_key, api_base_url, use_google = await _get_api_key()
-
-    # 6. 构建多图 Gemini 请求
+    # 6. 调用 Gemini 多图接口
     json_instructions = (
         "\n\n请从以上图片中选择一张最适合作为人脸照片的图片（清晰、正面、表情自然）。"
         "请以JSON格式输出，格式如下：{\"selected\": <数字1-10>}"
@@ -115,55 +98,25 @@ async def select_face_for_tag(
         + json_instructions
     )
 
-    parts: list[dict] = []
-    for i, cdn_url in enumerate(cdn_urls):
-        parts.append({"text": f"图片{i + 1}"})
-        parts.append({"fileData": {"mimeType": "image/jpeg", "fileUri": cdn_url}})
-    parts.append({"text": final_prompt})
-
-    payload = {
-        "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {"temperature": 0.1},
+    response_schema = {
+        "type": "object",
+        "properties": {
+            "selected": {"type": "integer"},
+        },
+        "required": ["selected"],
     }
 
-    url = f"{api_base_url.rstrip('/')}/v1beta/models/{model}:generateContent"
-    req_kwargs: dict = {"json": payload}
-    if use_google:
-        req_kwargs["params"] = {"key": api_key}
-    else:
-        req_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
+    from app.services.ai_api import call_gemini_api_with_images
 
-    # 7. 调用 Gemini，带重试
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(url, **req_kwargs)
-                if resp.status_code == 429:
-                    logger.warning("[人脸选择] 限流(429)，10s后重试")
-                    await asyncio.sleep(10)
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            logger.info("[人脸选择] Gemini 响应: %s", text[:200])
-            break
-
-        except asyncio.CancelledError:
-            raise
-        except httpx.HTTPStatusError as exc:
-            if 400 <= exc.response.status_code < 500 and exc.response.status_code != 429:
-                logger.error("[人脸选择] Gemini 4xx 不重试: %s", exc)
-                raise RuntimeError(f"Gemini API 请求失败: {exc}") from exc
-            delay = min(attempt * 3, 30)
-            logger.warning("[人脸选择] 第 %d 次失败，%ds后重试: %s", attempt, delay, exc)
-            await asyncio.sleep(delay)
-        except Exception as exc:
-            delay = min(attempt * 3, 30)
-            logger.warning("[人脸选择] 第 %d 次失败，%ds后重试: %s", attempt, delay, exc)
-            await asyncio.sleep(delay)
+    text = await call_gemini_api_with_images(
+        model_name=model,
+        prompt=final_prompt,
+        image_urls=cdn_urls,
+        temperature=0.1,
+        response_schema=response_schema,
+        timeout=120.0,
+    )
+    logger.info("[人脸选择] Gemini 响应: %s", text[:200])
 
     # 8. 解析 JSON 响应
     cleaned = text.strip()
