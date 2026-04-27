@@ -937,8 +937,8 @@
                 <span v-if="item.classification_status === 'running'" class="ac-classify-badge is-running">分类中</span>
                 <template v-if="item.classification_summary">
                   <span class="ac-classify-badge" :class="`is-${item.classification_summary.type}`">
-                    <template v-if="item.classification_summary.type === 'single'">单核·{{ majorLabel(item.classification_summary.primary) }}</template>
-                    <template v-else-if="item.classification_summary.type === 'dual'">双核·{{ majorLabel(item.classification_summary.primary) }}+{{ majorLabel(item.classification_summary.secondary) }}</template>
+                    <template v-if="item.classification_summary.type === 'single'">单核·{{ topSubLabel(item.classification_summary, item.classification_summary.primary) }}</template>
+                    <template v-else-if="item.classification_summary.type === 'dual'">双核·{{ topSubLabel(item.classification_summary, item.classification_summary.primary) }}+{{ topSubLabel(item.classification_summary, item.classification_summary.secondary) }}</template>
                     <template v-else-if="item.classification_summary.type === 'chaos'">混乱</template>
                     <template v-else-if="item.classification_summary.type === 'insufficient'">样本不足</template>
                     <template v-else>未分类</template>
@@ -2259,6 +2259,19 @@ const showDefaultPrompt = ref(false)
 
 function majorLabel(key) {
   return MAJOR_LABEL_MAP[key] || key || '—'
+}
+
+function topSubLabel(summary, majorKey) {
+  const counts = summary?.category_counts
+  if (!counts) return majorLabel(majorKey)
+  let bestLabel = null
+  let bestCount = 0
+  for (const [idx, label, major] of _CLASSIFY_CATEGORIES) {
+    if (major !== majorKey) continue
+    const c = Number(counts[String(idx)] || 0)
+    if (c > bestCount) { bestCount = c; bestLabel = label }
+  }
+  return bestLabel || majorLabel(majorKey)
 }
 
 const showClassificationDialog = ref(false)
