@@ -22,6 +22,7 @@ from app.schemas.video_publication import (
     VideoPublicationStatsListItem,
     VideoPublicationStatsQuery,
 )
+from app.services.promotion_code_service import promotion_code_distributor
 
 logger = logging.getLogger("app.video_publication_service")
 
@@ -483,6 +484,8 @@ class PublishAdapter(ABC):
         self,
         data: "VideoPublicationCreate",
         channels: list[dict],
+        promotion_code: str,
+        ext_products: list[dict],
     ) -> tuple[str | None, list[dict]]:
         """提交发布，返回 (task_id_or_none, channel_status_list)。
 
@@ -520,6 +523,8 @@ class OpenAPIAdapter(PublishAdapter):
         self,
         data: "VideoPublicationCreate",
         channels: list[dict],
+        promotion_code: str,
+        ext_products: list[dict],
     ) -> tuple[str | None, list[dict]]:
         callback_url = data.callback_url or settings.open_api_callback_url or None
         api_payload: dict = {
@@ -529,6 +534,8 @@ class OpenAPIAdapter(PublishAdapter):
             "title": data.title,
             "description": data.description,
             "tags": data.tags or [],
+            "promotion_code": promotion_code,
+            "ext_products": ext_products,
             "channels": [{"platform": c["platform"], "channel_id": c["channel_id"]} for c in channels],
             "external_id": str(data.sub_task_id),
         }
@@ -648,12 +655,16 @@ class ExtPubAdapter(PublishAdapter):
         self,
         data: "VideoPublicationCreate",
         channels: list[dict],
+        promotion_code: str,
+        ext_products: list[dict],
     ) -> tuple[str | None, list[dict]]:
         api_payload: dict = {
             "post_type": "video",
             "title": data.title,
             "content": data.description or "",
             "tags": data.tags or [],
+            "promotion_code": promotion_code,
+            "ext_products": ext_products,
             "video_url": data.video_url,
             "business_id": str(data.sub_task_id),
             "accounts": [{"id": c["channel_id"]} for c in channels],
@@ -776,11 +787,17 @@ class VideoPublicationService:
         """
         ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
+        if not data.channels:
+            raise ValueError("至少需要一个发布渠道")
 
         logger.info(
             "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s",
             data.sub_task_id, openapi_channels, ext_channels,
         )
+
+        promotion_code = await promotion_code_distributor.acquire()
+        ext_products: list[dict] = []
+        publication_committed = False
 
         # 记录原始请求（用于 audit / 重试）
         request_payload: dict = {
@@ -790,6 +807,8 @@ class VideoPublicationService:
             "title": data.title,
             "description": data.description,
             "tags": data.tags or [],
+            "promotion_code": promotion_code,
+            "ext_products": ext_products,
             "channels": data.channels,
             "external_id": str(data.sub_task_id),
             # 标记哪些来源被使用，供 sync_status 判断是否需要调用对应 adapter
@@ -804,14 +823,28 @@ class VideoPublicationService:
 
         submit_tasks = []
         if openapi_channels:
-            submit_tasks.append(("openapi", self._openapi_adapter.submit(data, openapi_channels)))
+            submit_tasks.append(("openapi", self._openapi_adapter.submit(
+                data,
+                openapi_channels,
+                promotion_code,
+                ext_products,
+            )))
         if ext_channels:
-            submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(data, ext_channels)))
+            submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(
+                data,
+                ext_channels,
+                promotion_code,
+                ext_products,
+            )))
 
-        results = await asyncio.gather(
-            *[t for _, t in submit_tasks],
-            return_exceptions=True,
-        )
+        try:
+            results = await asyncio.gather(
+                *[t for _, t in submit_tasks],
+                return_exceptions=True,
+            )
+        except BaseException:
+            await promotion_code_distributor.discard(promotion_code)
+            raise
 
         for (source, _), result in zip(submit_tasks, results):
             if isinstance(result, Exception):
@@ -848,6 +881,8 @@ class VideoPublicationService:
             external_id=str(data.sub_task_id),
             status=overall_status,
             request_payload=request_payload,
+            promotion_code=promotion_code,
+            ext_products=ext_products,
             response_data=None,
             total_channels=len(all_channel_statuses),
             completed_channels=sum(1 for c in all_channel_statuses if c.get("status") in _SUCCESS_STATUSES),
@@ -858,14 +893,24 @@ class VideoPublicationService:
         if overall_status in ("completed", "partial", "failed"):
             publication.completed_at = utcnow()
 
-        self.db.add(publication)
-        await _apply_publication_status_to_sub_task(
-            self.db,
-            sub_task_id=data.sub_task_id,
-            publication_status=overall_status,
-        )
-        await self.db.commit()
-        await self.db.refresh(publication)
+        try:
+            self.db.add(publication)
+            await _apply_publication_status_to_sub_task(
+                self.db,
+                sub_task_id=data.sub_task_id,
+                publication_status=overall_status,
+            )
+            await self.db.commit()
+            publication_committed = True
+            await promotion_code_distributor.mark_committed(promotion_code)
+            await self.db.refresh(publication)
+        except BaseException:
+            if publication_committed:
+                await promotion_code_distributor.mark_committed(promotion_code)
+            else:
+                await self.db.rollback()
+                await promotion_code_distributor.discard(promotion_code)
+            raise
 
         logger.info(
             "create_publication done: sub_task_id=%s publication_id=%s status=%s",
@@ -1065,6 +1110,8 @@ class VideoPublicationService:
             published_at=publication.completed_at,
             title=request_payload.get("title"),
             description=request_payload.get("description"),
+            promotion_code=publication.promotion_code or request_payload.get("promotion_code"),
+            ext_products=publication.ext_products or request_payload.get("ext_products"),
             channels_status=publication.channels_status,
             metrics_snapshot=metrics_snapshot,
             metrics_channels=metrics_channels,

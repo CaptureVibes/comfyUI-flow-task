@@ -24,6 +24,7 @@ from app.services.candidate_scheduler_service import start_candidate_scheduler, 
 from app.services.lark_notify_scheduler import start_lark_notify_scheduler, stop_lark_notify_scheduler
 from app.services.channel_status_poller import start_channel_status_poller, stop_channel_status_poller
 from app.services.channel_name_sync_scheduler import start_channel_name_sync_scheduler, stop_channel_name_sync_scheduler
+from app.services.promotion_code_service import start_promotion_code_distributor, stop_promotion_code_distributor
 from app.services.topic_service import recover_stuck_keyword_gen_on_startup
 from app.services.video_source_service import recover_stuck_downloads_on_startup
 from app.services.candidate_service import recover_candidate_imports_on_startup, recover_stuck_ai_review_on_startup
@@ -90,6 +91,7 @@ async def startup_event() -> None:
     logger.info("Starting API with env=%s db=%s", settings.app_env, settings.database_url)
     if settings.auto_create_tables:
         await init_db()
+    await start_promotion_code_distributor()
     start_video_ai_queue_processor()
     start_ai_account_queue_processor()
     await recover_stuck_accounts_on_startup()
@@ -117,6 +119,7 @@ async def shutdown_event() -> None:
     await stop_video_publication_poller()
     await stop_publication_metrics_scheduler()
     await stop_video_stats_collector()
+    await stop_promotion_code_distributor()
     await stop_account_publish_scheduler()
     await stop_candidate_scheduler()
     await stop_publish_meta_workers()

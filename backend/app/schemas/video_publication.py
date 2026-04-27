@@ -45,6 +45,8 @@ class VideoPublicationRead(BaseModel):
     failed_channels: int
     channels_status: list[VideoPublicationChannelStatus] | None = None
     metrics_snapshot: "VideoPublicationMetricsSnapshot | None" = None
+    promotion_code: str | None = None
+    ext_products: list | None = None
     error_message: str | None = None
     callback_received: bool
     created_at: datetime | None = None
@@ -121,6 +123,8 @@ class VideoPublicationStatsListItem(BaseModel):
     published_at: datetime | None = None
     title: str | None = None
     description: str | None = None
+    promotion_code: str | None = None
+    ext_products: list | None = None
     social_bindings: list | None = None
     channels_status: list[VideoPublicationChannelStatus] | None = None
     metrics_snapshot: VideoPublicationMetricsSnapshot | None = None

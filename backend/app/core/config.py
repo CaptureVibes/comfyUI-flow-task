@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     account_channel_api_key: str = ""  # 外部团队领取/确认/绑定 AI 博主频道用
     account_channel_owner_id: str = ""  # 默认 owner_id，请求方不传时使用
     open_api_channel_usage_types: str = ""  # 逗号分隔，如 "short_video,live"；为空则不传
+    promotion_code_pool_size: int = 10000  # 启动时预生成的 8 位数字口令数量
 
     @property
     def open_api_channel_usage_types_list(self) -> list[str]:

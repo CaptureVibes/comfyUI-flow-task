@@ -41,6 +41,12 @@ class VideoPublication(Base):
     # 发布请求数据（用于重试和审计）
     request_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # 带货口令：8位数字字符串，发布时生成并传给外部发布接口
+    promotion_code: Mapped[str | None] = mapped_column(String(8), nullable=True, unique=True)
+
+    # 外部商品信息快照；当前商品链路未写入，发布时先固定为空数组
+    ext_products: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     # Open API 返回的完整响应
     response_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
