@@ -1567,3 +1567,91 @@ async def export_video_urls(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=ai_blogger_videos.xlsx"},
     )
+
+
+# ---------------------------------------------------------------------------
+# 视频分类（按 AI 博主）
+# ---------------------------------------------------------------------------
+
+
+class ClassifyVideosRequest(BaseModel):
+    force: bool = False
+
+
+@router.post("/{account_id}/classify-videos", status_code=202)
+async def trigger_account_classification(
+    account_id: uuid.UUID,
+    body: ClassifyVideosRequest = ClassifyVideosRequest(),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict:
+    from app.services.video_classification_service import enqueue_account_classification
+
+    try:
+        result = await enqueue_account_classification(account_id, owner_id, force=body.force)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return {"status": "queued", **result}
+
+
+@router.post("/{account_id}/classify-videos/retry-failed", status_code=202)
+async def retry_account_classification_failed(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict:
+    from app.services.video_classification_service import retry_failed_classifications
+
+    try:
+        result = await retry_failed_classifications(account_id, owner_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return {"status": "queued", **result}
+
+
+@router.get("/{account_id}/classification")
+async def get_account_classification(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict:
+    from app.services.video_classification_service import (
+        CATEGORY_LABELS,
+        CATEGORY_MAJOR,
+        MAJOR_LABELS,
+        get_account_classification_view,
+    )
+
+    try:
+        view = await get_account_classification_view(account_id, owner_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return {
+        **view,
+        "categories": [
+            {"index": idx, "label": label, "major": CATEGORY_MAJOR[idx]}
+            for idx, label in CATEGORY_LABELS.items()
+        ],
+        "major_labels": MAJOR_LABELS,
+    }
+
+
+class BatchClassifyRequest(BaseModel):
+    ids: list[uuid.UUID]
+    force: bool = False
+
+
+@router.post("/batch-classify-videos", status_code=202)
+async def batch_classify_videos(
+    body: BatchClassifyRequest,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict:
+    from app.services.video_classification_service import enqueue_account_classification
+
+    results: list[dict] = []
+    for account_id in body.ids:
+        try:
+            r = await enqueue_account_classification(account_id, owner_id, force=body.force)
+            results.append({"account_id": str(account_id), **r})
+        except ValueError:
+            results.append({"account_id": str(account_id), "queued": 0, "skipped": 0, "error": "not_found"})
+    total_queued = sum(r.get("queued", 0) for r in results)
+    return {"status": "queued", "total_queued": total_queued, "results": results}

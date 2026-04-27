@@ -176,3 +176,24 @@ export async function fetchPlatformStats() {
   const { data } = await http.get('/accounts/platform-stats')
   return data
 }
+
+// 视频分类
+export async function startAccountClassification(accountId, force = false) {
+  const { data } = await http.post(`/accounts/${accountId}/classify-videos`, { force })
+  return data
+}
+
+export async function fetchAccountClassification(accountId) {
+  const { data } = await http.get(`/accounts/${accountId}/classification`)
+  return data
+}
+
+export async function retryAccountClassificationFailed(accountId) {
+  const { data } = await http.post(`/accounts/${accountId}/classify-videos/retry-failed`)
+  return data
+}
+
+export async function batchClassifyVideos(ids, force = false) {
+  const { data } = await http.post('/accounts/batch-classify-videos', { ids, force })
+  return data
+}

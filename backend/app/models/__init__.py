@@ -19,6 +19,7 @@ from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.topic import Topic, MotherKeyword, Keyword
 from app.models.candidate_video import CandidateVideo
 from app.models.face_photo import FacePhoto
+from app.models.video_classification import VideoClassification
 
 __all__ = [
     "VideoSource", "VideoSourceStat", "VideoAITemplate", "Account",
@@ -34,4 +35,5 @@ __all__ = [
     "Topic", "MotherKeyword", "Keyword",
     "CandidateVideo",
     "FacePhoto",
+    "VideoClassification",
 ]

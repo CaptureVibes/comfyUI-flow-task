@@ -37,6 +37,10 @@ class Account(Base):
     ai_generation_state: Mapped[dict | None] = mapped_column(PGJSON, nullable=True)  # 生成过程状态
     ai_generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)  # 错误信息
 
+    # 视频分类聚合
+    classification_status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")  # idle | running
+    classification_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Scheduled publish config
     publish_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     publish_cron: Mapped[str | None] = mapped_column(String(100), nullable=True)

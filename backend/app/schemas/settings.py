@@ -119,6 +119,17 @@ class PipelineSettingsPayload(BaseModel):
     hashtag_search_top_n: int = 100
     hashtag_filter_model: str = "gemini-3.1-pro-preview"
     hashtag_filter_prompt: str = ""
+    # 视频分类配置
+    video_classify_model: str = "gemini-3.1-pro-preview"
+    video_classify_prompt: str = ""
+    video_classify_temperature: float = 0.7
+    # 视频分类聚合阈值
+    classify_min_sample: int = 3
+    classify_single_top1_threshold: float = 0.5
+    classify_single_diff_threshold: float = 0.15
+    classify_dual_top1_lower: float = 0.35
+    classify_dual_top1_upper: float = 0.5
+    classify_dual_top2_threshold: float = 0.2
 
 
 class CandidateBatchAIReviewRequest(BaseModel):

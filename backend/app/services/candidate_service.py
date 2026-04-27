@@ -1292,7 +1292,7 @@ async def supplement_templates_for_account(
     seen_urls: set[str] = set()       # 跨轮去重（web_video_url）
     attempted_urls: set[str] = set()  # 已尝试过（无论成功失败）
     pending_urls: list[str] = []
-    results_per_page = max_new_videos * 10
+    results_per_page = max_new_videos * 5
     round_num = 0
 
     while imported < max_new_videos:

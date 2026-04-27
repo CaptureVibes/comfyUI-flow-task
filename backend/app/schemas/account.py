@@ -375,6 +375,8 @@ class AccountRead(BaseModel):
     ai_generation_status: str = "idle"
     ai_generation_error: str | None = None
     pending_publish_count: int = 0
+    classification_status: str = "idle"
+    classification_summary: dict | None = None
     created_at: datetime
     updated_at: datetime
 

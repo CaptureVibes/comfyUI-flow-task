@@ -111,6 +111,19 @@ class PipelineSetting(Base):
     face_select_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     face_select_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # 视频分类配置
+    video_classify_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    video_classify_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    video_classify_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+
+    # 视频分类聚合阈值
+    classify_min_sample: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    classify_single_top1_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    classify_single_diff_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.15)
+    classify_dual_top1_lower: Mapped[float] = mapped_column(Float, nullable=False, default=0.35)
+    classify_dual_top1_upper: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    classify_dual_top2_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

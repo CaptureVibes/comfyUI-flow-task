@@ -28,6 +28,11 @@ from app.services.promotion_code_service import start_promotion_code_distributor
 from app.services.topic_service import recover_stuck_keyword_gen_on_startup
 from app.services.video_source_service import recover_stuck_downloads_on_startup
 from app.services.candidate_service import recover_candidate_imports_on_startup, recover_stuck_ai_review_on_startup
+from app.services.video_classification_service import (
+    recover_classification_on_startup,
+    start_classification_queue_processor,
+    stop_classification_queue_processor,
+)
 from app.services.publish_meta_service import (
     recover_stuck_publish_meta_on_startup,
     start_publish_meta_workers,
@@ -108,6 +113,8 @@ async def startup_event() -> None:
     await recover_stuck_downloads_on_startup()
     await recover_candidate_imports_on_startup()
     await recover_stuck_ai_review_on_startup()
+    start_classification_queue_processor()
+    await recover_classification_on_startup()
     await start_publish_meta_workers()
     await recover_stuck_publish_meta_on_startup()
 
@@ -126,6 +133,7 @@ async def shutdown_event() -> None:
     await stop_lark_notify_scheduler()
     await stop_channel_status_poller()
     await stop_channel_name_sync_scheduler()
+    await stop_classification_queue_processor()
 
 
 @app.get("/health")

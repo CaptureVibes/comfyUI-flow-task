@@ -35,6 +35,10 @@
           <svg v-if="!hashtagSearchLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
           {{ selectedMap.size > 0 ? `标签搜索 (${selectedMap.size})` : '标签搜索' }}
         </el-button>
+        <el-button class="al-classify-btn" :loading="bulkClassifying" :disabled="total === 0" @click="openClassifyConfirm('batch')">
+          <svg v-if="!bulkClassifying" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+          {{ selectedMap.size > 0 ? `视频分类 (${selectedMap.size})` : '视频分类' }}
+        </el-button>
         <el-button class="al-tasks-btn" :loading="downloading" @click="handleDownload">
           <svg v-if="!downloading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           {{ downloading ? '下载中...' : selectedMap.size > 0 ? `下载 (${selectedMap.size})` : '下载视频' }}
@@ -234,6 +238,70 @@
               placeholder="例：以下是从 TikTok 视频中提取的 HashTag 列表，请过滤掉无意义、过于通用（如 fyp、viral）或与目标内容无关的标签，保留能精准描述内容品类、场景、风格的标签..."
             />
             <div style="margin-top:4px;color:#9ca3af;font-size:12px">留空则跳过 AI 过滤，直接返回全量去重 HashTag。系统会在提示词末尾自动拼接 JSON 格式化指令。</div>
+          </el-form-item>
+        </div>
+
+        <!-- 视频分类配置 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">视频分类</span>
+            <span class="ai-cfg-desc">基于 local_video_url，使用 Gemini 将视频归入 14 个细分类（4 大类）</span>
+          </div>
+          <el-form-item label="模型">
+            <el-input v-model="aiSettingsForm.video_classify_model" placeholder="e.g. gemini-3.1-pro-preview" />
+          </el-form-item>
+          <el-form-item label="温度">
+            <div style="display:flex;align-items:center;gap:12px;width:100%">
+              <el-slider v-model="aiSettingsForm.video_classify_temperature" :min="0" :max="2" :step="0.1" style="flex:1" />
+              <span style="width:36px;text-align:right;font-size:13px;color:#374151">{{ aiSettingsForm.video_classify_temperature }}</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="提示词">
+            <el-input
+              v-model="aiSettingsForm.video_classify_prompt"
+              type="textarea"
+              :rows="6"
+              placeholder="留空则使用内置默认提示词"
+            />
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
+              <span style="color:#9ca3af;font-size:12px">无论是否自定义，系统都会通过 response_schema 限制返回 {"category_index": 0~13}。</span>
+              <button type="button" class="ai-default-prompt-toggle" @click="showDefaultPrompt = !showDefaultPrompt">
+                {{ showDefaultPrompt ? '收起' : '查看内置默认提示词' }}
+              </button>
+            </div>
+            <div v-if="showDefaultPrompt" class="ai-default-prompt-box">{{ DEFAULT_CLASSIFY_PROMPT }}</div>
+          </el-form-item>
+        </div>
+
+        <!-- 分类聚合阈值 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">聚合阈值</span>
+            <span class="ai-cfg-desc">基于成功分类视频的大类占比，将 AI 博主判定为单核心 / 双核心 / 混乱</span>
+          </div>
+          <el-form-item label="样本阈值">
+            <el-input-number v-model="aiSettingsForm.classify_min_sample" :min="1" :max="50" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">成功分类数 &lt; 此值时记为「样本不足」</span>
+          </el-form-item>
+          <el-form-item label="单核心 · Top1 占比">
+            <el-input-number v-model="aiSettingsForm.classify_single_top1_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 ≥ 此值即判为单核心</span>
+          </el-form-item>
+          <el-form-item label="单核心 · Top1−Top2 差">
+            <el-input-number v-model="aiSettingsForm.classify_single_diff_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 − Top2 ≥ 此值也判为单核心</span>
+          </el-form-item>
+          <el-form-item label="双核心 · Top1 下限">
+            <el-input-number v-model="aiSettingsForm.classify_dual_top1_lower" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 ≥ 此值才考虑双核心</span>
+          </el-form-item>
+          <el-form-item label="双核心 · Top1 上限">
+            <el-input-number v-model="aiSettingsForm.classify_dual_top1_upper" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 &lt; 此值才考虑双核心（达到则归单核心）</span>
+          </el-form-item>
+          <el-form-item label="双核心 · Top2 阈值">
+            <el-input-number v-model="aiSettingsForm.classify_dual_top2_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top2 ≥ 此值且差值 &lt; 单核心差，判双核心</span>
           </el-form-item>
         </div>
 
@@ -462,6 +530,172 @@
         <el-button type="primary" :loading="supplementing" @click="handleSupplement">开始补充</el-button>
       </template>
     </el-dialog>
+
+    <!-- 视频分类确认弹窗 -->
+    <el-dialog
+      v-model="showClassifyConfirmDialog"
+      title="视频分类"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <div class="al-supplement-body">
+        <div class="al-supplement-scope">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span v-if="classifyConfirmMode === 'single' && classificationAccount">
+            将对账号 <b>{{ classificationAccount.account_name }}</b> 下的视频进行分类
+          </span>
+          <span v-else-if="selectedMap.size > 0">
+            将为已选 <b>{{ selectedMap.size }}</b> 个账号进行视频分类
+          </span>
+          <span v-else>
+            将为全部 <b>{{ total }}</b> 个账号进行视频分类
+          </span>
+        </div>
+        <div class="al-classify-confirm-option">
+          <label class="al-classify-force-label">
+            <input type="checkbox" v-model="classifyForce" />
+            <span>重新分类已分类的视频</span>
+          </label>
+          <div class="al-classify-force-hint">勾选后，已成功分类的视频也会重新调用 Gemini 分类</div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showClassifyConfirmDialog = false">取消</el-button>
+        <el-button type="primary" :loading="classificationStarting || bulkClassifying" @click="confirmClassify">开始分类</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 视频分类弹窗 -->
+    <el-dialog
+      v-model="showClassificationDialog"
+      :title="classificationAccount ? `视频分类 · ${classificationAccount.account_name}` : '视频分类'"
+      width="780px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @close="closeClassificationDialog"
+    >
+      <div v-loading="classificationLoading" class="vc-body">
+        <!-- 顶部总览 -->
+        <div class="vc-overview">
+          <div class="vc-overview-left">
+            <div class="vc-overview-status">
+              <span class="vc-status-dot" :class="`is-${classificationView?.summary?.classification_status || 'idle'}`"></span>
+              <span>{{ classificationView?.summary?.classification_status === 'running' ? '分类中' : '空闲' }}</span>
+            </div>
+            <div class="vc-overview-title">
+              <template v-if="classificationSummary?.type === 'single'">
+                <span class="vc-type-tag is-single">单核心</span>
+                <span class="vc-type-name">{{ majorLabel(classificationSummary.primary) }}</span>
+              </template>
+              <template v-else-if="classificationSummary?.type === 'dual'">
+                <span class="vc-type-tag is-dual">双核心</span>
+                <span class="vc-type-name">{{ majorLabel(classificationSummary.primary) }} + {{ majorLabel(classificationSummary.secondary) }}</span>
+              </template>
+              <template v-else-if="classificationSummary?.type === 'chaos'">
+                <span class="vc-type-tag is-chaos">混乱</span>
+              </template>
+              <template v-else-if="classificationSummary?.type === 'insufficient'">
+                <span class="vc-type-tag is-insufficient">样本不足</span>
+                <span style="color:#9ca3af;font-size:12px">至少需要 3 个成功分类</span>
+              </template>
+              <template v-else>
+                <span class="vc-type-tag is-none">未分类</span>
+              </template>
+            </div>
+            <div class="vc-overview-counts" v-if="classificationSummary">
+              共 {{ classificationSummary.total }}，
+              <span style="color:#16a34a">成功 {{ classificationSummary.success }}</span>，
+              <span v-if="classificationSummary.processing">处理中 {{ classificationSummary.processing }}，</span>
+              <span v-if="classificationSummary.pending">排队 {{ classificationSummary.pending }}，</span>
+              <span v-if="classificationSummary.failed" style="color:#dc2626">失败 {{ classificationSummary.failed }}</span>
+            </div>
+          </div>
+          <div class="vc-overview-right">
+            <el-button
+              type="primary"
+              :loading="classificationStarting"
+              :disabled="classificationView?.summary?.classification_status === 'running'"
+              @click="openClassifyConfirm('single')"
+            >{{ classificationView?.summary?.classification_status === 'running' ? '分类中...' : '开始分类' }}</el-button>
+            <el-button
+              v-if="classificationSummary?.failed"
+              :loading="classificationRetrying"
+              @click="handleRetryFailed"
+            >重试失败 ({{ classificationSummary.failed }})</el-button>
+          </div>
+        </div>
+
+        <!-- 图表：大类饼图 + 14 细分类柱状图 -->
+        <div v-if="classificationSummary && classificationSummary.success > 0" class="vc-charts">
+          <div ref="vcMajorChartRef" class="vc-chart vc-chart-major"></div>
+          <div ref="vcCategoryChartRef" class="vc-chart vc-chart-category"></div>
+        </div>
+
+        <!-- 视频分组 -->
+        <div class="vc-groups">
+          <div v-for="group in classificationGroups" :key="group.key" v-show="group.items.length > 0" class="vc-group">
+            <div class="vc-group-header">
+              <span class="vc-group-name" :class="`is-${group.key}`">{{ group.label }}</span>
+              <span class="vc-group-count">{{ group.items.length }}</span>
+            </div>
+            <div class="vc-group-list">
+              <div v-for="v in group.items" :key="v.video_source_id" class="vc-item" :class="`is-${v.status}`">
+                <div class="vc-item-thumb" @click="v.local_video_url && openVcFullscreen(v)">
+                  <video
+                    v-if="v.local_video_url"
+                    :src="v.local_video_url"
+                    preload="metadata"
+                    playsinline
+                    class="vc-thumb-video"
+                  />
+                  <div class="vc-item-thumb-expand" v-if="v.local_video_url">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                  </div>
+                  <div v-if="!v.local_video_url" class="vc-item-thumb-placeholder">无视频</div>
+                </div>
+                <div class="vc-item-info">
+                  <div class="vc-item-title">{{ v.video_title || '(无标题)' }}</div>
+                  <div class="vc-item-meta">
+                    <span v-if="v.blogger_name">@{{ v.blogger_name }}</span>
+                  </div>
+                  <div v-if="v.status === 'success'" class="vc-item-cat">
+                    <span class="vc-major-tag" :class="`is-${v.major_category}`">{{ majorLabel(v.major_category) }}</span>
+                    <span class="vc-cat-label">{{ v.category_label }}</span>
+                  </div>
+                  <div v-else-if="v.status === 'failed'" class="vc-item-error" :title="v.error_message || ''">
+                    失败：{{ v.error_message || '未知错误' }}
+                  </div>
+                  <div v-else-if="v.status === 'processing'" class="vc-item-status">分类中...</div>
+                  <div v-else-if="v.status === 'pending'" class="vc-item-status">排队中</div>
+                  <div v-else-if="v.status === 'no_local_video'" class="vc-item-status is-warn">无 local_video_url，跳过</div>
+                  <div v-else class="vc-item-status is-muted">未开始</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="classificationView && classificationView.videos.length === 0" class="vc-empty">
+            该账号绑定的博主下还没有视频
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 视频自定义全屏遮罩（固定铺满视口，CSS 控制 9:16） -->
+    <teleport to="body">
+      <div v-if="vcFullscreenVisible" class="vc-fullscreen-mask" @click.self="closeVcFullscreen">
+        <button class="vc-fullscreen-close" @click="closeVcFullscreen">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <video
+          v-if="vcFullscreenItem"
+          :src="vcFullscreenItem.local_video_url"
+          class="vc-fullscreen-video"
+          controls
+          autoplay
+          playsinline
+        />
+      </div>
+    </teleport>
 
     <!-- 标签搜索确认弹窗 -->
     <el-dialog
@@ -698,6 +932,20 @@
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
                 </span>
               </div>
+              <!-- 分类状态行 -->
+              <div class="ac-classify-row" v-if="item.classification_status === 'running' || item.classification_summary">
+                <span v-if="item.classification_status === 'running'" class="ac-classify-badge is-running">分类中</span>
+                <template v-if="item.classification_summary">
+                  <span class="ac-classify-badge" :class="`is-${item.classification_summary.type}`">
+                    <template v-if="item.classification_summary.type === 'single'">单核·{{ majorLabel(item.classification_summary.primary) }}</template>
+                    <template v-else-if="item.classification_summary.type === 'dual'">双核·{{ majorLabel(item.classification_summary.primary) }}+{{ majorLabel(item.classification_summary.secondary) }}</template>
+                    <template v-else-if="item.classification_summary.type === 'chaos'">混乱</template>
+                    <template v-else-if="item.classification_summary.type === 'insufficient'">样本不足</template>
+                    <template v-else>未分类</template>
+                  </span>
+                  <span class="ac-classify-count">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}视频</span>
+                </template>
+              </div>
               <div v-if="item.style_description" class="al-style-desc">{{ item.style_description }}</div>
             </td>
 
@@ -785,6 +1033,7 @@
               <div class="al-row-actions">
                 <button class="ac-btn ac-btn-stats" @click="$router.push({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
                 <button class="ac-btn ac-btn-sync" :class="{ loading: syncingId === item.id }" @click="handleSyncAccount(item)">{{ syncingId === item.id ? '同步中' : '同步' }}</button>
+                <button class="ac-btn ac-btn-classify" @click="openClassificationDialog(item)">分类</button>
                 <button class="ac-btn ac-btn-edit" @click="$router.push(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
                 <button class="ac-btn ac-btn-del" :class="{ loading: deleting === item.id }" @click="handleDelete(item)">删除</button>
               </div>
@@ -969,10 +1218,11 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, ref } from 'vue'
+import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1293,6 +1543,60 @@ async function startHashtagSearch() {
   }
 }
 
+const bulkClassifying = ref(false)
+const classifyForce = ref(false)
+const showClassifyConfirmDialog = ref(false)
+const classifyConfirmMode = ref('batch') // 'batch' | 'single'
+
+function openClassifyConfirm(mode) {
+  classifyConfirmMode.value = mode
+  classifyForce.value = false
+  showClassifyConfirmDialog.value = true
+}
+
+async function confirmClassify() {
+  if (classifyConfirmMode.value === 'single') {
+    await _doSingleClassify()
+  } else {
+    await _doBatchClassify()
+  }
+}
+
+async function _doBatchClassify() {
+  if (bulkClassifying.value) return
+  const ids = selectedMap.value.size > 0
+    ? [...selectedMap.value.keys()]
+    : items.value.map(i => i.id)
+  if (!ids.length) { ElMessage.warning('没有可操作的账号'); return }
+  bulkClassifying.value = true
+  try {
+    const res = await batchClassifyVideos(ids, classifyForce.value)
+    ElMessage.success(`已入队 ${res.total_queued} 个视频，将逐账号依次分类`)
+    showClassifyConfirmDialog.value = false
+  } catch (e) {
+    ElMessage.error('批量分类失败')
+  } finally {
+    bulkClassifying.value = false
+  }
+  loadItems().catch(() => {})
+}
+
+async function _doSingleClassify() {
+  if (!classificationAccount.value || classificationStarting.value) return
+  classificationStarting.value = true
+  try {
+    const result = await startAccountClassification(classificationAccount.value.id, classifyForce.value)
+    ElMessage.success(`已入队 ${result.queued || 0} 个，跳过 ${result.skipped || 0} 个`)
+    showClassifyConfirmDialog.value = false
+    await refreshClassification()
+    scheduleClassificationPoll()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '启动分类失败')
+  } finally {
+    classificationStarting.value = false
+  }
+}
+
 function openBulkFlagDialog(mode) {
   if (selectedIds.value.size === 0) {
     ElMessage.warning('请先勾选账号')
@@ -1413,6 +1717,15 @@ const aiSettingsForm = ref({
   hashtag_search_top_n: 100,
   hashtag_filter_model: 'gemini-3.1-pro-preview',
   hashtag_filter_prompt: '',
+  video_classify_model: 'gemini-3.1-pro-preview',
+  video_classify_prompt: '',
+  video_classify_temperature: 0.7,
+  classify_min_sample: 3,
+  classify_single_top1_threshold: 0.5,
+  classify_single_diff_threshold: 0.15,
+  classify_dual_top1_lower: 0.35,
+  classify_dual_top1_upper: 0.5,
+  classify_dual_top2_threshold: 0.2,
 })
 
 async function openAISettings() {
@@ -1436,6 +1749,15 @@ async function openAISettings() {
     aiSettingsForm.value.hashtag_search_top_n = data.hashtag_search_top_n ?? 100
     aiSettingsForm.value.hashtag_filter_model = data.hashtag_filter_model || 'gemini-3.1-pro-preview'
     aiSettingsForm.value.hashtag_filter_prompt = data.hashtag_filter_prompt || ''
+    aiSettingsForm.value.video_classify_model = data.video_classify_model || 'gemini-3.1-pro-preview'
+    aiSettingsForm.value.video_classify_prompt = data.video_classify_prompt || ''
+    aiSettingsForm.value.video_classify_temperature = data.video_classify_temperature ?? 0.7
+    aiSettingsForm.value.classify_min_sample = data.classify_min_sample ?? 3
+    aiSettingsForm.value.classify_single_top1_threshold = data.classify_single_top1_threshold ?? 0.5
+    aiSettingsForm.value.classify_single_diff_threshold = data.classify_single_diff_threshold ?? 0.15
+    aiSettingsForm.value.classify_dual_top1_lower = data.classify_dual_top1_lower ?? 0.35
+    aiSettingsForm.value.classify_dual_top1_upper = data.classify_dual_top1_upper ?? 0.5
+    aiSettingsForm.value.classify_dual_top2_threshold = data.classify_dual_top2_threshold ?? 0.2
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -1465,6 +1787,15 @@ async function saveAISettings() {
       hashtag_search_top_n: aiSettingsForm.value.hashtag_search_top_n,
       hashtag_filter_model: aiSettingsForm.value.hashtag_filter_model,
       hashtag_filter_prompt: aiSettingsForm.value.hashtag_filter_prompt,
+      video_classify_model: aiSettingsForm.value.video_classify_model,
+      video_classify_prompt: aiSettingsForm.value.video_classify_prompt,
+      video_classify_temperature: aiSettingsForm.value.video_classify_temperature,
+      classify_min_sample: aiSettingsForm.value.classify_min_sample,
+      classify_single_top1_threshold: aiSettingsForm.value.classify_single_top1_threshold,
+      classify_single_diff_threshold: aiSettingsForm.value.classify_single_diff_threshold,
+      classify_dual_top1_lower: aiSettingsForm.value.classify_dual_top1_lower,
+      classify_dual_top1_upper: aiSettingsForm.value.classify_dual_top1_upper,
+      classify_dual_top2_threshold: aiSettingsForm.value.classify_dual_top2_threshold,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')
@@ -1890,6 +2221,278 @@ async function handleSupplement() {
     supplementing.value = false
   }
 }
+
+// ── 视频分类 ────────────────────────────────────────────────────────────────
+
+const MAJOR_KEYS = ['display', 'knowledge', 'persona', 'trending']
+const MAJOR_LABEL_MAP = {
+  display: '展示美',
+  knowledge: '知识',
+  persona: '人设',
+  trending: '热点',
+}
+
+const _CLASSIFY_CATEGORIES = [
+  [0, '单套衣服展示美', 'display'],
+  [1, '换装展示美', 'display'],
+  [2, '镜头感或表演型展示美', 'display'],
+  [3, '生活场景中的展示美', 'display'],
+  [4, '单品语言讲解', 'knowledge'],
+  [5, '造型选择或对比', 'knowledge'],
+  [6, '搭配教程或方法论', 'knowledge'],
+  [7, '单品展示无人讲解', 'knowledge'],
+  [8, '单品展示字幕讲解', 'knowledge'],
+  [9, '人生故事', 'persona'],
+  [10, '人生阶段', 'persona'],
+  [11, '个人态度表达', 'persona'],
+  [12, '热门梗段子反转梗流行文案', 'trending'],
+  [13, '明星影视综艺节日社会话题相关穿搭', 'trending'],
+]
+
+const DEFAULT_CLASSIFY_PROMPT = '你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下面 14 个分类中的哪一个，'
+  + '只输出该分类的下标整数（0-13），不要输出任何额外文字。\n\n分类列表：\n'
+  + _CLASSIFY_CATEGORIES.map(([idx, label, major]) => `${idx} - ${label}（大类: ${major}）`).join('\n')
+  + '\n\n输出格式：JSON 对象 {"category_index": <整数>}'
+
+const showDefaultPrompt = ref(false)
+
+function majorLabel(key) {
+  return MAJOR_LABEL_MAP[key] || key || '—'
+}
+
+const showClassificationDialog = ref(false)
+const classificationLoading = ref(false)
+const classificationStarting = ref(false)
+const classificationRetrying = ref(false)
+const classificationAccount = ref(null)
+const classificationView = ref(null)
+const vcMajorChartRef = ref(null)
+const vcCategoryChartRef = ref(null)
+let _vcMajorChart = null
+let _vcCategoryChart = null
+let _vcResizeHandler = null
+let _classificationPollTimer = null
+let _classificationPollSeq = 0
+
+const vcFullscreenVisible = ref(false)
+const vcFullscreenItem = ref(null)
+
+function openVcFullscreen(v) {
+  vcFullscreenItem.value = v
+  vcFullscreenVisible.value = true
+}
+function closeVcFullscreen() {
+  vcFullscreenVisible.value = false
+  vcFullscreenItem.value = null
+}
+function _onVcFsKeydown(e) {
+  if (e.key === 'Escape' && vcFullscreenVisible.value) closeVcFullscreen()
+}
+document.addEventListener('keydown', _onVcFsKeydown)
+
+const MAJOR_COLORS = {
+  display: '#ec4899',
+  knowledge: '#3b82f6',
+  persona: '#8b5cf6',
+  trending: '#f97316',
+}
+
+const classificationSummary = computed(() => classificationView.value?.summary?.summary || null)
+
+const classificationGroups = computed(() => {
+  const view = classificationView.value
+  if (!view) return []
+  const groups = {
+    processing: { key: 'processing', label: '分类中', items: [] },
+    pending: { key: 'pending', label: '排队中', items: [] },
+    success: { key: 'success', label: '已完成', items: [] },
+    failed: { key: 'failed', label: '失败', items: [] },
+    not_started: { key: 'not_started', label: '未开始', items: [] },
+    no_local_video: { key: 'no_local_video', label: '无本地视频', items: [] },
+  }
+  for (const v of view.videos || []) {
+    const key = groups[v.status] ? v.status : 'not_started'
+    groups[key].items.push(v)
+  }
+  return [groups.processing, groups.pending, groups.success, groups.failed, groups.not_started, groups.no_local_video]
+})
+
+function clearClassificationPolling() {
+  if (_classificationPollTimer) {
+    clearTimeout(_classificationPollTimer)
+    _classificationPollTimer = null
+  }
+  _classificationPollSeq += 1
+}
+
+function shouldKeepPolling() {
+  const view = classificationView.value
+  if (!view) return false
+  if (view.summary?.classification_status === 'running') return true
+  const summary = view.summary?.summary
+  if (summary && (summary.pending > 0 || summary.processing > 0)) return true
+  return false
+}
+
+async function refreshClassification() {
+  if (!classificationAccount.value) return
+  const accountId = classificationAccount.value.id
+  try {
+    const data = await fetchAccountClassification(accountId)
+    if (!classificationAccount.value || classificationAccount.value.id !== accountId) return
+    classificationView.value = data
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '加载分类数据失败')
+  }
+}
+
+function scheduleClassificationPoll() {
+  clearClassificationPolling()
+  if (!showClassificationDialog.value) return
+  if (!shouldKeepPolling()) return
+  const seq = ++_classificationPollSeq
+  _classificationPollTimer = setTimeout(async () => {
+    if (seq !== _classificationPollSeq) return
+    if (!showClassificationDialog.value) return
+    await refreshClassification()
+    scheduleClassificationPoll()
+  }, 3000)
+}
+
+async function openClassificationDialog(item) {
+  classificationAccount.value = item
+  classificationView.value = null
+  showClassificationDialog.value = true
+  classificationLoading.value = true
+  try {
+    await refreshClassification()
+  } finally {
+    classificationLoading.value = false
+  }
+  await nextTick()
+  ensureClassificationCharts()
+  renderClassificationCharts()
+  scheduleClassificationPoll()
+}
+
+function closeClassificationDialog() {
+  clearClassificationPolling()
+  disposeClassificationCharts()
+  classificationAccount.value = null
+  classificationView.value = null
+}
+
+function ensureClassificationCharts() {
+  if (!_vcMajorChart && vcMajorChartRef.value) {
+    _vcMajorChart = echarts.init(vcMajorChartRef.value)
+  }
+  if (!_vcCategoryChart && vcCategoryChartRef.value) {
+    _vcCategoryChart = echarts.init(vcCategoryChartRef.value)
+  }
+  if (!_vcResizeHandler) {
+    _vcResizeHandler = () => {
+      _vcMajorChart?.resize()
+      _vcCategoryChart?.resize()
+    }
+    window.addEventListener('resize', _vcResizeHandler)
+  }
+}
+
+function disposeClassificationCharts() {
+  if (_vcResizeHandler) {
+    window.removeEventListener('resize', _vcResizeHandler)
+    _vcResizeHandler = null
+  }
+  _vcMajorChart?.dispose()
+  _vcCategoryChart?.dispose()
+  _vcMajorChart = null
+  _vcCategoryChart = null
+}
+
+function renderClassificationCharts() {
+  const summary = classificationSummary.value
+  const categories = classificationView.value?.categories || []
+  if (!summary) return
+
+  if (_vcMajorChart) {
+    const counts = summary.counts || {}
+    _vcMajorChart.setOption({
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      legend: { bottom: 4, left: 'center', itemWidth: 10, itemHeight: 10, textStyle: { fontSize: 12 } },
+      series: [{
+        name: '大类占比',
+        type: 'pie',
+        radius: ['38%', '62%'],
+        center: ['50%', '42%'],
+        avoidLabelOverlap: true,
+        label: { show: true, formatter: '{b}\n{d}%', fontSize: 11 },
+        labelLine: { length: 6, length2: 6 },
+        data: MAJOR_KEYS.map(k => ({
+          name: majorLabel(k),
+          value: counts[k] || 0,
+          itemStyle: { color: MAJOR_COLORS[k] },
+        })),
+      }],
+    }, true)
+  }
+
+  if (_vcCategoryChart) {
+    const cc = summary.category_counts || {}
+    const labels = categories.map(c => c.label)
+    const values = categories.map(c => cc[String(c.index)] || 0)
+    const colors = categories.map(c => MAJOR_COLORS[c.major] || '#94a3b8')
+    _vcCategoryChart.setOption({
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { top: 16, right: 16, bottom: 70, left: 40 },
+      xAxis: {
+        type: 'category',
+        data: labels,
+        axisLabel: { fontSize: 10, interval: 0, rotate: 35, color: '#475569' },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: 1,
+        axisLabel: { fontSize: 11, color: '#64748b' },
+        splitLine: { lineStyle: { color: '#f1f5f9' } },
+      },
+      series: [{
+        name: '视频数',
+        type: 'bar',
+        data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i] } })),
+        barMaxWidth: 28,
+        label: { show: true, position: 'top', fontSize: 10 },
+      }],
+    }, true)
+  }
+}
+
+watch(classificationSummary, () => {
+  if (showClassificationDialog.value) {
+    nextTick(() => {
+      ensureClassificationCharts()
+      renderClassificationCharts()
+    })
+  }
+}, { deep: true })
+
+async function handleRetryFailed() {
+  if (!classificationAccount.value || classificationRetrying.value) return
+  classificationRetrying.value = true
+  try {
+    const result = await retryAccountClassificationFailed(classificationAccount.value.id)
+    ElMessage.success(`已重新入队 ${result.queued || 0} 个失败任务`)
+    await refreshClassification()
+    scheduleClassificationPoll()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '重试失败')
+  } finally {
+    classificationRetrying.value = false
+  }
+}
+
+onUnmounted(() => {
+  clearClassificationPolling()
+})
 
 const platformStats = ref([])
 const platformStatsLoading = ref(false)
@@ -2704,6 +3307,63 @@ onMounted(() => {
   color: #15803d;
 }
 
+.ac-classify-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+.ac-classify-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+.ac-classify-badge.is-running { background: #ede9fe; color: #6d28d9; }
+.ac-classify-badge.is-single  { background: #dcfce7; color: #15803d; }
+.ac-classify-badge.is-dual    { background: #dbeafe; color: #1d4ed8; }
+.ac-classify-badge.is-chaos   { background: #fee2e2; color: #b91c1c; }
+.ac-classify-badge.is-insufficient { background: #fef3c7; color: #b45309; }
+.ac-classify-count { font-size: 11px; color: #94a3b8; }
+
+/* 分类确认弹窗 */
+.al-classify-confirm-option {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.al-classify-force-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0f172a;
+  cursor: pointer;
+  user-select: none;
+}
+.al-classify-force-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+/* 批量分类按钮 */
+.al-classify-btn {
+  border-color: #ddd6fe !important;
+  color: #6d28d9 !important;
+  background: #f5f3ff !important;
+}
+.al-classify-btn:hover:not(:disabled) {
+  border-color: #c4b5fd !important;
+  background: #ede9fe !important;
+}
+
 .ac-btn {
   font-size: 12px;
   font-weight: 500;
@@ -2731,6 +3391,18 @@ onMounted(() => {
   border-color: #7dd3fc;
   color: #0284c7;
   background: #e0f2fe;
+}
+
+.ac-btn-classify {
+  border-color: #ddd6fe;
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.ac-btn-classify:hover {
+  border-color: #a78bfa;
+  color: #5b21b6;
+  background: #ede9fe;
 }
 
 .ac-btn-edit:hover {
@@ -3426,6 +4098,34 @@ onMounted(() => {
   color: #94a3b8;
 }
 
+.ai-default-prompt-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #6366f1;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.ai-default-prompt-toggle:hover { background: #f5f3ff; }
+.ai-default-prompt-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #475569;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-family: monospace;
+  max-height: 260px;
+  overflow-y: auto;
+  width: 100%;
+}
+
 /* ── Flag 过滤栏 ──────────────────────────────────────────────────────────── */
 .al-filter-bar {
   margin-bottom: 16px;
@@ -3933,5 +4633,214 @@ onMounted(() => {
   color: #94a3b8;
   text-align: center;
   padding: 16px;
+}
+
+/* ── 视频分类弹窗 ────────────────────────────────────────────────── */
+.vc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.vc-overview {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.vc-overview-left { display: flex; flex-direction: column; gap: 6px; }
+
+.vc-overview-status {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #64748b;
+}
+
+.vc-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #cbd5e1;
+}
+.vc-status-dot.is-running { background: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.18); }
+.vc-status-dot.is-idle { background: #94a3b8; }
+
+.vc-overview-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.vc-type-tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+.vc-type-tag.is-single { background: #dcfce7; color: #166534; }
+.vc-type-tag.is-dual { background: #dbeafe; color: #1d4ed8; }
+.vc-type-tag.is-chaos { background: #fee2e2; color: #991b1b; }
+.vc-type-tag.is-insufficient { background: #fef3c7; color: #92400e; }
+.vc-type-tag.is-none { background: #e5e7eb; color: #4b5563; }
+
+.vc-type-name { font-size: 14px; font-weight: 600; color: #0f172a; }
+
+.vc-overview-counts { font-size: 12px; color: #475569; }
+
+.vc-overview-right { display: flex; gap: 8px; align-items: center; }
+
+.vc-charts {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+.vc-chart { width: 100%; }
+.vc-chart-major { height: 220px; }
+.vc-chart-category { height: 220px; min-width: 0; }
+
+.vc-groups { display: flex; flex-direction: column; gap: 14px; }
+
+.vc-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 8px;
+}
+.vc-group-name {
+  font-size: 13px; font-weight: 600; color: #0f172a;
+}
+.vc-group-name.is-processing { color: #6366f1; }
+.vc-group-name.is-pending { color: #ca8a04; }
+.vc-group-name.is-success { color: #16a34a; }
+.vc-group-name.is-failed { color: #dc2626; }
+.vc-group-name.is-not_started { color: #94a3b8; }
+.vc-group-name.is-no_local_video { color: #f59e0b; }
+
+.vc-group-count {
+  font-size: 11px; color: #64748b;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.vc-group-list { display: flex; flex-direction: column; gap: 6px; }
+
+.vc-item {
+  display: flex; gap: 10px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+.vc-item.is-processing { border-color: #c7d2fe; background: #eef2ff; }
+.vc-item.is-failed { border-color: #fecaca; background: #fef2f2; }
+.vc-item.is-not_started, .vc-item.is-no_local_video { background: #fafafa; opacity: 0.7; }
+
+.vc-item-thumb {
+  width: 108px; height: 192px;   /* 9:16 */
+  border-radius: 4px;
+  background: #0f172a;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+}
+.vc-thumb-video {
+  width: 100%; height: 100%; object-fit: cover;
+  background: #000;
+  display: block;
+}
+.vc-item-thumb-expand {
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 24px; height: 24px;
+  background: rgba(0,0,0,0.45);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.vc-item-thumb:hover .vc-item-thumb-expand { opacity: 1; }
+
+/* 自定义全屏遮罩 */
+.vc-fullscreen-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vc-fullscreen-video {
+  height: 100vh;
+  width: calc(100vh * 9 / 16);
+  max-width: 100vw;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+.vc-fullscreen-close {
+  position: absolute;
+  top: 16px; right: 16px;
+  width: 36px; height: 36px;
+  background: rgba(255,255,255,0.15);
+  border: none;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  z-index: 1;
+}
+.vc-fullscreen-close:hover { background: rgba(255,255,255,0.3); }
+.vc-item-thumb-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.vc-item-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.vc-item-title {
+  font-size: 13px; color: #0f172a;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vc-item-meta { font-size: 11px; color: #64748b; }
+.vc-item-cat { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vc-major-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.vc-major-tag.is-display { background: #fce7f3; color: #be185d; }
+.vc-major-tag.is-knowledge { background: #dbeafe; color: #1d4ed8; }
+.vc-major-tag.is-persona { background: #ede9fe; color: #6d28d9; }
+.vc-major-tag.is-trending { background: #ffedd5; color: #c2410c; }
+.vc-cat-label { font-size: 12px; color: #334155; }
+.vc-item-status { font-size: 12px; color: #64748b; }
+.vc-item-status.is-warn { color: #d97706; }
+.vc-item-status.is-muted { color: #94a3b8; }
+.vc-item-error {
+  font-size: 12px;
+  color: #dc2626;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vc-empty {
+  text-align: center;
+  font-size: 13px;
+  color: #94a3b8;
+  padding: 24px;
 }
 </style>
