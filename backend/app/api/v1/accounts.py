@@ -1179,7 +1179,28 @@ async def _load_bulk_video_task_templates(
 ):
     from app.models.enums import VideoAIProcessStatus
     from app.models.video_ai_template import VideoAITemplate
+    from app.models.video_classification import VideoClassification
+    from app.models.video_source import VideoSource as _VS
 
+    # ── 按分类类型决定允许的大类 ──────────────────────────────────────────────
+    account = await session.get(Account, account_id)
+    allowed_major: list[str] | None = None  # None = 不限制
+
+    if account is not None:
+        cls_type = account.classification_type
+        summary = account.classification_summary or {}
+        if cls_type in ("chaos", "insufficient"):
+            return []  # 混乱/样本不足，跳过
+        if cls_type == "single":
+            primary = summary.get("primary")
+            if primary:
+                allowed_major = [primary]
+        elif cls_type == "dual":
+            primary = summary.get("primary")
+            secondary = summary.get("secondary")
+            allowed_major = [c for c in [primary, secondary] if c]
+
+    # ── 按标签查模板池 ────────────────────────────────────────────────────────
     candidate_tpls: list[VideoAITemplate] = []
     tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
     tag_ids = list((await session.execute(tag_stmt)).scalars().all())
@@ -1201,6 +1222,17 @@ async def _load_bulk_video_task_templates(
         )
         if owner_id is not None:
             tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
+
+        # 按分类过滤：模板的 video_source 必须有匹配的 major_category
+        if allowed_major is not None:
+            tpl_stmt = tpl_stmt.where(
+                exists().where(
+                    VideoClassification.video_source_id == VideoAITemplate.video_source_id,
+                    VideoClassification.status == "success",
+                    VideoClassification.major_category.in_(allowed_major),
+                )
+            )
+
         rows = (await session.execute(tpl_stmt)).scalars().all()
         candidate_tpls.extend(rows)
 
