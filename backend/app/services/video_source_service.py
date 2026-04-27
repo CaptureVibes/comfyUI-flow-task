@@ -723,3 +723,20 @@ async def get_stats_history(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return list(rows)
+
+
+async def download_video_to_cdn(source_url: str, title: str | None = None) -> str:
+    """下载视频并上传到 CDN，返回永久 URL。不涉及任何 DB 操作。
+    供自动补充等需要"先分类再决定是否入库"的场景使用。"""
+    import tempfile as _tempfile, os as _os
+    safe_title = (title or "video")[:60].replace("/", "_").replace("\\", "_")
+    filename = f"{safe_title}.mp4"
+    with _tempfile.TemporaryDirectory() as tmpdir:
+        out_template = _os.path.join(tmpdir, "video")
+        actual_path = await _download_video(source_url, out_template)
+        if not _os.path.exists(actual_path):
+            alt = out_template + ".mp4"
+            actual_path = alt if _os.path.exists(alt) else actual_path
+        actual_path = await _compress_video_if_needed(actual_path, tmpdir)
+        permanent_url = await _upload_video_file(actual_path, filename)
+    return permanent_url

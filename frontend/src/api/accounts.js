@@ -109,6 +109,14 @@ export async function exportVideoUrls(accountIds) {
   return response.data
 }
 
+export async function autoSupplementTemplates(accountIds, maxNewVideos = 10) {
+  const { data } = await http.post('/accounts/auto-supplement-templates', {
+    account_ids: accountIds,
+    max_new_videos: maxNewVideos,
+  })
+  return data
+}
+
 export async function supplementTemplates(accountIds, templateType = 'shared', maxNewVideos = 10) {
   const { data } = await http.post('/accounts/supplement-templates', {
     account_ids: accountIds,

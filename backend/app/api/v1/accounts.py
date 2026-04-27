@@ -1385,6 +1385,39 @@ async def supplement_templates(
     }
 
 
+class AutoSupplementBody(BaseModel):
+    account_ids: list[uuid.UUID]
+    max_new_videos: int = 10
+
+
+@router.post("/auto-supplement-templates", status_code=200)
+async def auto_supplement_templates(
+    body: AutoSupplementBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+):
+    """
+    根据 AI 博主分类类型自动补充匹配视频模板（后台异步执行，立即返回）。
+    仅支持 single/dual 分类账号；视频下载后先分类，仅匹配核心类别才入库。
+    """
+    import asyncio as _asyncio
+    from app.services.candidate_service import auto_supplement_for_accounts
+
+    if not body.account_ids:
+        return {"message": "无账号，跳过", "count": 0}
+
+    _asyncio.create_task(
+        auto_supplement_for_accounts(
+            account_ids=body.account_ids,
+            owner_id=owner_id,
+            max_new_videos=body.max_new_videos,
+        )
+    )
+    return {
+        "message": f"已为 {len(body.account_ids)} 个账号启动自动补充任务",
+        "count": len(body.account_ids),
+    }
+
+
 # ---------------------------------------------------------------------------
 # 标签搜索（Hashtag Search）
 # ---------------------------------------------------------------------------

@@ -513,6 +513,32 @@
             <div class="al-supplement-type-name">补充人设</div>
             <div class="al-supplement-type-desc">搜索绑定博主的视频</div>
           </button>
+          <button
+            class="al-supplement-type-card"
+            :class="{ active: supplementForm.templateType === 'auto' }"
+            @click="supplementForm.templateType = 'auto'"
+          >
+            <div class="al-supplement-type-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/><polyline points="22 2 22 8 16 8"/><path d="M12 22a10 10 0 0 1-10-10"/><polyline points="2 22 2 16 8 16"/></svg>
+            </div>
+            <div class="al-supplement-type-name">自动补充</div>
+            <div class="al-supplement-type-desc">按分类类型过滤，仅核心类别入库</div>
+          </button>
+        </div>
+        <!-- 自动补充说明 -->
+        <div v-if="supplementForm.templateType === 'auto'" class="al-auto-supplement-tip">
+          <div class="al-auto-supplement-tip-row">
+            <span class="ac-classify-badge is-single" style="font-size:11px">单核心</span>
+            <span>搜索绑定博主视频，分类后只有 <b>Top1 类别</b> 入库</span>
+          </div>
+          <div class="al-auto-supplement-tip-row">
+            <span class="ac-classify-badge is-dual" style="font-size:11px">双核心</span>
+            <span>搜索绑定博主视频，分类后 <b>Top1 + Top2 类别</b> 均可入库</span>
+          </div>
+          <div class="al-auto-supplement-tip-row al-auto-supplement-tip-warn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            未分类、混乱或样本不足的账号将跳过
+          </div>
         </div>
         <!-- 数量配置 -->
         <div class="al-supplement-config">
@@ -1231,7 +1257,7 @@ import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, wa
 import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -2199,6 +2225,7 @@ const showSupplementDialog = ref(false)
 const supplementing = ref(false)
 const supplementForm = ref({ templateType: 'shared', maxNewVideos: 10 })
 
+
 function openSupplementDialog() {
   supplementForm.value = { templateType: 'shared', maxNewVideos: 10 }
   showSupplementDialog.value = true
@@ -2224,7 +2251,12 @@ async function handleSupplement() {
   }
 
   try {
-    const result = await supplementTemplates(accountIds, supplementForm.value.templateType, supplementForm.value.maxNewVideos)
+    let result
+    if (supplementForm.value.templateType === 'auto') {
+      result = await autoSupplementTemplates(accountIds, supplementForm.value.maxNewVideos)
+    } else {
+      result = await supplementTemplates(accountIds, supplementForm.value.templateType, supplementForm.value.maxNewVideos)
+    }
     showSupplementDialog.value = false
     ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
   } catch (e) {
@@ -3958,9 +3990,31 @@ onMounted(() => {
 .al-supplement-scope svg { flex-shrink: 0; color: #6366f1; }
 .al-supplement-scope b { color: #0f172a; font-weight: 700; }
 
+.al-auto-supplement-tip {
+  margin: 10px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.al-auto-supplement-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+.al-auto-supplement-tip-warn {
+  color: #92400e;
+}
+.al-auto-supplement-tip-warn svg { flex-shrink: 0; color: #d97706; }
+
 .al-supplement-types {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
 }
 

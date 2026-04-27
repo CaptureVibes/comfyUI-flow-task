@@ -1448,3 +1448,319 @@ async def supplement_templates_for_accounts(
         )
         results.append(result)
     return results
+
+
+# ---------------------------------------------------------------------------
+# 自动补充（按分类类型过滤）
+# ---------------------------------------------------------------------------
+
+_AUTO_SUPPLEMENT_CLASSIFY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"category_index": {"type": "INTEGER", "minimum": 0, "maximum": 13}},
+    "required": ["category_index"],
+}
+
+_CATEGORY_MAJOR_MAP: dict[int, str] = {
+    0: "display", 1: "display", 2: "display", 3: "display",
+    4: "knowledge", 5: "knowledge", 6: "knowledge", 7: "knowledge", 8: "knowledge",
+    9: "persona", 10: "persona", 11: "persona",
+    12: "trending", 13: "trending",
+}
+
+
+async def _classify_video_for_auto_supplement(
+    local_video_url: str,
+    owner_id: uuid.UUID | None,
+) -> str | None:
+    """对视频调用 Gemini 分类，返回 major_category 或 None（失败时）。"""
+    from app.services.ai_api import call_gemini_api
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as session:
+        cfg_owner = owner_id if owner_id is not None else uuid.UUID(int=0)
+        try:
+            cfg = await get_or_create_pipeline_settings(session, owner_id=cfg_owner)
+        except Exception:
+            cfg = None
+
+    model_name = (cfg.video_classify_model if cfg else "") or "gemini-3.1-pro-preview"
+    from app.services.video_classification_service import _DEFAULT_PROMPT
+    prompt = (cfg.video_classify_prompt if cfg else "") or _DEFAULT_PROMPT
+    temperature = float(cfg.video_classify_temperature) if cfg else 0.7
+
+    try:
+        import re, json as _json
+        text = await call_gemini_api(
+            model_name=model_name,
+            prompt=prompt,
+            temperature=temperature,
+            video_url=local_video_url,
+            response_schema=_AUTO_SUPPLEMENT_CLASSIFY_SCHEMA,
+            timeout=180.0,
+        )
+        text = (text or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
+        obj = _json.loads(text) if text.startswith("{") else None
+        if obj is None:
+            m = re.search(r"category_index\D*(\d+)", text)
+            idx = int(m.group(1)) if m else int(text)
+        else:
+            idx = int(obj["category_index"])
+        return _CATEGORY_MAJOR_MAP.get(idx)
+    except Exception as exc:
+        logger.warning("【自动补充】分类失败 url=%s: %s", local_video_url, exc)
+        return None
+
+
+async def auto_supplement_for_account(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None,
+    max_new_videos: int = 10,
+) -> dict[str, Any]:
+    """
+    根据 AI 博主的分类类型（single/dual）自动补充模板。
+    流程：搜索 → 解析元数据 → 下载上传 CDN → Gemini 分类
+         → 类别匹配才写 video_source + 建模板；不匹配直接丢弃，零 DB 记录。
+    - single: 只允许 Top1 大类；dual: 允许 Top1 + Top2 大类
+    """
+    from app.db.session import SessionLocal
+    from app.models.account import Account
+    from app.models.account_blogger_binding import AccountBloggerBinding
+    from app.models.account_tag import AccountTag
+    from app.models.tag import Tag
+    from app.models.tiktok_blogger import TiktokBlogger
+    from app.models.video_source import VideoSource
+    from app.models.video_ai_template import VideoAITemplate
+    from app.models.enums import VideoAIProcessStatus
+    from app.schemas.video_source import VideoSourceCreate
+    from app.services.video_source_service import (
+        create_video_source,
+        parse_video_url,
+        download_video_to_cdn,
+    )
+
+    async with SessionLocal() as session:
+        account = await session.get(Account, account_id)
+        if account is None:
+            return {"account_id": str(account_id), "error": "账号不存在", "imported": 0, "skipped": 0, "filtered": 0}
+        cls_type = account.classification_type
+        summary = account.classification_summary or {}
+        primary = summary.get("primary")
+        secondary = summary.get("secondary")
+
+    if cls_type not in ("single", "dual"):
+        return {
+            "account_id": str(account_id),
+            "error": f"账号分类类型为 {cls_type or '未分类'}，自动补充仅支持单核心/双核心账号",
+            "imported": 0, "skipped": 0, "filtered": 0,
+        }
+
+    allowed_categories: list[str] = [primary] if primary else []
+    if cls_type == "dual" and secondary:
+        allowed_categories.append(secondary)
+    if not allowed_categories:
+        return {"account_id": str(account_id), "error": "无法确定允许的视频类别", "imported": 0, "skipped": 0, "filtered": 0}
+
+    async with SessionLocal() as session:
+        blogger_handle: str | None = await session.scalar(
+            select(TiktokBlogger.blogger_handle)
+            .join(AccountBloggerBinding, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
+            .where(AccountBloggerBinding.account_id == account_id)
+            .where(TiktokBlogger.blogger_handle.is_not(None))
+            .order_by(AccountBloggerBinding.created_at.asc())
+            .limit(1)
+        )
+        tag_name: str | None = await session.scalar(
+            select(Tag.name)
+            .join(AccountTag, AccountTag.tag_id == Tag.id)
+            .where(AccountTag.account_id == account_id)
+            .order_by(AccountTag.created_at.asc())
+            .limit(1)
+        )
+
+    if not blogger_handle:
+        return {"account_id": str(account_id), "error": "无绑定博主 handle", "imported": 0, "skipped": 0, "filtered": 0}
+
+    logger.info(
+        "【自动补充】account_id=%s cls_type=%s allowed=%s blogger=%s 开始",
+        account_id, cls_type, allowed_categories, blogger_handle,
+    )
+
+    imported = 0
+    skipped = 0
+    filtered = 0
+    seen_urls: set[str] = set()
+    attempted_urls: set[str] = set()
+    pending_urls: list[str] = []
+    results_per_page = max_new_videos * 8
+    round_num = 0
+
+    while imported < max_new_videos:
+        if not pending_urls:
+            round_num += 1
+            prev_seen = len(seen_urls)
+            try:
+                videos = await search_by_profiles(profiles=[blogger_handle], results_per_page=results_per_page)
+            except Exception as exc:
+                logger.warning("【自动补充】搜索失败 blogger=%s round=%d: %s", blogger_handle, round_num, exc)
+                break
+
+            batch_urls = []
+            for v in videos:
+                url = v.web_video_url
+                if not url or url in seen_urls or url in attempted_urls:
+                    continue
+                seen_urls.add(url)
+                batch_urls.append(url)
+
+            logger.info("【自动补充】第%d轮搜索 blogger=%s 新URL=%d条", round_num, blogger_handle, len(batch_urls))
+
+            if not batch_urls:
+                if len(seen_urls) == prev_seen:
+                    logger.info("【自动补充】连续一轮无新URL，停止 blogger=%s imported=%d", blogger_handle, imported)
+                    break
+                continue
+
+            async with SessionLocal() as session:
+                existing_urls = set(
+                    (await session.scalars(
+                        select(VideoSource.source_url).where(
+                            VideoSource.source_url.in_(batch_urls),
+                            VideoSource.owner_id == owner_id,
+                        )
+                    )).all()
+                )
+            for url in batch_urls:
+                if url not in existing_urls:
+                    pending_urls.append(url)
+                else:
+                    skipped += 1
+
+            if not pending_urls:
+                continue
+
+        video_url = pending_urls.pop(0)
+        attempted_urls.add(video_url)
+
+        try:
+            # ── Step 1: 解析元数据（不写 DB）──────────────────────────────
+            async with SessionLocal() as session:
+                parse_result = await parse_video_url(video_url, session=session, owner_id=owner_id)
+                if parse_result.existing_id is not None:
+                    skipped += 1
+                    continue
+
+            # ── Step 2: 下载 + 上传 CDN，得到永久 URL ─────────────────────
+            try:
+                local_video_url = await download_video_to_cdn(
+                    parse_result.source_url,
+                    title=parse_result.video_title,
+                )
+            except Exception as exc:
+                logger.warning("【自动补充】下载/上传失败，跳过 %s: %s", video_url, exc)
+                skipped += 1
+                continue
+
+            # ── Step 3: Gemini 分类 ────────────────────────────────────────
+            major = await _classify_video_for_auto_supplement(local_video_url, owner_id)
+            if major not in allowed_categories:
+                logger.info(
+                    "【自动补充】分类不匹配 major=%s allowed=%s，丢弃（不写库）%s",
+                    major, allowed_categories, video_url,
+                )
+                filtered += 1
+                continue
+
+            # ── Step 4: 分类通过 → 写 video_source（local_video_url 已就绪）
+            async with SessionLocal() as session:
+                payload = VideoSourceCreate(
+                    source_url=parse_result.source_url,
+                    platform=parse_result.platform,
+                    blogger_name=parse_result.blogger_name,
+                    video_title=parse_result.video_title,
+                    video_desc=parse_result.video_desc,
+                    video_url=parse_result.video_url,
+                    thumbnail_url=parse_result.thumbnail_url,
+                    view_count=parse_result.view_count,
+                    like_count=parse_result.like_count,
+                    favorite_count=parse_result.favorite_count,
+                    comment_count=parse_result.comment_count,
+                    share_count=parse_result.share_count,
+                    publish_date=parse_result.publish_date,
+                    duration=parse_result.duration,
+                    width=parse_result.width,
+                    height=parse_result.height,
+                    aspect_ratio=parse_result.aspect_ratio,
+                    extra=parse_result.extra,
+                )
+                is_new, vs = await create_video_source(session, payload, owner_id)
+                if not is_new:
+                    skipped += 1
+                    continue
+                # 直接写入已上传好的 URL，跳过重复下载
+                vs.local_video_url = local_video_url
+                vs.download_status = "done"
+                vs_id = vs.id
+                tiktok_blogger_id = vs.tiktok_blogger_id
+
+                tpl = VideoAITemplate(
+                    owner_id=owner_id,
+                    title=(parse_result.video_title or parse_result.blogger_name or "新模板")[:200],
+                    description="",
+                    video_source_id=vs_id,
+                    process_status=VideoAIProcessStatus.pending,
+                )
+                if tiktok_blogger_id is not None:
+                    tpl.tiktok_blogger_id = tiktok_blogger_id
+                session.add(tpl)
+                await session.commit()
+                await session.refresh(tpl)
+                tpl_id = tpl.id
+
+            # ── Step 5: 打标签并入队 AI 处理 ──────────────────────────────
+            asyncio.create_task(
+                _download_then_enqueue_template(
+                    vs_id=vs_id,
+                    tpl_id=tpl_id,
+                    owner_id=owner_id,
+                    blogger_name=None,
+                    keyword_text=tag_name or blogger_handle,
+                    template_type="exclusive",
+                )
+            )
+            imported += 1
+            logger.info("【自动补充】[%d/%d] 分类=%s 导入成功 %s", imported, max_new_videos, major, video_url)
+
+        except Exception as exc:
+            logger.warning("【自动补充】处理失败，继续下一个 video_url=%s: %s", video_url, exc)
+
+    logger.info(
+        "【自动补充】account_id=%s 完成：导入=%d 跳过=%d 过滤=%d",
+        account_id, imported, skipped, filtered,
+    )
+    return {
+        "account_id": str(account_id),
+        "imported": imported,
+        "skipped": skipped,
+        "filtered": filtered,
+        "allowed_categories": allowed_categories,
+    }
+
+
+async def auto_supplement_for_accounts(
+    account_ids: list[uuid.UUID],
+    owner_id: uuid.UUID | None,
+    max_new_videos: int = 10,
+) -> list[dict[str, Any]]:
+    """为多个账号串行执行自动补充。"""
+    results = []
+    for account_id in account_ids:
+        result = await auto_supplement_for_account(
+            account_id=account_id,
+            owner_id=owner_id,
+            max_new_videos=max_new_videos,
+        )
+        results.append(result)
+    return results
