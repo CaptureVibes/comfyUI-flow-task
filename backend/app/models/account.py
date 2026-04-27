@@ -39,6 +39,7 @@ class Account(Base):
 
     # 视频分类聚合
     classification_status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")  # idle | running
+    classification_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # single|dual|chaos|insufficient|none
     classification_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Scheduled publish config

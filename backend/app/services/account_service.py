@@ -63,6 +63,7 @@ async def list_accounts(
     account_type: str | None = None,
     face_mode: str | None = None,
     platform_binding_status: str | None = None,
+    classification_type: str | None = None,
 ) -> tuple[list[Account], int]:
     # ── Determine sort order ──────────────────────────────────────────────────
     order_desc = (sort_order or "desc").lower() == "desc"
@@ -123,6 +124,13 @@ async def list_accounts(
             )
             stmt = stmt.where(Account.id.in_(status_subq))
             total_stmt = total_stmt.where(Account.id.in_(status_subq))
+    if classification_type:
+        if classification_type == "unclassified":
+            stmt = stmt.where(Account.classification_type.is_(None))
+            total_stmt = total_stmt.where(Account.classification_type.is_(None))
+        else:
+            stmt = stmt.where(Account.classification_type == classification_type)
+            total_stmt = total_stmt.where(Account.classification_type == classification_type)
 
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)

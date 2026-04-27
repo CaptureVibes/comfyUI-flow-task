@@ -365,6 +365,7 @@ async def list_accounts_endpoint(
     account_type: str | None = Query(None),
     face_mode: str | None = Query(None),
     platform_binding_status: str | None = Query(None),
+    classification_type: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
@@ -381,6 +382,7 @@ async def list_accounts_endpoint(
         account_type=account_type or None,
         face_mode=face_mode or None,
         platform_binding_status=platform_binding_status or None,
+        classification_type=classification_type or None,
     )
     # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]

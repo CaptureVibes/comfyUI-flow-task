@@ -377,6 +377,7 @@ class AccountRead(BaseModel):
     pending_publish_count: int = 0
     linked_video_count: int = 0
     classification_status: str = "idle"
+    classification_type: str | None = None
     classification_summary: dict | None = None
     created_at: datetime
     updated_at: datetime

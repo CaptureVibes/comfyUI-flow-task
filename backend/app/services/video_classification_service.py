@@ -405,6 +405,7 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
         }
 
         account.classification_summary = summary
+        account.classification_type = cls_type if success > 0 else None
         if pending == 0 and processing == 0:
             account.classification_status = "idle"
         await session.commit()

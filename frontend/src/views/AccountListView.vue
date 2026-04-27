@@ -798,6 +798,14 @@
           <option value="confirmed">已确认</option>
           <option value="unbound">未绑定</option>
         </select>
+        <select class="al-col-filter-select" v-model="filterClassificationType" @change="onFilterChange">
+          <option value="">分类 · 全部</option>
+          <option value="single">单核心</option>
+          <option value="dual">双核心</option>
+          <option value="chaos">混乱</option>
+          <option value="insufficient">样本不足</option>
+          <option value="unclassified">未分类</option>
+        </select>
         <button v-if="hasActiveColFilters" class="al-col-filter-clear" @click="clearColFilters">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           清除筛选
@@ -1271,9 +1279,10 @@ const filterGender = ref('')
 const filterAccountType = ref('')
 const filterFaceMode = ref('')
 const filterPlatformBindingStatus = ref('')
+const filterClassificationType = ref('')
 
 const hasActiveColFilters = computed(() =>
-  filterGender.value || filterAccountType.value || filterFaceMode.value || filterPlatformBindingStatus.value
+  filterGender.value || filterAccountType.value || filterFaceMode.value || filterPlatformBindingStatus.value || filterClassificationType.value
 )
 
 function onFilterChange() {
@@ -1286,6 +1295,7 @@ function clearColFilters() {
   filterAccountType.value = ''
   filterFaceMode.value = ''
   filterPlatformBindingStatus.value = ''
+  filterClassificationType.value = ''
   page.value = 1
   loadData()
 }
@@ -1920,6 +1930,7 @@ async function loadData() {
     if (filterAccountType.value) params.account_type = filterAccountType.value
     if (filterFaceMode.value) params.face_mode = filterFaceMode.value
     if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) params.classification_type = filterClassificationType.value
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
