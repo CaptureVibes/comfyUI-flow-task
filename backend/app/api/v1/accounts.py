@@ -24,6 +24,7 @@ from app.models.flag import AccountFlag, Flag
 from app.models.tag import Tag
 from app.models.tag import VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
+from app.models.video_source import VideoSource
 from app.models.video_task import VideoSubTask, VideoTask
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
@@ -304,12 +305,14 @@ def _account_read(
     flags: list[BoundFlagRead] | None = None,
     pending_publish_count: int = 0,
     channel_reservations: list[AccountChannelReservationRead] | None = None,
+    linked_video_count: int = 0,
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
     data.bound_tags = tags or []
     data.bound_flags = flags or []
     data.pending_publish_count = pending_publish_count
+    data.linked_video_count = linked_video_count
     data.channel_reservations = channel_reservations or []
     data.social_bindings = None
     return data
@@ -386,6 +389,7 @@ async def list_accounts_endpoint(
     flag_map: dict[uuid.UUID, list[BoundFlagRead]] = {aid: [] for aid in account_ids}
     reservation_map: dict[uuid.UUID, list[AccountChannelReservationRead]] = {aid: [] for aid in account_ids}
     pending_publish_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
+    video_count_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
     if account_ids:
         blogger_stmt = (
             select(AccountBloggerBinding.account_id, TiktokBlogger)
@@ -435,6 +439,16 @@ async def list_accounts_endpoint(
             if aid is not None:
                 pending_publish_map[aid] = int(count or 0)
 
+        video_count_stmt = (
+            select(AccountBloggerBinding.account_id, func.count(VideoSource.id))
+            .join(VideoSource, VideoSource.tiktok_blogger_id == AccountBloggerBinding.tiktok_blogger_id)
+            .where(AccountBloggerBinding.account_id.in_(account_ids))
+            .group_by(AccountBloggerBinding.account_id)
+        )
+        for aid, count in (await session.execute(video_count_stmt)).all():
+            if aid is not None:
+                video_count_map[aid] = int(count or 0)
+
     rich_items = [
         _account_read(
             a,
@@ -443,6 +457,7 @@ async def list_accounts_endpoint(
             flag_map[a.id],
             pending_publish_map[a.id],
             reservation_map[a.id],
+            linked_video_count=video_count_map.get(a.id, 0),
         )
         for a in items
     ]

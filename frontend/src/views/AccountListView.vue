@@ -933,7 +933,7 @@
                 </span>
               </div>
               <!-- 分类状态行 -->
-              <div class="ac-classify-row" v-if="item.classification_status === 'running' || item.classification_summary">
+              <div class="ac-classify-row">
                 <span v-if="item.classification_status === 'running'" class="ac-classify-badge is-running">分类中</span>
                 <template v-if="item.classification_summary">
                   <span class="ac-classify-badge" :class="`is-${item.classification_summary.type}`">
@@ -943,8 +943,9 @@
                     <template v-else-if="item.classification_summary.type === 'insufficient'">样本不足</template>
                     <template v-else>未分类</template>
                   </span>
-                  <span class="ac-classify-count">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}视频</span>
+                  <span class="ac-classify-count">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}分类</span>
                 </template>
+                <span class="ac-classify-count">{{ item.linked_video_count ?? 0 }}个视频</span>
               </div>
               <div v-if="item.style_description" class="al-style-desc">{{ item.style_description }}</div>
             </td>
