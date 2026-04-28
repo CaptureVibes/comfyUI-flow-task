@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     account_channel_owner_id: str = ""  # 默认 owner_id，请求方不传时使用
     open_api_channel_usage_types: str = ""  # 逗号分隔，如 "short_video,live"；为空则不传
     promotion_code_pool_size: int = 10000  # 启动时预生成的 8 位数字口令数量
+    product_search_api_url: str = "https://api.alvinclub.com/ai-service/api/v1/style-outfits/search/image-internal"
+    product_search_internal_score_threshold: float = 0.9
+    product_search_top_n: int = 3
+    product_search_timeout_seconds: float = 45.0
 
     @property
     def open_api_channel_usage_types_list(self) -> list[str]:

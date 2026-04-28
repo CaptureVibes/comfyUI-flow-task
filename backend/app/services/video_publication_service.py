@@ -17,11 +17,13 @@ from app.core.config import settings
 from app.models.account import Account
 from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.video_publication import VideoPublication
+from app.models.video_task import VideoSubTask, VideoTask
 from app.schemas.video_publication import (
     VideoPublicationCreate,
     VideoPublicationStatsListItem,
     VideoPublicationStatsQuery,
 )
+from app.services.ext_product_service import build_ext_products_from_shots
 from app.services.promotion_code_service import promotion_code_distributor
 
 logger = logging.getLogger("app.video_publication_service")
@@ -774,6 +776,17 @@ class VideoPublicationService:
         self._openapi_adapter = OpenAPIAdapter(self.open_api)
         self._ext_pub_adapter = ExtPubAdapter(self.ext_pub)
 
+    async def _load_ext_products_for_sub_task(self, sub_task_id: uuid.UUID) -> list[dict]:
+        result = await self.db.execute(
+            select(VideoSubTask)
+            .where(VideoSubTask.id == sub_task_id)
+            .options(selectinload(VideoSubTask.task))
+        )
+        sub_task = result.scalar_one_or_none()
+        if sub_task is None or sub_task.task is None:
+            return []
+        return build_ext_products_from_shots(sub_task.task.shots)
+
     async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
         """创建发布任务。
 
@@ -790,13 +803,12 @@ class VideoPublicationService:
         if not data.channels:
             raise ValueError("至少需要一个发布渠道")
 
+        ext_products = await self._load_ext_products_for_sub_task(data.sub_task_id)
         logger.info(
-            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s",
-            data.sub_task_id, openapi_channels, ext_channels,
+            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s ext_products=%d",
+            data.sub_task_id, openapi_channels, ext_channels, len(ext_products),
         )
-
         promotion_code = await promotion_code_distributor.acquire()
-        ext_products: list[dict] = []
         publication_committed = False
 
         # 记录原始请求（用于 audit / 重试）

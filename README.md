@@ -133,11 +133,18 @@ publishing -> publish_failed -> stashed
 ```json
 {
   "promotion_code": "12345678",
-  "ext_products": []
+  "ext_products": [
+    {
+      "title": "Matched product title",
+      "link": "https://example.com/product",
+      "source": "Brand",
+      "image": "https://example.com/product.jpg"
+    }
+  ]
 }
 ```
 
-`ext_products` 当前保留为空数组，后续商品链路会从 `video_tasks.shots` 提取后补全。
+`ext_products` 从 `video_tasks.shots[].ext_products` 聚合，数据源是 AI 单品图搜索返回的 `topMatch`。
 
 主要文件：
 

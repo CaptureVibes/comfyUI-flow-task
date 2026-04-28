@@ -232,7 +232,7 @@
         </div>
 
         <!-- Per-stage snapshot galleries -->
-        <div v-if="frameShots.length > 0 || outfitShots.length > 0 || finalOutfits.length > 0 || faceRemovingShots.length > 0" class="vtfd-card vtfd-fw-card vtfd-shots-card">
+        <div v-if="frameShots.length > 0 || outfitShots.length > 0 || productOutfits.length > 0 || finalOutfits.length > 0 || faceRemovingShots.length > 0" class="vtfd-card vtfd-fw-card vtfd-shots-card">
 
           <!-- Stage 2: 抽帧图 -->
           <div v-if="frameShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
@@ -266,10 +266,86 @@
             </div>
           </div>
 
-          <!-- Stage 3: 最终造型图 + 单品展开 -->
+          <!-- Stage 3: 单品图 + 商品匹配 -->
+          <div v-if="productOutfits.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤③ 单品图 / 商品匹配</span>
+              <span class="vtfd-section-count">({{ productCount }})</span>
+            </div>
+            <div v-for="(outfit, oidx) in productOutfits" :key="'po-'+oidx" class="vtfd-product-outfit">
+              <div class="vtfd-product-outfit-title">
+                <span>穿搭 {{ oidx + 1 }}</span>
+                <span v-if="outfit.outfit_style">{{ outfit.outfit_style }}</span>
+              </div>
+              <div class="vtfd-product-grid">
+                <div
+                  v-for="(product, pidx) in outfit.solo_products || []"
+                  :key="'pm-'+oidx+'-'+pidx"
+                  class="vtfd-product-card"
+                >
+                  <div class="vtfd-product-images">
+                    <div class="vtfd-product-image-box">
+                      <div class="vtfd-product-image-label">AI 单品图</div>
+                      <el-image
+                        v-if="generatedProductImageUrl(product)"
+                        :src="generatedProductImageUrl(product)"
+                        class="vtfd-product-img"
+                        fit="cover"
+                        preview-teleported
+                        hide-on-click-modal
+                        :preview-src-list="productPreviewImages(product)"
+                        :initial-index="0"
+                      />
+                      <div v-else class="vtfd-product-placeholder">暂无图</div>
+                    </div>
+                    <div class="vtfd-product-image-box">
+                      <div class="vtfd-product-image-label">搜索商品图</div>
+                      <el-image
+                        v-if="searchedProductImageUrl(product)"
+                        :src="searchedProductImageUrl(product)"
+                        class="vtfd-product-img"
+                        fit="cover"
+                        preview-teleported
+                        hide-on-click-modal
+                        :preview-src-list="productPreviewImages(product)"
+                        :initial-index="searchedProductPreviewIndex(product)"
+                      />
+                      <div v-else class="vtfd-product-placeholder">暂无匹配</div>
+                    </div>
+                  </div>
+                  <div class="vtfd-product-body">
+                    <div class="vtfd-product-name">{{ product.name || productTitle(product) }}</div>
+                    <div v-if="product.description" class="vtfd-product-desc">{{ product.description }}</div>
+                    <div class="vtfd-product-match-row">
+                      <span :class="['vtfd-product-status', productSearchStatusClass(product)]">
+                        {{ productSearchStatusLabel(product) }}
+                      </span>
+                      <span v-if="productSource(product)" class="vtfd-product-source">{{ productSource(product) }}</span>
+                      <span v-if="productPriceText(product)" class="vtfd-product-price">{{ productPriceText(product) }}</span>
+                    </div>
+                    <div v-if="product.product_search_error" class="vtfd-product-error">
+                      {{ product.product_search_error }}
+                    </div>
+                    <div v-if="productTitle(product)" class="vtfd-product-title">{{ productTitle(product) }}</div>
+                    <a
+                      v-if="productLink(product)"
+                      class="vtfd-product-link"
+                      :href="productLink(product)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      查看商品
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stage 4: 最终造型图 -->
           <div v-if="finalOutfits.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤③ 最终造型图</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">步骤④ 最终造型图</span>
               <span class="vtfd-section-count">({{ finalOutfits.length }})</span>
             </div>
             <div v-for="(outfit, oidx) in finalOutfits" :key="'fo-'+oidx" style="margin-bottom:20px">
@@ -287,17 +363,6 @@
                 <div>
                   <div style="font-weight:600;color:#1e293b;font-size:13px">穿搭 {{ oidx + 1 }}：{{ outfit.outfit_style || '' }}</div>
                   <div style="font-size:12px;color:#64748b;margin-top:2px">{{ outfit.solo_products?.length || 0 }} 件单品</div>
-                </div>
-              </div>
-              <div v-if="outfit.solo_products?.length > 0" class="vtfd-images-grid">
-                <div v-for="(product, pidx) in outfit.solo_products" :key="'p-'+oidx+'-'+pidx" class="vtfd-shot-card vtfd-shot-readonly">
-                  <div class="vtfd-shot-img-wrap">
-                    <el-image v-if="product.product_image_url" :src="product.product_image_url" class="vtfd-shot-img" fit="cover" preview-teleported hide-on-click-modal
-                      :preview-src-list="outfit.solo_products.filter(p => p.product_image_url).map(p => p.product_image_url)" :initial-index="pidx" />
-                    <div v-else class="vtfd-shot-placeholder">暂无图</div>
-                  </div>
-                  <div style="font-size:11px;color:#334155;padding:4px 6px;font-weight:500">{{ product.name }}</div>
-                  <div style="font-size:10px;color:#94a3b8;padding:0 6px 4px;line-height:1.4">{{ product.description }}</div>
                 </div>
               </div>
             </div>
@@ -457,6 +522,7 @@ const templateTags = ref([])
 const templateStatus = ref(null) // pending, understanding, imagegen, splitting, face_removing, success, fail, paused
 const errorMessage = ref('')
 const pollTimer = ref(null)
+const completedStages = ref([])
 
 // Prompt edit state
 const isPromptEditMode = ref(false)
@@ -484,6 +550,22 @@ const frameShots = computed(() => form.extra?.frame_shots || [])
 const outfitShots = computed(() => form.extra?.outfit_shots || [])
 const finalOutfits = computed(() => form.extra?.final_outfits || [])
 const faceRemovingShots = computed(() => form.extra?.face_removing_shots || [])
+const productOutfits = computed(() => {
+  const searched = form.extra?.product_search_results || []
+  if (searched.length) return searched
+  const generated = form.extra?.product_gen_results || []
+  if (generated.length) return generated
+  return finalOutfits.value.filter(outfit => outfit.solo_products?.length)
+})
+const productCount = computed(() =>
+  productOutfits.value.reduce((total, outfit) => total + (outfit.solo_products?.length || 0), 0)
+)
+
+const isProductSearchProcessing = computed(() =>
+  templateStatus.value === 'product_imagegen'
+  && completedStages.value.includes('product_imagegen')
+  && !completedStages.value.includes('product_search')
+)
 
 // Processing state
 const isProcessing = computed(() =>
@@ -494,6 +576,7 @@ const isProcessing = computed(() =>
 )
 
 const progressPercentage = computed(() => {
+  if (isProductSearchProcessing.value) return 82
   const statusMap = {
     pending: 3,
     understanding: 15,
@@ -516,6 +599,7 @@ const progressStatus = computed(() => {
 })
 
 const progressText = computed(() => {
+  if (isProductSearchProcessing.value) return '正在搜索匹配商品...'
   const textMap = {
     pending: '等待开始处理...',
     understanding: 'AI 正在理解视频内容...',
@@ -532,6 +616,9 @@ const progressText = computed(() => {
 })
 
 function statusLabel(status) {
+  if (status === 'product_imagegen' && isProductSearchProcessing.value) {
+    return '匹配商品'
+  }
   const labels = {
     pending: '排队中',
     understanding: '理解中',
@@ -547,6 +634,72 @@ function statusLabel(status) {
   return labels[status] || status
 }
 
+function generatedProductImageUrl(product) {
+  if (!product) return ''
+  if (product.generated_product_image_url) return product.generated_product_image_url
+  return product.product_search_status ? '' : (product.product_image_url || '')
+}
+
+function matchedProduct(product) {
+  return product?.matched_product && typeof product.matched_product === 'object'
+    ? product.matched_product
+    : null
+}
+
+function searchedProductImageUrl(product) {
+  const matched = matchedProduct(product)
+  if (matched?.image || matched?.thumbnail) {
+    return matched.image || matched.thumbnail
+  }
+  return product?.product_search_status === 'matched' ? (product.product_image_url || '') : ''
+}
+
+function productPreviewImages(product) {
+  return [generatedProductImageUrl(product), searchedProductImageUrl(product)].filter(Boolean)
+}
+
+function searchedProductPreviewIndex(product) {
+  return generatedProductImageUrl(product) ? 1 : 0
+}
+
+function productTitle(product) {
+  const matched = matchedProduct(product)
+  return product?.product_title || matched?.title || ''
+}
+
+function productLink(product) {
+  const matched = matchedProduct(product)
+  return product?.product_link || matched?.link || ''
+}
+
+function productSource(product) {
+  const matched = matchedProduct(product)
+  return product?.product_source || matched?.source || ''
+}
+
+function productPriceText(product) {
+  const price = product?.product_price || matchedProduct(product)?.price
+  if (!price) return ''
+  if (typeof price === 'string') return price
+  return price.value || ''
+}
+
+function productSearchStatusLabel(product) {
+  const labels = {
+    matched: '已匹配',
+    no_match: '未匹配',
+    failed: '搜索失败',
+    skipped_no_image: '无单品图',
+    skipped_no_api_url: '未配置接口',
+  }
+  return labels[product?.product_search_status] || '待搜索'
+}
+
+function productSearchStatusClass(product) {
+  const status = product?.product_search_status || 'pending'
+  return `vtfd-product-status-${status.replaceAll('_', '-')}`
+}
+
 function vsLabel(vs) {
   return `${vs.video_title || '无标题'} - @${vs.blogger_name || '未知'}`
 }
@@ -559,8 +712,10 @@ function platformLabel(p) {
 function handleVideoChange() {
   form.prompt_description = ''
   form.extracted_shots = null
+  form.extra = null
   templateStatus.value = null
   errorMessage.value = ''
+  completedStages.value = []
 
   if (selectedVideoSource.value) {
     if (!form.title) {
@@ -602,6 +757,7 @@ async function pollState() {
 
     templateStatus.value = state.status
     errorMessage.value = state.error_message || ''
+    completedStages.value = state.completed_stages || []
 
     if (['success', 'fail', 'paused'].includes(state.status)) {
       stopPolling()
@@ -643,6 +799,8 @@ async function handleRestart() {
     await restartVideoAITemplate(route.params.id)
     form.prompt_description = ''
     form.extracted_shots = []
+    form.extra = null
+    completedStages.value = []
     templateStatus.value = 'pending'
     errorMessage.value = ''
     startPolling()
@@ -663,8 +821,10 @@ async function handleRestartStage2() {
       delete form.extra.outfit_shots
       delete form.extra.outfit_detailing_progress
       delete form.extra.product_gen_results
+      delete form.extra.product_search_results
       delete form.extra.final_outfits
     }
+    completedStages.value = form.prompt_description ? ['understanding'] : []
     templateStatus.value = 'pending'
     errorMessage.value = ''
     startPolling()
@@ -1078,6 +1238,10 @@ onUnmounted(() => {
 .vtfd-status-pending { background: #e0f2fe; color: #0369a1; }
 .vtfd-status-understanding { background: #fef3c7; color: #b45309; }
 .vtfd-status-imagegen { background: #ede9fe; color: #7c3aed; }
+.vtfd-status-outfit_selecting { background: #e0f2fe; color: #0369a1; }
+.vtfd-status-outfit_detailing { background: #fef3c7; color: #b45309; }
+.vtfd-status-product_imagegen { background: #e0e7ff; color: #4338ca; }
+.vtfd-status-outfit_regen { background: #dcfce7; color: #15803d; }
 .vtfd-status-splitting { background: #e0e7ff; color: #4338ca; }
 .vtfd-status-face_removing { background: #fce7f3; color: #be185d; }
 .vtfd-status-upscaling { background: #f0f9ff; color: #0369a1; }
@@ -1238,6 +1402,187 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 12px;
+}
+
+.vtfd-product-outfit {
+  margin-bottom: 18px;
+}
+
+.vtfd-product-outfit:last-child {
+  margin-bottom: 0;
+}
+
+.vtfd-product-outfit-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.vtfd-product-outfit-title span + span {
+  font-weight: 500;
+  color: #64748b;
+}
+
+.vtfd-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.vtfd-product-card {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.vtfd-product-images {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.vtfd-product-image-box {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.vtfd-product-image-box + .vtfd-product-image-box {
+  border-left: 1px solid #eef2f7;
+}
+
+.vtfd-product-image-label {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.vtfd-product-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.vtfd-product-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.vtfd-product-body {
+  padding: 10px;
+}
+
+.vtfd-product-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+
+.vtfd-product-desc,
+.vtfd-product-title {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vtfd-product-title {
+  margin-top: 8px;
+  color: #334155;
+}
+
+.vtfd-product-error {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.vtfd-product-match-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.vtfd-product-status,
+.vtfd-product-source,
+.vtfd-product-price {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.vtfd-product-status {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.vtfd-product-status-matched {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.vtfd-product-status-no-match,
+.vtfd-product-status-failed,
+.vtfd-product-status-skipped-no-image,
+.vtfd-product-status-skipped-no-api-url {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.vtfd-product-source {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.vtfd-product-price {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.vtfd-product-link {
+  display: inline-flex;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4f46e5;
+  text-decoration: none;
+}
+
+.vtfd-product-link:hover {
+  color: #3730a3;
 }
 
 /* Stage tag */

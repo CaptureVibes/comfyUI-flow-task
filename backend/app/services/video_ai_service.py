@@ -11,10 +11,12 @@ from uuid import UUID
 
 import httpx
 
+from app.core.config import settings
 from app.services.ai_api import call_gemini_api
 from app.db.session import SessionLocal
 from app.models.enums import VideoAIProcessStatus
 from app.models.video_ai_template import VideoAITemplate
+from app.services.ext_product_service import enrich_shot_with_ext_products
 
 logger = logging.getLogger("app.video_ai")
 
@@ -41,6 +43,8 @@ _persist_worker_task: asyncio.Task | None = None
 _CONCURRENCY = 5
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
 _PERSIST_INTERVAL = 2.0
+_PRODUCT_SEARCH_STAGE = "product_search"
+_PRODUCT_SEARCH_CONCURRENCY = 4
 
 
 def _utcnow_iso() -> str:
@@ -73,6 +77,14 @@ def _new_state(template_id: str, status: VideoAIProcessStatus) -> dict:
         "completed_stages": [],  # 已完成的阶段列表，用于断点续跑
         "updated_at": _utcnow_iso(),
     }
+
+
+def _remove_completed_stage(state: dict, stage: str) -> bool:
+    completed_stages = state.get("completed_stages") or []
+    if stage not in completed_stages:
+        return False
+    state["completed_stages"] = [s for s in completed_stages if s != stage]
+    return True
 
 
 def _mark_dirty(template_id: str) -> None:
@@ -546,6 +558,235 @@ async def _run_product_imagegen(
     return result
 
 
+def _build_product_search_query(product: dict) -> str:
+    """用单品描述组成商品搜索关键词。"""
+    return str(product.get("description") or "").strip()
+
+
+def _with_product_search_skip(product: dict, status: str, *, error: str = "") -> dict:
+    generated_image_url = product.get("generated_product_image_url") or product.get("product_image_url") or ""
+    updated = {
+        **product,
+        "generated_product_image_url": generated_image_url,
+        "product_search_status": status,
+    }
+    if error:
+        updated["product_search_error"] = error
+    return updated
+
+
+def _truncate_for_log(value: object, max_length: int = 500) -> str:
+    text = str(value or "").replace("\n", " ").strip()
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length]}..."
+
+
+async def _search_product_top_match(
+    *,
+    client: httpx.AsyncClient,
+    template_id: str,
+    product: dict,
+    outfit_index: int,
+    product_index: int,
+) -> dict:
+    """
+    用生成的单品图 + 单品描述搜索真实商品。
+    命中 topMatch 时，用真实商品 image/thumbnail 替换 product_image_url。
+    """
+    generated_image_url = str(
+        product.get("generated_product_image_url") or product.get("product_image_url") or ""
+    ).strip()
+    if not generated_image_url:
+        return _with_product_search_skip(product, "skipped_no_image")
+
+    api_url = settings.product_search_api_url.strip()
+    if not api_url:
+        return _with_product_search_skip(product, "skipped_no_api_url")
+
+    query = _build_product_search_query(product)
+    top_n = min(max(int(settings.product_search_top_n or 3), 1), 10)
+    internal_score_threshold = min(max(float(settings.product_search_internal_score_threshold), 0.0), 1.0)
+    payload: dict[str, object] = {
+        "imageUrl": generated_image_url,
+        "internalScoreThreshold": internal_score_threshold,
+        "topN": top_n,
+    }
+    if query:
+        payload["q"] = query
+
+    name = product.get("name") or f"product[{product_index}]"
+    try:
+        resp = await client.post(api_url, json=payload)
+        response_text = resp.text
+        if resp.status_code >= 400:
+            error = f"HTTP {resp.status_code}: {_truncate_for_log(response_text)}"
+            logger.warning(
+                "[%s] Product search HTTP failed outfit[%d] '%s': status=%d query=%r image_url=%s response=%s",
+                template_id,
+                outfit_index,
+                name,
+                resp.status_code,
+                query,
+                _truncate_for_log(generated_image_url, 180),
+                _truncate_for_log(response_text),
+            )
+            return {
+                **_with_product_search_skip(product, "failed", error=error),
+                "product_search_http_status": resp.status_code,
+                "product_search_response": _truncate_for_log(response_text, 1000),
+            }
+
+        try:
+            body = resp.json()
+        except Exception as exc:
+            error = f"Invalid JSON response: {_truncate_for_log(response_text)}"
+            logger.warning(
+                "[%s] Product search invalid JSON outfit[%d] '%s': query=%r image_url=%s response=%s",
+                template_id,
+                outfit_index,
+                name,
+                query,
+                _truncate_for_log(generated_image_url, 180),
+                _truncate_for_log(response_text),
+            )
+            return _with_product_search_skip(product, "failed", error=error)
+
+        if not isinstance(body, dict):
+            raise ValueError("search response is not an object")
+        if body.get("code") != 0 or body.get("success") is False:
+            error = body.get("message") or f"search response code={body.get('code')}"
+            logger.warning(
+                "[%s] Product search API failed outfit[%d] '%s': code=%s success=%s trace_id=%s query=%r message=%s",
+                template_id,
+                outfit_index,
+                name,
+                body.get("code"),
+                body.get("success"),
+                body.get("traceId") or "",
+                query,
+                error,
+            )
+            return {
+                **_with_product_search_skip(product, "failed", error=str(error)),
+                "product_search_trace_id": body.get("traceId") or "",
+                "product_search_response_code": body.get("code"),
+                "product_search_response_message": body.get("message") or "",
+            }
+
+        data = body.get("data") or {}
+        if not isinstance(data, dict):
+            raise ValueError("search response data is not an object")
+        top_match = data.get("topMatch")
+        candidates = data.get("candidates") or []
+        if not isinstance(top_match, dict) or not top_match:
+            logger.info("[%s] Product search no match outfit[%d] '%s'", template_id, outfit_index, name)
+            return {
+                **product,
+                "generated_product_image_url": generated_image_url,
+                "product_search_status": "no_match",
+                "product_search_query": query,
+                "product_search_trace_id": body.get("traceId") or "",
+                "product_search_candidates": candidates,
+            }
+
+        matched_image_url = top_match.get("image") or top_match.get("thumbnail") or generated_image_url
+        logger.info(
+            "[%s] Product search matched outfit[%d] '%s': %s",
+            template_id,
+            outfit_index,
+            name,
+            str(top_match.get("title") or "")[:100],
+        )
+        return {
+            **product,
+            "generated_product_image_url": generated_image_url,
+            "product_image_url": matched_image_url,
+            "product_search_status": "matched",
+            "product_search_query": query,
+            "product_search_trace_id": body.get("traceId") or "",
+            "product_search_processing_time": data.get("processingTime") or "",
+            "product_search_candidates": candidates,
+            "matched_product": top_match,
+            "product_title": top_match.get("title") or product.get("name") or "",
+            "product_link": top_match.get("link") or "",
+            "product_source": top_match.get("source") or "",
+            "product_thumbnail": top_match.get("thumbnail") or "",
+            "product_price": top_match.get("price"),
+            "product_tier": top_match.get("tier"),
+            "product_tier_label": top_match.get("tier_label") or "",
+        }
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("[%s] Product search failed outfit[%d] '%s': %s", template_id, outfit_index, name, exc)
+        return _with_product_search_skip(product, "failed", error=str(exc))
+
+
+async def _run_product_search(
+    *,
+    template_id: str,
+    product_gen_results: list[dict],
+) -> list[dict]:
+    """
+    步骤4b2：单品图生成后搜索真实商品，topMatch 作为结果商品。
+    返回结构与 product_gen_results 同构，但 solo_products 会带 matched_product，
+    且 product_image_url 替换为真实商品图。
+    """
+    if not product_gen_results:
+        return []
+
+    timeout_seconds = max(float(settings.product_search_timeout_seconds or 45.0), 1.0)
+    result = [
+        {**detail, "solo_products": list(detail.get("solo_products") or [])}
+        for detail in product_gen_results
+    ]
+    jobs: list[tuple[int, int, dict]] = []
+    for outfit_index, detail in enumerate(result):
+        for product_index, product in enumerate(detail.get("solo_products") or []):
+            jobs.append((outfit_index, product_index, product))
+
+    if not jobs:
+        return result
+
+    semaphore = asyncio.Semaphore(_PRODUCT_SEARCH_CONCURRENCY)
+    timeout = httpx.Timeout(timeout_seconds)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async def _run_one(outfit_index: int, product_index: int, product: dict) -> tuple[int, int, dict]:
+            async with semaphore:
+                searched = await _search_product_top_match(
+                    client=client,
+                    template_id=template_id,
+                    product=product,
+                    outfit_index=outfit_index,
+                    product_index=product_index,
+                )
+                return outfit_index, product_index, searched
+
+        updates = await asyncio.gather(
+            *[_run_one(outfit_index, product_index, product) for outfit_index, product_index, product in jobs]
+        )
+
+    matched_count = 0
+    for outfit_index, product_index, product in updates:
+        result[outfit_index]["solo_products"][product_index] = product
+        if product.get("product_search_status") == "matched":
+            matched_count += 1
+
+    logger.info("[%s] Product search stage completed: %d/%d matched", template_id, matched_count, len(jobs))
+    return result
+
+
+def _get_outfit_regen_product_image_url(product: dict) -> str:
+    """最终造型图生成只使用搜索命中的真实商品图。"""
+    matched_product = product.get("matched_product")
+    if isinstance(matched_product, dict):
+        image_url = matched_product.get("image") or matched_product.get("thumbnail")
+        if image_url:
+            return str(image_url)
+    return ""
+
+
 async def _run_outfit_regen(
     *,
     template_id: str,
@@ -572,7 +813,11 @@ async def _run_outfit_regen(
         outfit_image_url = detail["image_url"]
         outfit_style = detail.get("outfit_style", "")
         solo_products = detail.get("solo_products", [])
-        product_cdn_urls = [p["product_image_url"] for p in solo_products if p.get("product_image_url")]
+        product_cdn_urls = [
+            image_url
+            for image_url in (_get_outfit_regen_product_image_url(p) for p in solo_products)
+            if image_url
+        ]
 
         new_outfit_url = outfit_image_url
         if product_cdn_urls:
@@ -619,7 +864,11 @@ async def _sync_task_shots(template_id: str, uuid_val: UUID, final_outfits: list
     from app.models.video_task import VideoTask
 
     outfit_shots = [
-        {"image_url": o["image_url"], "outfit_style": o.get("outfit_style", "")}
+        enrich_shot_with_ext_products({
+            "image_url": o["image_url"],
+            "outfit_style": o.get("outfit_style", ""),
+            "solo_products": o.get("solo_products", []),
+        })
         for o in final_outfits
         if o.get("image_url")
     ]
@@ -764,12 +1013,33 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     outfit_regen_quality = "2K"
             # 获取当前 state（可能带有已完成阶段信息）
             state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
-            completed_stages: list[str] = state.get("completed_stages") or []
+            state["completed_stages"] = list(state.get("completed_stages") or [])
+            completed_stages: list[str] = state["completed_stages"]
 
             # 断点续跑：从 DB extra 字段恢复中间阶段数据（内存 state 可能已清空）
             async with SessionLocal() as session:
                 _tpl_for_restore = await session.get(VideoAITemplate, uuid_val)
                 _extra = dict(_tpl_for_restore.extra or {}) if _tpl_for_restore else {}
+            if (
+                "product_imagegen" in completed_stages
+                and _PRODUCT_SEARCH_STAGE not in completed_stages
+                and "outfit_regen" in completed_stages
+            ):
+                _remove_completed_stage(state, "outfit_regen")
+                completed_stages = state["completed_stages"]
+                state["final_outfits"] = []
+                state["extracted_shots"] = []
+                _mark_dirty(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        extra = dict(tpl.extra or {})
+                        extra.pop("final_outfits", None)
+                        tpl.extra = extra
+                        tpl.extracted_shots = []
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
+                        await session.commit()
+                logger.info("[%s] product_search missing; outfit_regen will rerun after product search", template_id)
             if "imagegen" in completed_stages and not state.get("frame_shots"):
                 state["frame_shots"] = _extra.get("frame_shots") or []
             if "outfit_selecting" in completed_stages and not state.get("outfit_shots"):
@@ -778,6 +1048,10 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 state["final_outfits"] = _extra.get("final_outfits") or []
             if "outfit_detailing" in completed_stages and not state.get("outfit_detailing_progress"):
                 state["outfit_detailing_progress"] = _extra.get("outfit_detailing_progress") or []
+            if ("product_imagegen" in completed_stages or _PRODUCT_SEARCH_STAGE in completed_stages) and not state.get("product_gen_results"):
+                state["product_gen_results"] = _extra.get("product_search_results") or _extra.get("product_gen_results") or []
+            if _PRODUCT_SEARCH_STAGE in completed_stages and not state.get("product_search_results"):
+                state["product_search_results"] = _extra.get("product_search_results") or state.get("product_gen_results") or []
 
             # ========== 步骤 1: 视频整体理解（最多重试 3 次）==========
             if "understanding" in completed_stages:
@@ -964,6 +1238,34 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] product_imagegen stage completed", template_id)
 
+            # ========== 步骤 4b2: 商品搜索（单品描述 + 单品图 → topMatch）==========
+            if _PRODUCT_SEARCH_STAGE in completed_stages:
+                product_gen_results = state.get("product_search_results") or state.get("product_gen_results") or []
+                logger.info("[%s] product_search skipped (already completed)", template_id)
+            else:
+                _set_status(template_id, VideoAIProcessStatus.product_imagegen)
+                logger.info("[%s] product_search stage started", template_id)
+                product_gen_results = await _run_product_search(
+                    template_id=template_id,
+                    product_gen_results=product_gen_results,
+                )
+                state["product_gen_results"] = product_gen_results
+                state["product_search_results"] = product_gen_results
+                state["updated_at"] = _utcnow_iso()
+                if _PRODUCT_SEARCH_STAGE not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append(_PRODUCT_SEARCH_STAGE)
+                _mark_dirty(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        extra = dict(tpl.extra or {})
+                        extra["product_gen_results"] = product_gen_results
+                        extra["product_search_results"] = product_gen_results
+                        tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
+                        await session.commit()
+                logger.info("[%s] product_search stage completed", template_id)
+
             # ========== 步骤 4c: 新造型图生成 ==========
             if "outfit_regen" in completed_stages:
                 final_outfits = state.get("final_outfits") or []
@@ -981,7 +1283,14 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     size=outfit_regen_size,
                     quality=outfit_regen_quality,
                 )
-                extracted_shots_final = [{"image_url": o["image_url"], "outfit_style": o.get("outfit_style", "")} for o in final_outfits]
+                extracted_shots_final = [
+                    enrich_shot_with_ext_products({
+                        "image_url": o["image_url"],
+                        "outfit_style": o.get("outfit_style", ""),
+                        "solo_products": o.get("solo_products", []),
+                    })
+                    for o in final_outfits
+                ]
                 state["final_outfits"] = final_outfits
                 state["extracted_shots"] = extracted_shots_final
                 state["updated_at"] = _utcnow_iso()
@@ -1166,6 +1475,7 @@ async def restart_from_stage2(template_id: str) -> None:
     state["outfit_shots"] = []
     state["outfit_detailing_progress"] = []
     state["product_gen_results"] = []
+    state["product_search_results"] = []
     state["final_outfits"] = []
     state["extracted_shots"] = []
     state["status"] = VideoAIProcessStatus.pending.value
@@ -1184,7 +1494,7 @@ async def restart_from_stage2(template_id: str) -> None:
                 tpl.extracted_shots = []
                 extra = dict(tpl.extra or {})
                 for key in ("frame_shots", "outfit_shots", "outfit_detailing_progress",
-                            "product_gen_results", "final_outfits"):
+                            "product_gen_results", "product_search_results", "final_outfits"):
                     extra.pop(key, None)
                 tpl.extra = extra
                 tpl.process_state = json.dumps(state, ensure_ascii=False)

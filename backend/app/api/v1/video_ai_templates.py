@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 
@@ -837,8 +838,17 @@ async def get_template_state_endpoint(
     state = get_template_state(str(tpl.id))
     extra = tpl.extra or {}
     if state is None:
+        saved_state: dict = {}
+        if tpl.process_state:
+            try:
+                loaded_state = json.loads(tpl.process_state)
+                if isinstance(loaded_state, dict):
+                    saved_state = loaded_state
+            except Exception:
+                logger.warning("Failed to parse video AI process_state for template %s", tpl.id)
         # Return DB state
         return {
+            **saved_state,
             "template_id": str(tpl.id),
             "status": tpl.process_status.value,
             "error_message": tpl.process_error or "",

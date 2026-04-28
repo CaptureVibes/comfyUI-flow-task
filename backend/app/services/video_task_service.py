@@ -21,6 +21,7 @@ from app.models.account import Account
 
 from app.models.video_task import VideoSubTask, VideoTask
 from app.models.video_task_config import VideoTaskConfig
+from app.services.ext_product_service import enrich_shots_with_ext_products
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,7 @@ class VideoTaskService:
             }
             if not normalized_shots or normalized_shots[0].get("image_url") != account_photo_url:
                 normalized_shots = [photo_shot, *normalized_shots]
+        normalized_shots = enrich_shots_with_ext_products(normalized_shots)
 
         has_face = (account.face_mode != "no_face") if account else True
 
