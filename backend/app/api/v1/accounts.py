@@ -1202,7 +1202,7 @@ _BULK_VIDEO_TASK_SKIP_REASON_LABELS = {
     "account_missing": "账号不存在",
     "classification_unavailable": "分类结果不可用",
     "no_tags": "未绑定标签",
-    "no_templates_for_mode": "当前模式无成功模板",
+    "no_templates_for_mode": "当前模式无可生成模板",
     "no_classification_match": "分类不匹配",
 }
 
@@ -1253,7 +1253,7 @@ async def _load_bulk_video_task_templates(
     for tid in tag_ids:
         tpl_stmt = (
             select(VideoAITemplate)
-            .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
+            .where(VideoAITemplate.process_status != VideoAIProcessStatus.fail)
             .where(
                 exists().where(
                     VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
