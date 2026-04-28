@@ -854,9 +854,14 @@ async def _run_outfit_regen(
 # =============================================================================
 
 
-async def _sync_task_shots(template_id: str, uuid_val: UUID, final_outfits: list[dict]) -> None:
+async def _sync_task_shots(
+    template_id: str,
+    uuid_val: UUID,
+    final_outfits: list[dict],
+    prompt_description: str | None = None,
+) -> None:
     """
-    将 final_outfits 的造型图同步回关联该模板的所有 video_tasks.shots。
+    将重新分析后的 prompt 和 final_outfits 同步回关联该模板的所有 video_tasks。
     - has_face=True：shots[0] 是人脸图，保留不动，从 shots[1:] 开始替换为造型图
     - has_face=False：整个 shots 替换为造型图
     """
@@ -872,7 +877,8 @@ async def _sync_task_shots(template_id: str, uuid_val: UUID, final_outfits: list
         for o in final_outfits
         if o.get("image_url")
     ]
-    if not outfit_shots:
+    prompt_text = (prompt_description or "").strip()
+    if not outfit_shots and not prompt_text:
         return
 
     async with SessionLocal() as session:
@@ -881,16 +887,26 @@ async def _sync_task_shots(template_id: str, uuid_val: UUID, final_outfits: list
         )).scalars().all()
 
         for task in tasks:
-            existing = list(task.shots or [])
-            if task.has_face and existing:
-                # 保留首位人脸图，其余替换为造型图
-                task.shots = [existing[0], *outfit_shots]
-            else:
-                task.shots = outfit_shots
+            if outfit_shots:
+                existing = list(task.shots or [])
+                if task.has_face and existing:
+                    # 保留首位人脸图，其余替换为造型图
+                    task.shots = [existing[0], *outfit_shots]
+                else:
+                    task.shots = outfit_shots
+            if prompt_text:
+                task.prompt = prompt_text
+                task.is_prompt_updated = True
 
         await session.commit()
 
-    logger.info("[%s] synced shots to %d tasks (%d outfits)", template_id, len(tasks), len(outfit_shots))
+    logger.info(
+        "[%s] synced prompt/shots to %d tasks (%d outfits, prompt=%s chars)",
+        template_id,
+        len(tasks),
+        len(outfit_shots),
+        len(prompt_description or ""),
+    )
 
 
 async def _delete_template_and_video_source(template_id: str, uuid_val: UUID) -> None:
@@ -1319,8 +1335,12 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             if template_id in _sync_shots_on_success:
                 _sync_shots_on_success.discard(template_id)
                 _final_outfits = state.get("final_outfits") or []
-                if _final_outfits:
-                    await _sync_task_shots(template_id, uuid_val, _final_outfits)
+                await _sync_task_shots(
+                    template_id,
+                    uuid_val,
+                    _final_outfits,
+                    state.get("prompt_description") or "",
+                )
 
         except asyncio.CancelledError:
             # 任务被取消，标记为暂停
