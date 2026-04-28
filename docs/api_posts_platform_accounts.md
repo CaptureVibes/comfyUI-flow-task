@@ -103,9 +103,30 @@
 - `tags` string[]，可选
 - `image_urls` string[]，可选
 - `video_url` string，可选
+- `promotion_code` string，可选，8 位数字带货口令；Echo Matrix 发布时会生成并透传
+- `ext_products` object[]，可选，外部商品信息列表；可为空数组
 - `callback_url` string，可选
 - `callback_status` string，可选（若传 `callback_url`，默认会补成 `pending`）
 - `accounts` / `channels` array，必填，至少一个
+
+`ext_products` 每项字段：
+
+- `id` string/number，可选，外部商品 ID 或搜索结果 ID
+- `position` int，可选，搜索结果排名
+- `title` string，可选，商品标题
+- `link` string，可选，商品详情链接
+- `source` string，可选，商品来源或站点
+- `thumbnail` string，可选，商品缩略图 URL
+- `image` string，可选，商品主图 URL
+- `price` any，可选，商品价格信息，透传搜索接口返回值
+- `tier` string/number，可选，商品分层标记，透传搜索接口返回值
+- `tier_label` string，可选，商品分层展示文案
+- `product_name` string，可选，AI 单品名称
+- `product_description` string，可选，AI 单品描述
+- `product_search_query` string，可选，商品搜索关键词
+- `product_search_trace_id` string，可选，商品搜索 trace id
+
+Echo Matrix 会从 `video_tasks.shots[].ext_products` 聚合 `ext_products`。如果 AI 商品搜索没有命中 `topMatch`，该数组可以为空。
 
 `accounts/channels` 每项支持两种格式：
 
@@ -136,10 +157,21 @@ curl -sS -X POST 'http://127.0.0.1:8000/api/posts' \
   -H 'X-API-Key: your-secret-api-key-here' \
   -d '{
     "business_id": "biz-curl-tk-001",
-    "title": "按平台账号创建测试",
+    "post_type": "video",
+    "title": "带货视频发布测试",
     "content": "使用 platform + channel_id 传账号",
-    "tags": ["tiktok", "photo_daily"],
-    "image_urls": ["https://example.com/a.jpg"],
+    "tags": ["tiktok", "outfit"],
+    "video_url": "https://example.com/video.mp4",
+    "promotion_code": "12345678",
+    "ext_products": [
+      {
+        "title": "Black leather shoulder bag",
+        "link": "https://shop.example.com/products/bag-001",
+        "source": "Example Shop",
+        "image": "https://cdn.example.com/products/bag-001.jpg",
+        "product_description": "black leather shoulder bag with gold hardware"
+      }
+    ],
     "accounts": [
       {"platform": "tiktok", "channel_id": "photo_daily"}
     ]
@@ -172,12 +204,22 @@ HTTP 状态码：`201`
   "id": "6368297e-3d87-4125-9370-44e2ec02e69b",
   "business_id": "biz-curl-tk-001",
   "status": "pending",
-  "post_type": "image",
-  "title": "按平台账号创建测试",
+  "post_type": "video",
+  "title": "带货视频发布测试",
   "content": "使用 platform + channel_id 传账号",
-  "tags": ["tiktok", "photo_daily"],
-  "image_urls": ["https://example.com/a.jpg"],
-  "video_url": null,
+  "tags": ["tiktok", "outfit"],
+  "image_urls": [],
+  "video_url": "https://example.com/video.mp4",
+  "promotion_code": "12345678",
+  "ext_products": [
+    {
+      "title": "Black leather shoulder bag",
+      "link": "https://shop.example.com/products/bag-001",
+      "source": "Example Shop",
+      "image": "https://cdn.example.com/products/bag-001.jpg",
+      "product_description": "black leather shoulder bag with gold hardware"
+    }
+  ],
   "callback_url": null,
   "callback_status": null,
   "created_at": "2026-04-14T07:43:36",
@@ -241,4 +283,3 @@ curl -sS 'http://127.0.0.1:8000/api/platform-accounts?page=1&page_size=20&platfo
   "page_size": 20
 }
 ```
-

@@ -519,6 +519,7 @@ VITE_API_BASE_URL=/api/v1
 ## 文档
 
 - [视频任务 API](docs/api-video-tasks.md)
+- [视频发布 API](docs/api-video-publications.md)
 - [账号频道 OpenAPI](docs/account_channel_openapi.md)
 - [外部发布 API 对接说明](docs/api_posts_platform_accounts.md)
 - [Open API 补充文档](docs/OPEN_API_cc.md)

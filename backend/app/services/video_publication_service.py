@@ -38,6 +38,29 @@ _SYNC_METRICS_RATE_LIMIT_SEC = 1   # 每条请求间隔（秒）
 _SYNC_METRICS_RETRY_DELAY_SEC = 10  # 失败后重试等待（秒）
 _SYNC_METRICS_RETRIES = 3           # 最大重试次数
 
+
+def _mask_sensitive_for_log(value: Any) -> Any:
+    if isinstance(value, dict):
+        masked: dict = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if key_text in {"signature", "client_secret", "api_key", "x-api-key"}:
+                masked[key] = "***"
+            else:
+                masked[key] = _mask_sensitive_for_log(item)
+        return masked
+    if isinstance(value, list):
+        return [_mask_sensitive_for_log(item) for item in value]
+    return value
+
+
+def _payload_for_log(payload: dict) -> str:
+    try:
+        return json.dumps(_mask_sensitive_for_log(payload), ensure_ascii=False, default=str)
+    except Exception:
+        return str(_mask_sensitive_for_log(payload))
+
+
 def start_video_publication_poller() -> None:
     global _poller_task, _poller_stop_event
     if _poller_task is not None and not _poller_task.done():
@@ -343,7 +366,7 @@ class ExtPubAPIClient:
                     "ExtPubAPI create_post failed: status=%s body=%s payload=%s",
                     response.status_code,
                     response.text[:1000],
-                    payload,
+                    _payload_for_log(payload),
                 )
                 raise
             return response.json()
@@ -544,6 +567,11 @@ class OpenAPIAdapter(PublishAdapter):
         if callback_url:
             api_payload["callback_url"] = callback_url
 
+        logger.info(
+            "OpenAPIAdapter.submit payload: sub_task_id=%s payload=%s",
+            data.sub_task_id,
+            _payload_for_log(api_payload),
+        )
         response = await self.client.create_upload_task(api_payload)
         if response.get("code") != 0:
             raise ValueError(response.get("message", "Open API 返回错误"))
@@ -673,7 +701,7 @@ class ExtPubAdapter(PublishAdapter):
         }
         logger.info(
             "ExtPubAdapter.submit: sub_task_id=%s payload=%s",
-            data.sub_task_id, api_payload,
+            data.sub_task_id, _payload_for_log(api_payload),
         )
 
         try:
@@ -827,6 +855,11 @@ class VideoPublicationService:
             "_has_openapi": bool(openapi_channels),
             "_has_ext_pub": bool(ext_channels),
         }
+        logger.info(
+            "create_publication request_payload: sub_task_id=%s payload=%s",
+            data.sub_task_id,
+            _payload_for_log(request_payload),
+        )
 
         # 并发向两侧提交
         open_api_task_id: str | None = None

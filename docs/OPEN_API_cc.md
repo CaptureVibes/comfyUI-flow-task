@@ -226,6 +226,22 @@ print(r.json())
 | product_info | object[] | 否 | 商品信息列表；兼容单对象写法 |
 | product_info[].product_code | string | 否 | 商品编码 |
 | product_info[].sku_code | string | 否 | SKU 编码 |
+| promotion_code | string | 否 | 带货口令，8 位数字字符串；由调用方生成并保证唯一 |
+| ext_products | object[] | 否 | 外部商品信息列表，可为空数组；Echo Matrix 从 `video_tasks.shots[].ext_products` 聚合 |
+| ext_products[].id | string/number | 否 | 外部商品 ID 或搜索结果 ID |
+| ext_products[].position | int | 否 | 搜索结果排名 |
+| ext_products[].title | string | 否 | 商品标题 |
+| ext_products[].link | string | 否 | 商品详情链接 |
+| ext_products[].source | string | 否 | 商品来源或站点 |
+| ext_products[].thumbnail | string | 否 | 商品缩略图 URL |
+| ext_products[].image | string | 否 | 商品主图 URL |
+| ext_products[].price | any | 否 | 商品价格信息，透传搜索接口返回值 |
+| ext_products[].tier | string/number | 否 | 商品分层标记，透传搜索接口返回值 |
+| ext_products[].tier_label | string | 否 | 商品分层展示文案 |
+| ext_products[].product_name | string | 否 | AI 单品名称 |
+| ext_products[].product_description | string | 否 | AI 单品描述 |
+| ext_products[].product_search_query | string | 否 | 商品搜索关键词 |
+| ext_products[].product_search_trace_id | string | 否 | 商品搜索 trace id |
 | title | string | 是 | 视频标题，**1–100** 字符 |
 | description | string | 否 | 视频描述（最长 5000 字符） |
 | tags | string[] | 否 | 标签列表 |
@@ -257,6 +273,8 @@ SIGNATURE=$(python3 -c "
 import hmac, hashlib, json
 body = {'video_url': 'https://example.com/video.mp4', 'original_video_url': 'https://cdn.example.com/raw/video.mp4',
   'video_type': 'persona/traffic', 'product_info': [{'product_code': 'P001', 'sku_code': 'SKU001'}],
+  'promotion_code': '12345678',
+  'ext_products': [{'title': 'Black leather shoulder bag', 'link': 'https://shop.example.com/products/bag-001', 'source': 'Example Shop', 'image': 'https://cdn.example.com/products/bag-001.jpg'}],
   'title': '测试视频', 'description': '视频描述',
   'tags': ['tag1', 'tag2'], 'channels': [{'platform': 'tiktok', 'channel_id': 'user_123'}, {'platform': 'youtube', 'channel_id': 'channel_456'}],
   'external_id': 'ext_001', 'client_id': '$CLIENT_ID', 'timestamp': $TIMESTAMP}
@@ -273,6 +291,8 @@ print(hmac.new('$CLIENT_SECRET'.encode(), f\"{s}&timestamp=$TIMESTAMP\".encode()
 curl -X POST "http://localhost:8000/open-api/v1/upload/task" -H "Content-Type: application/json" -d "{
   \"video_url\": \"https://example.com/video.mp4\", \"original_video_url\": \"https://cdn.example.com/raw/video.mp4\",
   \"video_type\": \"persona/traffic\", \"product_info\": [{\"product_code\": \"P001\", \"sku_code\": \"SKU001\"}],
+  \"promotion_code\": \"12345678\",
+  \"ext_products\": [{\"title\": \"Black leather shoulder bag\", \"link\": \"https://shop.example.com/products/bag-001\", \"source\": \"Example Shop\", \"image\": \"https://cdn.example.com/products/bag-001.jpg\"}],
   \"title\": \"测试视频\", \"description\": \"视频描述\",
   \"tags\": [\"tag1\", \"tag2\"], \"channels\": [{\"platform\": \"tiktok\", \"channel_id\": \"user_123\"}, {\"platform\": \"youtube\", \"channel_id\": \"channel_456\"}],
   \"external_id\": \"ext_001\", \"client_id\": \"$CLIENT_ID\", \"timestamp\": $TIMESTAMP, \"signature\": \"$SIGNATURE\"
@@ -300,6 +320,8 @@ def generate_signature(params, secret, timestamp):
 BASE, CLIENT_ID, CLIENT_SECRET = "http://localhost:8000/open-api/v1", "default_client", "your_client_secret"
 payload = {"video_url": "https://example.com/video.mp4", "original_video_url": "https://cdn.example.com/raw/video.mp4",
   "video_type": "persona/traffic", "product_info": [{"product_code": "P001", "sku_code": "SKU001"}],
+  "promotion_code": "12345678",
+  "ext_products": [{"title": "Black leather shoulder bag", "link": "https://shop.example.com/products/bag-001", "source": "Example Shop", "image": "https://cdn.example.com/products/bag-001.jpg"}],
   "title": "测试视频", "description": "视频描述",
   "tags": ["tag1", "tag2"], "channels": [{"platform": "tiktok", "channel_id": "user_123"}, {"platform": "youtube", "channel_id": "channel_456"}],
   "external_id": "ext_001", "client_id": CLIENT_ID, "timestamp": int(time.time())}
@@ -324,6 +346,15 @@ print(requests.post(f"{BASE}/upload/task", json=payload).json())
       {
         "product_code": "P001",
         "sku_code": "SKU001"
+      }
+    ],
+    "promotion_code": "12345678",
+    "ext_products": [
+      {
+        "title": "Black leather shoulder bag",
+        "link": "https://shop.example.com/products/bag-001",
+        "source": "Example Shop",
+        "image": "https://cdn.example.com/products/bag-001.jpg"
       }
     ],
     "title": "视频标题",
@@ -658,6 +689,6 @@ Open API 未启用时可能返回 HTTP **503**。完整说明见 `OPEN_API.md`�
 
 1. 联系管理员创建客户端，获取 `client_id` 和 `client_secret`
 2. 调用 `GET /channels?platform=tiktok` 获取可用的渠道列表
-3. 调用 `POST /upload/task` 创建上传任务，传入 `video_url`、`title`、`channels`（可选 `original_video_url`、`video_type`、`product_info`）
+3. 调用 `POST /upload/task` 创建上传任务，传入 `video_url`、`title`、`channels`（可选 `original_video_url`、`video_type`、`product_info`、`promotion_code`、`ext_products`）
 4. 通过 `task_id` 调用 `GET /upload/status` 轮询状态，或配置 `callback_url` 接收回调
 5. 任务完成后，调用 `GET /upload/metrics` 查询各渠道视频数据指标（播放量、点赞、评论等）
