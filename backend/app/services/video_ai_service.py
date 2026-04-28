@@ -1876,12 +1876,12 @@ async def recover_stuck_templates_on_startup() -> None:
     - pending 且视频已下载完成 → 直接入队
     - pending 且视频还在下载 → 启动协程等下载完再入队
     - 其他运行中状态（understanding/imagegen/...）→ 直接入队（断点续跑）
+    - paused 是用户显式暂停状态，启动时保持暂停，不自动恢复
     """
     from sqlalchemy import select as sa_select
     from app.models.video_source import VideoSource
 
     _RUNNING_STATUSES = [
-        VideoAIProcessStatus.paused,       # 重启时被取消导致的暂停，自动恢复
         VideoAIProcessStatus.understanding,
         VideoAIProcessStatus.imagegen,
         VideoAIProcessStatus.outfit_selecting,
@@ -1956,6 +1956,15 @@ async def _wait_download_then_enqueue(tpl_id: str, vs_id) -> None:
             await asyncio.sleep(10)
         except asyncio.CancelledError:
             raise
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, UUID(tpl_id))
+        if not tpl or tpl.process_status != VideoAIProcessStatus.pending:
+            logger.info(
+                "[%s] skip enqueue after download completion because status is %s",
+                tpl_id,
+                tpl.process_status.value if tpl else "missing",
+            )
+            return
     await enqueue_template(tpl_id)
     logger.info("[%s] enqueued after download completion (startup recovery)", tpl_id)
 

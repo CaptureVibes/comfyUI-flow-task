@@ -1202,6 +1202,10 @@ _BULK_VIDEO_TASK_SKIP_REASON_LABELS = {
     "account_missing": "账号不存在",
     "classification_unavailable": "分类结果不可用",
     "no_tags": "未绑定标签",
+    "no_tag_matching_templates": "账号标签下没有模板",
+    "only_failed_templates": "账号标签下模板均为 fail",
+    "no_used_templates": "当前模式无已使用模板",
+    "only_used_nonrepeatable_templates": "未用过模式下仅有已使用且不可重复模板",
     "no_templates_for_mode": "当前模式无可生成模板",
     "no_classification_match": "分类不匹配",
 }
@@ -1244,7 +1248,7 @@ async def _load_bulk_video_task_templates(
         allowed_major = [c for c in [primary, secondary] if c]
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
-    candidate_tpls: list[VideoAITemplate] = []
+    tagged_tpls: list[VideoAITemplate] = []
     tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
     tag_ids = list((await session.execute(tag_stmt)).scalars().all())
     if not tag_ids:
@@ -1253,7 +1257,6 @@ async def _load_bulk_video_task_templates(
     for tid in tag_ids:
         tpl_stmt = (
             select(VideoAITemplate)
-            .where(VideoAITemplate.process_status != VideoAIProcessStatus.fail)
             .where(
                 exists().where(
                     VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
@@ -1262,28 +1265,42 @@ async def _load_bulk_video_task_templates(
             )
             .order_by(VideoAITemplate.created_at.desc())
         )
-        if use_used:
-            tpl_stmt = tpl_stmt.where(VideoAITemplate.is_used.is_(True))
-        else:
-            tpl_stmt = tpl_stmt.where(
-                or_(VideoAITemplate.is_used.is_(False), VideoAITemplate.repeatable.is_(True))
-            )
         if owner_id is not None:
             tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
 
         rows = (await session.execute(tpl_stmt)).scalars().all()
-        candidate_tpls.extend(rows)
+        tagged_tpls.extend(rows)
 
     seen: set[uuid.UUID] = set()
-    unique_tpls = []
-    for tpl in candidate_tpls:
+    unique_tagged_tpls = []
+    for tpl in tagged_tpls:
         if tpl.id in seen:
             continue
         seen.add(tpl.id)
-        unique_tpls.append(tpl)
+        unique_tagged_tpls.append(tpl)
+
+    if not unique_tagged_tpls:
+        return ([], "no_tag_matching_templates") if with_reason else []
+
+    non_failed_tpls = [
+        tpl for tpl in unique_tagged_tpls
+        if tpl.process_status != VideoAIProcessStatus.fail
+    ]
+    if not non_failed_tpls:
+        return ([], "only_failed_templates") if with_reason else []
+
+    if use_used:
+        unique_tpls = [tpl for tpl in non_failed_tpls if tpl.is_used]
+        mode_skip_reason = "no_used_templates"
+    else:
+        unique_tpls = [
+            tpl for tpl in non_failed_tpls
+            if (not tpl.is_used) or tpl.repeatable
+        ]
+        mode_skip_reason = "only_used_nonrepeatable_templates"
 
     if not unique_tpls:
-        return ([], "no_templates_for_mode") if with_reason else []
+        return ([], mode_skip_reason) if with_reason else []
 
     # 按分类过滤：模板的 video_source 必须有匹配的 major_category。
     # 先按标签/模式拿到候选，再过滤分类，这样返回信息能区分“没有模板”和“分类不匹配”。
