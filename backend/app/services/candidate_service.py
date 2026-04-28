@@ -1229,6 +1229,7 @@ async def supplement_templates_for_account(
 
     流程：边搜索边导入，成功导入才计数，失败则继续搜索下一个，
     直到凑够 max_new_videos 个成功为止（或搜索耗尽）。
+    若 pipeline_settings.candidate_ai_review_enabled=True，则每条视频在写库前先过 AI 审核。
     """
     from app.db.session import SessionLocal
     from app.models.account_tag import AccountTag
@@ -1243,7 +1244,18 @@ async def supplement_templates_for_account(
         create_video_source,
         parse_video_url,
         trigger_download_and_upload,
+        download_video_to_cdn,
     )
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+
+    # 读取 AI 审核配置
+    _cfg_owner = owner_id or uuid.UUID(int=0)
+    async with SessionLocal() as session:
+        _pipeline_cfg = await get_or_create_pipeline_settings(session, _cfg_owner)
+        _search_cfg = _SearchConfig(_pipeline_cfg)
+    ai_review_enabled = _search_cfg.ai_review_enabled
+    ai_review_model = _search_cfg.ai_review_model
+    ai_review_prompt = _search_cfg.ai_review_prompt
 
     # shared 模式：通过绑定标签的名称作为关键词搜索
     # exclusive 模式：通过绑定的 tiktok 博主 handle 搜索该博主的视频
@@ -1289,6 +1301,7 @@ async def supplement_templates_for_account(
 
     imported = 0
     skipped = 0
+    rejected = 0
     seen_urls: set[str] = set()       # 跨轮去重（web_video_url）
     attempted_urls: set[str] = set()  # 已尝试过（无论成功失败）
     pending_urls: list[str] = []
@@ -1359,13 +1372,45 @@ async def supplement_templates_for_account(
         attempted_urls.add(video_url)
 
         try:
+            # ── Step 1: 解析元数据 ─────────────────────────────────────────
             async with SessionLocal() as session:
                 parse_result = await parse_video_url(video_url, session=session, owner_id=owner_id)
-
                 if parse_result.existing_id is not None:
                     skipped += 1
                     continue
 
+            # ── Step 2: AI 审核（若启用）───────────────────────────────────
+            local_video_url: str | None = None
+            if ai_review_enabled:
+                try:
+                    local_video_url = await download_video_to_cdn(
+                        parse_result.source_url,
+                        title=parse_result.video_title,
+                    )
+                except Exception as exc:
+                    logger.warning("【补充模板】下载/上传CDN失败，跳过 %s: %s", video_url, exc)
+                    skipped += 1
+                    continue
+
+                prompt = (ai_review_prompt or "").replace("{keyword}", search_keyword)
+                ai_passed, ai_reason = await _ai_review_single(
+                    video_url=local_video_url,
+                    prompt=prompt,
+                    model=ai_review_model,
+                    retry_delay=_search_cfg.retry_delay,
+                )
+                if not ai_passed:
+                    logger.info(
+                        "【补充模板】AI审核未通过，丢弃 %s reason=%s",
+                        video_url, ai_reason,
+                    )
+                    rejected += 1
+                    continue
+
+                logger.info("【补充模板】AI审核通过 %s", video_url)
+
+            # ── Step 3: 写库 ───────────────────────────────────────────────
+            async with SessionLocal() as session:
                 payload = VideoSourceCreate(
                     source_url=parse_result.source_url,
                     platform=parse_result.platform,
@@ -1392,7 +1437,12 @@ async def supplement_templates_for_account(
                     skipped += 1
                     continue
 
-                await trigger_download_and_upload(session, vs.id, owner_id)
+                if local_video_url:
+                    # AI 审核时已下载好，直接写入，避免重复下载
+                    vs.local_video_url = local_video_url
+                    vs.download_status = "done"
+                else:
+                    await trigger_download_and_upload(session, vs.id, owner_id)
 
                 tpl = VideoAITemplate(
                     owner_id=owner_id,
@@ -1427,8 +1477,11 @@ async def supplement_templates_for_account(
             # 导入失败：记录日志，继续尝试下一个
             logger.warning("【补充模板】导入失败，继续搜索下一个 video_url=%s: %s", video_url, exc)
 
-    logger.info("【补充模板】account_id=%s keyword=%s 完成：导入=%d 跳过=%d", account_id, search_keyword, imported, skipped)
-    return {"account_id": str(account_id), "keyword": search_keyword, "imported": imported, "skipped": skipped}
+    logger.info(
+        "【补充模板】account_id=%s keyword=%s 完成：导入=%d 跳过=%d AI拒绝=%d",
+        account_id, search_keyword, imported, skipped, rejected,
+    )
+    return {"account_id": str(account_id), "keyword": search_keyword, "imported": imported, "skipped": skipped, "rejected": rejected}
 
 
 async def supplement_templates_for_accounts(
