@@ -1198,48 +1198,62 @@ class BulkGenerateVideoTasksBody(BaseModel):
     subtask_count: int = 3       # 每个任务创建的子任务数量
 
 
+_BULK_VIDEO_TASK_SKIP_REASON_LABELS = {
+    "account_missing": "账号不存在",
+    "classification_unavailable": "分类结果不可用",
+    "no_tags": "未绑定标签",
+    "no_templates_for_mode": "当前模式无成功模板",
+    "no_classification_match": "分类不匹配",
+}
+
+
+def _bulk_skip_reason_label(reason: str) -> str:
+    return _BULK_VIDEO_TASK_SKIP_REASON_LABELS.get(reason, reason)
+
+
 async def _load_bulk_video_task_templates(
     session: AsyncSession,
     *,
     account_id: uuid.UUID,
     owner_id: uuid.UUID | None,
     use_used: bool,
+    with_reason: bool = False,
 ):
     from app.models.enums import VideoAIProcessStatus
     from app.models.video_ai_template import VideoAITemplate
     from app.models.video_classification import VideoClassification
-    from app.models.video_source import VideoSource as _VS
 
     # ── 按分类类型决定允许的大类 ──────────────────────────────────────────────
     account = await session.get(Account, account_id)
     allowed_major: list[str] | None = None  # None = 不限制
 
-    if account is not None:
-        cls_type = account.classification_type
-        summary = account.classification_summary or {}
-        if cls_type in ("chaos", "insufficient"):
-            return []  # 混乱/样本不足，跳过
-        if cls_type == "single":
-            primary = summary.get("primary")
-            if primary:
-                allowed_major = [primary]
-        elif cls_type == "dual":
-            primary = summary.get("primary")
-            secondary = summary.get("secondary")
-            allowed_major = [c for c in [primary, secondary] if c]
+    if account is None:
+        return ([], "account_missing") if with_reason else []
+
+    cls_type = account.classification_type
+    summary = account.classification_summary or {}
+    if cls_type in ("chaos", "insufficient"):
+        return ([], "classification_unavailable") if with_reason else []
+    if cls_type == "single":
+        primary = summary.get("primary")
+        if primary:
+            allowed_major = [primary]
+    elif cls_type == "dual":
+        primary = summary.get("primary")
+        secondary = summary.get("secondary")
+        allowed_major = [c for c in [primary, secondary] if c]
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
     candidate_tpls: list[VideoAITemplate] = []
     tag_stmt = select(AccountTag.tag_id).where(AccountTag.account_id == account_id)
     tag_ids = list((await session.execute(tag_stmt)).scalars().all())
     if not tag_ids:
-        return []
+        return ([], "no_tags") if with_reason else []
 
     for tid in tag_ids:
         tpl_stmt = (
             select(VideoAITemplate)
             .where(VideoAITemplate.process_status == VideoAIProcessStatus.success)
-            .where(VideoAITemplate.is_used == use_used)
             .where(
                 exists().where(
                     VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
@@ -1248,18 +1262,14 @@ async def _load_bulk_video_task_templates(
             )
             .order_by(VideoAITemplate.created_at.desc())
         )
+        if use_used:
+            tpl_stmt = tpl_stmt.where(VideoAITemplate.is_used.is_(True))
+        else:
+            tpl_stmt = tpl_stmt.where(
+                or_(VideoAITemplate.is_used.is_(False), VideoAITemplate.repeatable.is_(True))
+            )
         if owner_id is not None:
             tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
-
-        # 按分类过滤：模板的 video_source 必须有匹配的 major_category
-        if allowed_major is not None:
-            tpl_stmt = tpl_stmt.where(
-                exists().where(
-                    VideoClassification.video_source_id == VideoAITemplate.video_source_id,
-                    VideoClassification.status == "success",
-                    VideoClassification.major_category.in_(allowed_major),
-                )
-            )
 
         rows = (await session.execute(tpl_stmt)).scalars().all()
         candidate_tpls.extend(rows)
@@ -1271,6 +1281,31 @@ async def _load_bulk_video_task_templates(
             continue
         seen.add(tpl.id)
         unique_tpls.append(tpl)
+
+    if not unique_tpls:
+        return ([], "no_templates_for_mode") if with_reason else []
+
+    # 按分类过滤：模板的 video_source 必须有匹配的 major_category。
+    # 先按标签/模式拿到候选，再过滤分类，这样返回信息能区分“没有模板”和“分类不匹配”。
+    if allowed_major is not None:
+        vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
+        matched_vs_ids: set[uuid.UUID] = set()
+        if vs_ids:
+            rows = (
+                await session.execute(
+                    select(VideoClassification.video_source_id)
+                    .where(VideoClassification.video_source_id.in_(vs_ids))
+                    .where(VideoClassification.status == "success")
+                    .where(VideoClassification.major_category.in_(allowed_major))
+                )
+            ).scalars().all()
+            matched_vs_ids = set(rows)
+        unique_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
+        if not unique_tpls:
+            return ([], "no_classification_match") if with_reason else []
+
+    if with_reason:
+        return unique_tpls, None
     return unique_tpls
 
 
@@ -1377,22 +1412,38 @@ async def bulk_generate_video_tasks(
     use_used = body.mode == "used"
     total_planned = 0
     total_skipped = 0
+    skip_reasons: dict[str, int] = {}
 
     for account_id in body.account_ids:
         try:
-            unique_tpls = await _load_bulk_video_task_templates(
+            unique_tpls, skip_reason = await _load_bulk_video_task_templates(
                 session,
                 account_id=account_id,
                 owner_id=owner_id,
                 use_used=use_used,
+                with_reason=True,
             )
             if not unique_tpls:
                 total_skipped += 1
+                if skip_reason:
+                    skip_reasons[skip_reason] = skip_reasons.get(skip_reason, 0) + 1
                 continue
             planned_for_account = min(len(unique_tpls), body.limit) if body.limit > 0 else len(unique_tpls)
             total_planned += planned_for_account
-        except Exception:
+        except Exception as exc:
+            logger.warning("bulk_generate_video_tasks planning failed account=%s: %s", account_id, exc)
             total_skipped += 1
+            skip_reasons["error"] = skip_reasons.get("error", 0) + 1
+
+    skip_summary = "，".join(
+        f"{_bulk_skip_reason_label(reason)} {count} 个"
+        for reason, count in sorted(skip_reasons.items())
+    )
+    skipped_text = ""
+    if total_skipped > 0:
+        skipped_text = f"，{total_skipped} 个账号没有符合条件的模板"
+        if skip_summary:
+            skipped_text += f"（{skip_summary}）"
 
     asyncio.create_task(
         _run_bulk_generate_video_tasks(
@@ -1409,8 +1460,9 @@ async def bulk_generate_video_tasks(
         "status": "queued",
         "planned": total_planned,
         "skipped_accounts": total_skipped,
+        "skip_reasons": skip_reasons,
         "account_count": len(body.account_ids),
-        "message": f"后台已启动，预计创建 {total_planned} 个生成任务，{total_skipped} 个账号无可用模板",
+        "message": f"后台已启动，预计创建 {total_planned} 个生成任务{skipped_text}",
     }
 
 

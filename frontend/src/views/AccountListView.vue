@@ -433,8 +433,8 @@
             <div class="al-supplement-type-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
             </div>
-            <div class="al-supplement-type-name">未用过的</div>
-            <div class="al-supplement-type-desc">选择从未使用的模板，按顺序取前 N 个</div>
+            <div class="al-supplement-type-name">未用过 / 可重复</div>
+            <div class="al-supplement-type-desc">选择未使用模板；可重复模板即使已使用也会进入候选</div>
           </button>
           <button
             class="al-supplement-type-card"
