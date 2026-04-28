@@ -1636,14 +1636,25 @@ async def auto_supplement_for_account(
     if not blogger_handle:
         return {"account_id": str(account_id), "error": "无绑定博主 handle", "imported": 0, "skipped": 0, "filtered": 0}
 
+    # 读取 AI 审核配置
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+    _cfg_owner = owner_id or uuid.UUID(int=0)
+    async with SessionLocal() as session:
+        _pipeline_cfg = await get_or_create_pipeline_settings(session, _cfg_owner)
+        _search_cfg = _SearchConfig(_pipeline_cfg)
+    ai_review_enabled = _search_cfg.ai_review_enabled
+    ai_review_model = _search_cfg.ai_review_model
+    ai_review_prompt = _search_cfg.ai_review_prompt
+
     logger.info(
-        "【自动补充】account_id=%s cls_type=%s allowed=%s blogger=%s 开始",
-        account_id, cls_type, allowed_categories, blogger_handle,
+        "【自动补充】account_id=%s cls_type=%s allowed=%s blogger=%s ai_review=%s 开始",
+        account_id, cls_type, allowed_categories, blogger_handle, ai_review_enabled,
     )
 
     imported = 0
     skipped = 0
     filtered = 0
+    rejected = 0
     seen_urls: set[str] = set()
     attempted_urls: set[str] = set()
     pending_urls: list[str] = []
@@ -1726,7 +1737,25 @@ async def auto_supplement_for_account(
                 filtered += 1
                 continue
 
-            # ── Step 4: 分类通过 → 写 video_source（local_video_url 已就绪）
+            # ── Step 3.5: AI 审核（若启用）────────────────────────────────
+            if ai_review_enabled:
+                prompt = (ai_review_prompt or "").replace("{keyword}", tag_name or blogger_handle or "")
+                ai_passed, ai_reason = await _ai_review_single(
+                    video_url=local_video_url,
+                    prompt=prompt,
+                    model=ai_review_model,
+                    retry_delay=_search_cfg.retry_delay,
+                )
+                if not ai_passed:
+                    logger.info(
+                        "【自动补充】AI审核未通过，丢弃 %s reason=%s",
+                        video_url, ai_reason,
+                    )
+                    rejected += 1
+                    continue
+                logger.info("【自动补充】AI审核通过 %s", video_url)
+
+            # ── Step 4: 分类通过 + 审核通过 → 写 video_source（local_video_url 已就绪）
             async with SessionLocal() as session:
                 payload = VideoSourceCreate(
                     source_url=parse_result.source_url,
@@ -1790,14 +1819,15 @@ async def auto_supplement_for_account(
             logger.warning("【自动补充】处理失败，继续下一个 video_url=%s: %s", video_url, exc)
 
     logger.info(
-        "【自动补充】account_id=%s 完成：导入=%d 跳过=%d 过滤=%d",
-        account_id, imported, skipped, filtered,
+        "【自动补充】account_id=%s 完成：导入=%d 跳过=%d 过滤=%d AI拒绝=%d",
+        account_id, imported, skipped, filtered, rejected,
     )
     return {
         "account_id": str(account_id),
         "imported": imported,
         "skipped": skipped,
         "filtered": filtered,
+        "rejected": rejected,
         "allowed_categories": allowed_categories,
     }
 
