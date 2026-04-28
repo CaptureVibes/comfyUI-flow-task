@@ -563,7 +563,9 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
 
 
 async def _upload_video_file(file_path: str, filename: str) -> str:
-    """Upload a local video file to the storage API. Returns the permanent URL. Infinite retry."""
+    """Upload a local video file to the storage API. Returns the permanent URL. Retries on 5xx/network errors only."""
+    file_size_mb = os.path.getsize(file_path) / 1024 / 1024
+    logger.info("_upload_video_file: %.1f MB  file=%s", file_size_mb, filename)
     attempt = 0
     while True:
         attempt += 1
@@ -575,7 +577,12 @@ async def _upload_video_file(file_path: str, filename: str) -> str:
                         files={"file": (filename, f, "video/mp4")},
                         headers={"Accept": "*/*"},
                     )
-            if response.status_code >= 400:
+            if 400 <= response.status_code < 500:
+                # 4xx are client errors — retrying won't help
+                raise RuntimeError(
+                    f"Upload API returned {response.status_code} (non-retryable, file={file_size_mb:.1f}MB): {response.text[:300]}"
+                )
+            if response.status_code >= 500:
                 raise RuntimeError(f"Upload API returned {response.status_code}: {response.text[:300]}")
             payload = response.json()
             url = payload.get("data", {}).get("url") if isinstance(payload.get("data"), dict) else None
@@ -584,6 +591,12 @@ async def _upload_video_file(file_path: str, filename: str) -> str:
             return url
         except asyncio.CancelledError:
             raise
+        except RuntimeError as exc:
+            if "non-retryable" in str(exc):
+                raise
+            delay = min(attempt * 2, 30)
+            logger.warning("_upload_video_file failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
+            await asyncio.sleep(delay)
         except Exception as exc:
             delay = min(attempt * 2, 30)
             logger.warning("_upload_video_file failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
