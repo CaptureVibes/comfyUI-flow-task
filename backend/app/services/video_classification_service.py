@@ -86,7 +86,7 @@ _MAJOR_KEYS = ("display", "knowledge", "persona", "trending")
 # 队列 / 内存状态
 # =============================================================================
 
-_CONCURRENCY = 3          # 单账号内视频并发数
+_CONCURRENCY = 17          # 单账号内视频并发数
 _PERSIST_INTERVAL = 2.0
 
 classification_states: dict[str, dict] = {}
