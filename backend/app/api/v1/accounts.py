@@ -1203,7 +1203,6 @@ _BULK_VIDEO_TASK_SKIP_REASON_LABELS = {
     "classification_unavailable": "分类结果不可用",
     "no_tags": "未绑定标签",
     "no_tag_matching_templates": "账号标签下没有模板",
-    "only_failed_templates": "账号标签下模板均为 fail",
     "no_used_templates": "当前模式无已使用模板",
     "only_used_nonrepeatable_templates": "未用过模式下仅有已使用且不可重复模板",
     "no_templates_for_mode": "当前模式无可生成模板",
@@ -1223,7 +1222,6 @@ async def _load_bulk_video_task_templates(
     use_used: bool,
     with_reason: bool = False,
 ):
-    from app.models.enums import VideoAIProcessStatus
     from app.models.video_ai_template import VideoAITemplate
     from app.models.video_classification import VideoClassification
 
@@ -1282,19 +1280,13 @@ async def _load_bulk_video_task_templates(
     if not unique_tagged_tpls:
         return ([], "no_tag_matching_templates") if with_reason else []
 
-    non_failed_tpls = [
-        tpl for tpl in unique_tagged_tpls
-        if tpl.process_status != VideoAIProcessStatus.fail
-    ]
-    if not non_failed_tpls:
-        return ([], "only_failed_templates") if with_reason else []
-
+    # TODO: 当前一键生成允许任何模板状态，包括 fail；后期如需收紧状态条件，在这里恢复过滤。
     if use_used:
-        unique_tpls = [tpl for tpl in non_failed_tpls if tpl.is_used]
+        unique_tpls = [tpl for tpl in unique_tagged_tpls if tpl.is_used]
         mode_skip_reason = "no_used_templates"
     else:
         unique_tpls = [
-            tpl for tpl in non_failed_tpls
+            tpl for tpl in unique_tagged_tpls
             if (not tpl.is_used) or tpl.repeatable
         ]
         mode_skip_reason = "only_used_nonrepeatable_templates"
@@ -1302,8 +1294,8 @@ async def _load_bulk_video_task_templates(
     if not unique_tpls:
         return ([], mode_skip_reason) if with_reason else []
 
-    # 按分类过滤：模板的 video_source 必须有匹配的 major_category。
-    # 先按标签/模式拿到候选，再过滤分类，这样返回信息能区分“没有模板”和“分类不匹配”。
+    # 分类只作为优先级：有匹配分类时优先使用匹配模板；没有匹配时回退到原候选。
+    # 一键生成的硬条件是标签/模式，不再因为分类不匹配跳过账号。
     if allowed_major is not None:
         vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
         matched_vs_ids: set[uuid.UUID] = set()
@@ -1317,9 +1309,9 @@ async def _load_bulk_video_task_templates(
                 )
             ).scalars().all()
             matched_vs_ids = set(rows)
-        unique_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
-        if not unique_tpls:
-            return ([], "no_classification_match") if with_reason else []
+        matched_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
+        if matched_tpls:
+            unique_tpls = matched_tpls
 
     if with_reason:
         return unique_tpls, None
