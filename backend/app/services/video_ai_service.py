@@ -785,7 +785,9 @@ def _get_outfit_regen_product_image_url(product: dict) -> tuple[str, str]:
         image_url = matched_product.get("image") or matched_product.get("thumbnail")
         if image_url:
             external_url = str(image_url)
-    ai_url = str(product.get("product_image_url") or "")
+    # generated_product_image_url 是 AI 生成的 CDN 图（始终可访问）
+    # product_image_url 在搜索命中后会被覆写为外部商品图，不能作为 AI fallback
+    ai_url = str(product.get("generated_product_image_url") or "")
     return external_url, ai_url
 
 
@@ -839,7 +841,14 @@ async def _run_outfit_regen(
                 product_cdn_urls.append(url)
 
         new_outfit_url = outfit_image_url
-        if product_cdn_urls:
+        # 没有单品图时，用 outfit 原截图作为唯一参考图
+        ref_urls = product_cdn_urls if product_cdn_urls else ([outfit_image_url] if outfit_image_url else [])
+        if not product_cdn_urls:
+            logger.info(
+                "[%s] Outfit regen [%d] no product images (solo_products=%d), using outfit shot as ref",
+                template_id, i, len(solo_products),
+            )
+        if ref_urls:
             r_prompt = prompt.strip()
             if not r_prompt:
                 r_prompt = default_prompt.format(outfit_style=outfit_style)
@@ -849,7 +858,7 @@ async def _run_outfit_regen(
                 img_bytes = await generate_image(
                     model_name=model,
                     prompt=r_prompt,
-                    image_urls=product_cdn_urls,
+                    image_urls=ref_urls,
                     aspect_ratio=size,
                     image_size=quality,
                 )
