@@ -371,9 +371,15 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
                 if r.category_index is not None and r.category_index in category_counts:
                     category_counts[r.category_index] += 1
 
-        ratios: dict[str, float] = {}
+        # 大类占比：仅供饼图展示
+        major_ratios: dict[str, float] = {}
         if success > 0:
-            ratios = {k: round(v / success, 4) for k, v in major_counts.items()}
+            major_ratios = {k: round(v / success, 4) for k, v in major_counts.items()}
+
+        # 小类占比：用于 single/dual/chaos 聚合判断
+        category_ratios: dict[str, float] = {}
+        if success > 0:
+            category_ratios = {str(k): round(v / success, 4) for k, v in category_counts.items()}
 
         account = await session.get(Account, account_id)
         if account is None:
@@ -386,7 +392,15 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
             cfg = None
         thresholds = _resolve_thresholds(cfg)
 
-        cls_type, primary, secondary = _classify_aggregation(ratios, success, thresholds)
+        cls_type, primary_key, secondary_key = _classify_aggregation(category_ratios, success, thresholds)
+
+        def _key_to_label(key: str | None) -> str | None:
+            if key is None:
+                return None
+            try:
+                return CATEGORY_LABELS[int(key)]
+            except (ValueError, KeyError):
+                return key
 
         summary = {
             "total": total,
@@ -395,10 +409,13 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
             "pending": pending,
             "processing": processing,
             "type": cls_type,
-            "primary": primary,
-            "secondary": secondary,
-            "ratios": ratios,
+            "primary": _key_to_label(primary_key),
+            "primary_index": int(primary_key) if primary_key is not None else None,
+            "secondary": _key_to_label(secondary_key),
+            "secondary_index": int(secondary_key) if secondary_key is not None else None,
+            "ratios": major_ratios,
             "counts": major_counts,
+            "category_ratios": category_ratios,
             "category_counts": {str(k): v for k, v in category_counts.items()},
             "thresholds": thresholds,
             "updated_at": _utcnow_iso(),
