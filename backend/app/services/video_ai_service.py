@@ -1350,6 +1350,25 @@ async def _queue_processor_loop() -> None:
     while True:
         try:
             template_id = await video_ai_queue.get()
+            state = video_ai_states.get(template_id)
+            if state and state.get("status") == VideoAIProcessStatus.paused.value:
+                logger.info("[%s] skip queued template because it is paused in memory", template_id)
+                video_ai_queue.task_done()
+                continue
+            try:
+                uuid_val = UUID(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl and tpl.process_status == VideoAIProcessStatus.paused:
+                        logger.info("[%s] skip queued template because it is paused in DB", template_id)
+                        video_ai_queue.task_done()
+                        continue
+            except ValueError:
+                logger.warning("Invalid template id in video AI queue: %s", template_id)
+                video_ai_queue.task_done()
+                continue
+            except Exception as exc:
+                logger.warning("[%s] failed to check queued template status, will run anyway: %s", template_id, exc)
             task = asyncio.get_running_loop().create_task(_run_pipeline(template_id, semaphore))
             video_ai_worker_tasks[template_id] = task
             video_ai_queue.task_done()
@@ -1684,6 +1703,98 @@ async def batch_restart_templates(
             logger.error("[%s] batch_restart failed: %s", tid, exc)
 
     logger.info("batch_restart enqueued: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
+    return {"total": len(tids), "success": success_count, "fail": fail_count}
+
+
+async def batch_retry_templates(
+    owner_id: str | None = None,
+    template_ids: list[str] | None = None,
+) -> dict:
+    """
+    批量断点续跑失败/暂停的模板。
+    与 batch_restart_templates 不同，此处保留 completed_stages 和中间产物。
+    """
+    from sqlalchemy import select as sa_select
+    from uuid import UUID
+
+    retry_statuses = [
+        VideoAIProcessStatus.fail,
+        VideoAIProcessStatus.paused,
+    ]
+    async with SessionLocal() as session:
+        stmt = sa_select(VideoAITemplate.id).where(VideoAITemplate.process_status.in_(retry_statuses))
+        if owner_id is not None:
+            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
+        if template_ids is not None:
+            stmt = stmt.where(VideoAITemplate.id.in_([UUID(tid) for tid in template_ids]))
+        rows = (await session.execute(stmt)).scalars().all()
+
+    tids = [str(tid) for tid in rows]
+    if not tids:
+        return {"total": 0, "success": 0, "fail": 0}
+
+    logger.info("batch_retry started: %d templates", len(tids))
+    success_count = 0
+    fail_count = 0
+    for tid in tids:
+        try:
+            await resume_template(tid)
+            success_count += 1
+        except Exception as exc:
+            fail_count += 1
+            logger.error("[%s] batch_retry failed: %s", tid, exc)
+
+    logger.info("batch_retry enqueued: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
+    return {"total": len(tids), "success": success_count, "fail": fail_count}
+
+
+async def batch_pause_templates(
+    owner_id: str | None = None,
+    template_ids: list[str] | None = None,
+) -> dict:
+    """
+    批量暂停待处理/运行中的模板。
+    队列中尚未启动的 pending 任务会被标记 paused，并在队列消费时跳过。
+    """
+    from sqlalchemy import select as sa_select
+    from uuid import UUID
+
+    pause_statuses = [
+        VideoAIProcessStatus.pending,
+        VideoAIProcessStatus.understanding,
+        VideoAIProcessStatus.imagegen,
+        VideoAIProcessStatus.outfit_selecting,
+        VideoAIProcessStatus.outfit_detailing,
+        VideoAIProcessStatus.product_imagegen,
+        VideoAIProcessStatus.outfit_regen,
+        VideoAIProcessStatus.splitting,
+        VideoAIProcessStatus.face_removing,
+        VideoAIProcessStatus.upscaling,
+    ]
+    async with SessionLocal() as session:
+        stmt = sa_select(VideoAITemplate.id).where(VideoAITemplate.process_status.in_(pause_statuses))
+        if owner_id is not None:
+            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
+        if template_ids is not None:
+            stmt = stmt.where(VideoAITemplate.id.in_([UUID(tid) for tid in template_ids]))
+        rows = (await session.execute(stmt)).scalars().all()
+
+    tids = [str(tid) for tid in rows]
+    if not tids:
+        return {"total": 0, "success": 0, "fail": 0}
+
+    logger.info("batch_pause started: %d templates", len(tids))
+    success_count = 0
+    fail_count = 0
+    for tid in tids:
+        try:
+            await pause_template(tid)
+            success_count += 1
+        except Exception as exc:
+            fail_count += 1
+            logger.error("[%s] batch_pause failed: %s", tid, exc)
+
+    logger.info("batch_pause done: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
     return {"total": len(tids), "success": success_count, "fail": fail_count}
 
 

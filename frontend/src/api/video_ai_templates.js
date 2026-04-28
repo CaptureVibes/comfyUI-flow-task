@@ -82,6 +82,16 @@ export async function batchRestartStage2Templates() {
   return data
 }
 
+export async function batchPauseTemplates() {
+  const { data } = await http.post('/video-ai-templates/batch-pause')
+  return data
+}
+
+export async function batchRetryTemplates() {
+  const { data } = await http.post('/video-ai-templates/batch-retry')
+  return data
+}
+
 export async function batchReanalyzeTemplates(targetDate) {
   const body = targetDate ? { target_date: targetDate } : {}
   const { data } = await http.post('/video-ai-templates/batch-reanalyze', body)

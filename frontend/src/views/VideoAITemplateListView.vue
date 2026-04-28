@@ -4,10 +4,35 @@
     <div class="vai-header">
       <h1 class="vai-title">AI模板</h1>
       <div class="vai-header-actions">
-        <el-button class="vai-retry-btn" :loading="batchResuming" @click="handleBatchResume">
-          <svg v-if="!batchResuming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
-          一键重试
-        </el-button>
+        <el-dropdown trigger="click" :disabled="batchPrimaryLoading" @command="handleBatchCommand">
+          <el-button class="vai-batch-btn" :loading="batchPrimaryLoading">
+            <svg v-if="!batchPrimaryLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+            一键操作
+            <svg v-if="!batchPrimaryLoading" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-left:6px"><polyline points="6 9 12 15 18 9"/></svg>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="pause">
+                <span class="vai-menu-item vai-menu-pause">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  一键暂停
+                </span>
+              </el-dropdown-item>
+              <el-dropdown-item command="retry">
+                <span class="vai-menu-item vai-menu-retry">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+                  一键重试
+                </span>
+              </el-dropdown-item>
+              <el-dropdown-item command="restart" divided>
+                <span class="vai-menu-item vai-menu-restart">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                  一键重跑
+                </span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button class="vai-retry-btn" :loading="batchStage2ing" @click="handleBatchRestartStage2">
           <svg v-if="!batchStage2ing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
           一键生成造型图
@@ -84,6 +109,14 @@
         </div>
         <div class="vai-stat-value">{{ templateStats.outfit_regen || 0 }}</div>
         <div class="vai-stat-sub">outfit_regen</div>
+      </div>
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'paused' }" style="--stat-color: #475569; --stat-bg: #f1f5f9;" @click="toggleFilter('paused')">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">暂停</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="#475569"><rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.paused || 0 }}</div>
+        <div class="vai-stat-sub">paused</div>
       </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'success' }" style="--stat-color: #10b981; --stat-bg: #dcfce7;" @click="toggleFilter('success')">
         <div class="vai-stat-top">
@@ -527,7 +560,10 @@ import {
   restartVideoAITemplate,
   resumeVideoAITemplate,
   deleteVideoAITemplate,
+  batchPauseTemplates,
+  batchRetryTemplates,
   batchReanalyzeTemplates,
+  batchRestartTemplates,
   batchRestartStage2Templates,
 } from '../api/video_ai_templates'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
@@ -543,6 +579,8 @@ const loading = ref(false)
 const deleting = ref(null)
 const actioning = ref(null)
 const batchResuming = ref(false)
+const batchPausing = ref(false)
+const batchRestarting = ref(false)
 const batchStage2ing = ref(false)
 const batchReanalyzing = ref(false)
 const items = ref([])
@@ -555,6 +593,7 @@ const templateStats = ref({})
 
 const playerVisible = ref(false)
 const playerItem = ref(null)
+const batchPrimaryLoading = computed(() => batchPausing.value || batchResuming.value || batchRestarting.value)
 
 // Config dialog state
 const showConfig = ref(false)
@@ -762,42 +801,73 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-async function handleBatchResume() {
+async function handleBatchCommand(command) {
+  if (command === 'pause') {
+    await handleBatchPause()
+  } else if (command === 'retry') {
+    await handleBatchRetry()
+  } else if (command === 'restart') {
+    await handleBatchRestart()
+  }
+}
+
+async function handleBatchPause() {
+  try {
+    await ElMessageBox.confirm(
+      '将暂停所有排队中和运行中的模板；已完成、失败的模板不会受影响。确认继续？',
+      '一键暂停',
+      { confirmButtonText: '确认暂停', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  batchPausing.value = true
+  try {
+    await batchPauseTemplates()
+    ElMessage.success('已触发批量暂停')
+    await loadData()
+    await loadStats()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '批量暂停失败')
+  } finally {
+    batchPausing.value = false
+  }
+}
+
+async function handleBatchRetry() {
   batchResuming.value = true
   try {
-    // Fetch all pages to find non-success templates
-    const allItems = []
-    let p = 1
-    const ps = 100
-    while (true) {
-      const data = await fetchVideoAITemplates({ page: p, page_size: ps })
-      const batch = data.items || []
-      allItems.push(...batch)
-      if (allItems.length >= (data.total || 0) || batch.length < ps) break
-      p++
-    }
-    const targets = allItems.filter(item => item.process_status !== 'success')
-    if (!targets.length) {
-      ElMessage.info('所有模板均已完成，无需重试')
-      return
-    }
-    ElMessage.info(`开始重试 ${targets.length} 个任务…`)
-    let successCount = 0
-    let failCount = 0
-    for (const item of targets) {
-      try {
-        await restartVideoAITemplate(item.id)
-        successCount++
-      } catch {
-        failCount++
-      }
-    }
-    ElMessage.success(`成功触发 ${successCount} 个任务重试${failCount > 0 ? `，${failCount} 个失败` : ''}`)
+    await batchRetryTemplates()
+    ElMessage.success('已触发批量重试，失败/暂停模板将断点续跑')
     await loadData()
+    await loadStats()
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '批量重试失败')
   } finally {
     batchResuming.value = false
+  }
+}
+
+async function handleBatchRestart() {
+  try {
+    await ElMessageBox.confirm(
+      '将对所有模板从头重跑，已完成阶段和中间产物会被清空。确认继续？',
+      '一键重跑',
+      { confirmButtonText: '确认重跑', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  batchRestarting.value = true
+  try {
+    await batchRestartTemplates()
+    ElMessage.success('已触发批量重跑，后台处理中…')
+    await loadData()
+    await loadStats()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '批量重跑失败')
+  } finally {
+    batchRestarting.value = false
   }
 }
 
@@ -816,6 +886,7 @@ async function handleBatchRestartStage2() {
     await batchRestartStage2Templates()
     ElMessage.success('已触发批量生成造型图，后台处理中…')
     await loadData()
+    await loadStats()
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '触发失败')
   } finally {
@@ -940,6 +1011,8 @@ async function handleBatchReanalyze() {
   try {
     await batchReanalyzeTemplates()
     ElMessage.success('已触发批量重新分析，后台处理中')
+    await loadData()
+    await loadStats()
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '触发批量重新分析失败')
   } finally {
@@ -1056,6 +1129,45 @@ onActivated(() => {
 .vai-retry-btn:hover {
   background: #ffedd5;
   border-color: #fb923c;
+}
+
+.vai-batch-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 16px;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.vai-batch-btn:hover,
+.vai-batch-btn:focus {
+  background: #dbeafe;
+  border-color: #60a5fa;
+  color: #1d4ed8;
+}
+
+.vai-menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 96px;
+  font-weight: 700;
+}
+
+.vai-menu-pause {
+  color: #d97706;
+}
+
+.vai-menu-retry {
+  color: #2563eb;
+}
+
+.vai-menu-restart {
+  color: #dc2626;
 }
 
 .vai-add-btn {

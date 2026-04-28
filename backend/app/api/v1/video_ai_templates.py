@@ -32,7 +32,9 @@ from app.schemas.video_ai_template import (
     VideoSourceSummary,
 )
 from app.services.video_ai_service import (
+    batch_pause_templates,
     batch_reanalyze_templates,
+    batch_retry_templates,
     batch_restart_templates,
     batch_restart_stage2_templates,
     enqueue_template,
@@ -373,6 +375,28 @@ async def batch_create_and_start(
 
 class BatchReanalyzeBody(BaseModel):
     target_date: str | None = None  # YYYY-MM-DD，有则只分析当天任务关联的模板
+
+
+@router.post("/batch-pause", status_code=status.HTTP_202_ACCEPTED)
+async def batch_pause(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict[str, str]:
+    """批量暂停所有 pending/运行中的模板。"""
+    asyncio.create_task(batch_pause_templates(
+        owner_id=str(owner_id) if owner_id else None,
+    ))
+    return {"status": "accepted"}
+
+
+@router.post("/batch-retry", status_code=status.HTTP_202_ACCEPTED)
+async def batch_retry(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+) -> dict[str, str]:
+    """批量断点续跑失败/暂停的模板。"""
+    asyncio.create_task(batch_retry_templates(
+        owner_id=str(owner_id) if owner_id else None,
+    ))
+    return {"status": "accepted"}
 
 
 @router.post("/batch-reanalyze", status_code=status.HTTP_202_ACCEPTED)
