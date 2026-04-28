@@ -16,44 +16,62 @@ depends_on = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_cols = {c["name"] for c in inspector.get_columns("candidate_videos")}
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("candidate_videos")}
+
     # Create enum type
     candidatevideostatus = sa.Enum(
         "pending", "ai_reviewing", "ai_passed", "ai_failed",
         "importing", "imported", "import_failed",
         name="candidatevideostatus",
     )
-    candidatevideostatus.create(op.get_bind(), checkfirst=True)
+    candidatevideostatus.create(conn, checkfirst=True)
 
-    op.add_column(
-        "candidate_videos",
-        sa.Column(
-            "status",
-            sa.Enum(
-                "pending", "ai_reviewing", "ai_passed", "ai_failed",
-                "importing", "imported", "import_failed",
-                name="candidatevideostatus",
-                create_type=False,
+    if "status" not in existing_cols:
+        op.add_column(
+            "candidate_videos",
+            sa.Column(
+                "status",
+                sa.Enum(
+                    "pending", "ai_reviewing", "ai_passed", "ai_failed",
+                    "importing", "imported", "import_failed",
+                    name="candidatevideostatus",
+                    create_type=False,
+                ),
+                nullable=False,
+                server_default="pending",
             ),
-            nullable=False,
-            server_default="pending",
-        ),
-    )
-    op.add_column(
-        "candidate_videos",
-        sa.Column("ai_reviewed", sa.Boolean(), nullable=False, server_default="false"),
-    )
-    op.add_column(
-        "candidate_videos",
-        sa.Column("ai_error", sa.Text(), nullable=True),
-    )
-    op.create_index(
-        "ix_candidate_videos_status", "candidate_videos", ["status"]
-    )
+        )
+    if "ai_reviewed" not in existing_cols:
+        op.add_column(
+            "candidate_videos",
+            sa.Column("ai_reviewed", sa.Boolean(), nullable=False, server_default="false"),
+        )
+    if "ai_error" not in existing_cols:
+        op.add_column(
+            "candidate_videos",
+            sa.Column("ai_error", sa.Text(), nullable=True),
+        )
+    if "ix_candidate_videos_status" not in existing_indexes:
+        op.create_index(
+            "ix_candidate_videos_status", "candidate_videos", ["status"]
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_candidate_videos_status", table_name="candidate_videos")
-    op.drop_column("candidate_videos", "ai_error")
-    op.drop_column("candidate_videos", "ai_reviewed")
-    op.drop_column("candidate_videos", "status")
-    sa.Enum(name="candidatevideostatus").drop(op.get_bind(), checkfirst=True)
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_cols = {c["name"] for c in inspector.get_columns("candidate_videos")}
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("candidate_videos")}
+
+    if "ix_candidate_videos_status" in existing_indexes:
+        op.drop_index("ix_candidate_videos_status", table_name="candidate_videos")
+    if "ai_error" in existing_cols:
+        op.drop_column("candidate_videos", "ai_error")
+    if "ai_reviewed" in existing_cols:
+        op.drop_column("candidate_videos", "ai_reviewed")
+    if "status" in existing_cols:
+        op.drop_column("candidate_videos", "status")
+    sa.Enum(name="candidatevideostatus").drop(conn, checkfirst=True)
