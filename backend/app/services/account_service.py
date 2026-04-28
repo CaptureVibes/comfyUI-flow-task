@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.account import Account
 from app.models.account_channel_reservation import AccountChannelReservation
 from app.models.flag import AccountFlag
-from app.schemas.account import AccountCreate, AccountPatch
+from app.schemas.account import AccountCreate, AccountPatch, BulkUpdateAccountAttributesBody
 
 # Sortable columns backed by performance_snapshot JSON keys
 _SNAPSHOT_SORT_FIELDS = {
@@ -35,6 +35,7 @@ async def create_account(
         owner_id=owner_id,
         account_name=payload.account_name,
         account_type=payload.account_type,
+        product_code_mode=payload.product_code_mode,
         face_mode=payload.face_mode,
         gender=payload.gender,
         style_description=payload.style_description,
@@ -163,6 +164,8 @@ async def patch_account(
         account.account_signature = payload.account_signature
     if payload.account_type is not None:
         account.account_type = payload.account_type
+    if payload.product_code_mode is not None:
+        account.product_code_mode = payload.product_code_mode
     if payload.face_mode is not None:
         account.face_mode = payload.face_mode
     if payload.gender is not None:
@@ -180,6 +183,40 @@ async def patch_account(
     await session.commit()
     await session.refresh(account)
     return account
+
+
+async def bulk_update_account_attributes(
+    session: AsyncSession,
+    payload: BulkUpdateAccountAttributesBody,
+    owner_id: UUID | None = None,
+) -> list[Account]:
+    updates = payload.model_dump(exclude={"account_ids"}, exclude_none=True)
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请至少选择一个要修改的字段",
+        )
+
+    # Deduplicate while keeping the client order stable for the response.
+    account_ids = list(dict.fromkeys(payload.account_ids))
+    stmt = select(Account).where(Account.id.in_(account_ids))
+    if owner_id is not None:
+        stmt = stmt.where(Account.owner_id == owner_id)
+
+    accounts = list((await session.execute(stmt)).scalars().all())
+    if not accounts:
+        return []
+    account_order = {account_id: index for index, account_id in enumerate(account_ids)}
+    accounts.sort(key=lambda account: account_order.get(account.id, len(account_order)))
+
+    for account in accounts:
+        for field, value in updates.items():
+            setattr(account, field, value)
+
+    await session.commit()
+    for account in accounts:
+        await session.refresh(account)
+    return accounts
 
 
 async def delete_account(

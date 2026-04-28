@@ -20,6 +20,11 @@ export async function patchAccount(id, payload) {
   return data
 }
 
+export async function bulkUpdateAccountAttributes(payload) {
+  const { data } = await http.post('/accounts/bulk-update-attributes', payload)
+  return data
+}
+
 export async function deleteAccount(id) {
   await http.delete(`/accounts/${id}`)
 }

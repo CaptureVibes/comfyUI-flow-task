@@ -23,6 +23,7 @@ class Account(Base):
     account_handle: Mapped[str | None] = mapped_column(String(200), nullable=True)
     account_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_type: Mapped[str] = mapped_column(String(20), nullable=False, default="exclusive")  # "persona" | "shared" | "exclusive"
+    product_code_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="without_code")  # "with_code" | "without_code"
     face_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="face")  # "face" | "no_face"
     gender: Mapped[str] = mapped_column(String(20), nullable=False, default="female")  # "male" | "female" | "unisex"
     style_description: Mapped[str | None] = mapped_column(Text, nullable=True)

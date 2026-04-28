@@ -347,6 +347,42 @@
             </div>
           </div>
 
+          <!-- Searched products -->
+          <div v-if="taskProductCards(task).length" class="vt-products-section">
+            <div class="vt-products-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#047857" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px"><path d="M6 2h12l2 7H4l2-7z"/><path d="M4 9v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M9 13h6"/></svg>
+              搜索商品 ({{ taskProductCards(task).length }} 件)
+            </div>
+            <div class="vt-products-grid">
+              <a
+                v-for="product in taskProductCards(task)"
+                :key="product.key"
+                class="vt-product-card"
+                :href="product.link || undefined"
+                :target="product.link ? '_blank' : undefined"
+                :rel="product.link ? 'noopener noreferrer' : undefined"
+                @click.stop
+              >
+                <el-image
+                  v-if="product.image_url"
+                  :src="product.image_url"
+                  :preview-src-list="taskProductCards(task).map(p => p.image_url).filter(Boolean)"
+                  fit="cover"
+                  class="vt-product-img"
+                  lazy
+                />
+                <div v-else class="vt-product-img vt-product-img-empty">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h10"/><path d="M7 13h6"/></svg>
+                </div>
+                <div class="vt-product-info">
+                  <div class="vt-product-source">{{ product.source || product.title || '商品' }}</div>
+                  <div v-if="product.title && product.title !== product.source" class="vt-product-name">{{ product.title }}</div>
+                  <div class="vt-product-price">{{ product.price_label || '价格未知' }}</div>
+                </div>
+              </a>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -509,6 +545,92 @@ function firstShotUrl(shots) {
   if (!shots || !shots.length) return ''
   const s = shots[0]
   return (typeof s === 'object' ? s.image_url || s.url : s) || ''
+}
+
+function formatPriceNumber(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return String(value || '').trim()
+  return Number.isInteger(number) ? String(number) : number.toFixed(2).replace(/\.?0+$/, '')
+}
+
+function formatProductPrice(price) {
+  if (price && typeof price === 'object') {
+    const currency = String(price.currency || '').trim()
+    if (price.extracted_value !== undefined && price.extracted_value !== null) {
+      const amount = formatPriceNumber(price.extracted_value)
+      if (['$', 'USD', 'US$'].includes(currency)) return `$${amount}`
+      return currency ? `${currency}${amount}` : amount
+    }
+    const raw = String(price.value || '').trim()
+    return raw
+  }
+  if (typeof price === 'number') return formatPriceNumber(price)
+  const text = String(price || '').trim()
+  return text
+}
+
+function normalizeProductCard(product, fallbackIndex) {
+  if (!product || typeof product !== 'object') return null
+  const matched = product.matched_product && typeof product.matched_product === 'object'
+    ? product.matched_product
+    : {}
+  const imageUrl = (
+    product.image ||
+    product.thumbnail ||
+    product.product_image_url ||
+    product.product_thumbnail ||
+    matched.image ||
+    matched.thumbnail ||
+    ''
+  )
+  const title = (
+    product.product_name ||
+    product.title ||
+    product.product_title ||
+    matched.title ||
+    product.description ||
+    ''
+  )
+  const source = product.source || product.product_source || matched.source || ''
+  const link = product.link || product.product_link || matched.link || ''
+  const price = product.price ?? product.product_price ?? matched.price
+  const priceLabel = formatProductPrice(price)
+  if (!imageUrl && !title && !source && !priceLabel) return null
+  return {
+    key: link || imageUrl || `${title}-${fallbackIndex}`,
+    image_url: imageUrl,
+    title,
+    source,
+    link,
+    price_label: priceLabel,
+  }
+}
+
+function taskProductCards(task) {
+  const shots = Array.isArray(task?.shots) ? task.shots : []
+  const products = []
+  const seen = new Set()
+
+  function addProduct(rawProduct, index) {
+    const card = normalizeProductCard(rawProduct, index)
+    if (!card) return
+    const key = card.link || card.image_url || `${card.title}-${card.source}-${card.price_label}`
+    if (seen.has(key)) return
+    seen.add(key)
+    products.push({ ...card, key })
+  }
+
+  shots.forEach((shot, shotIndex) => {
+    if (!shot || typeof shot !== 'object') return
+    const extProducts = Array.isArray(shot.ext_products) ? shot.ext_products : []
+    const soloProducts = Array.isArray(shot.solo_products) ? shot.solo_products : []
+    extProducts.forEach((product, productIndex) => addProduct(product, `${shotIndex}-ext-${productIndex}`))
+    soloProducts
+      .filter(product => product?.product_search_status === 'matched' || product?.matched_product)
+      .forEach((product, productIndex) => addProduct(product, `${shotIndex}-solo-${productIndex}`))
+  })
+
+  return products
 }
 
 function goToDetail(taskId) {
@@ -1070,6 +1192,99 @@ onMounted(async () => {
   object-fit: cover;
   border: 1px solid #e2e8f0;
   cursor: zoom-in;
+}
+
+.vt-products-section {
+  padding: 0 16px 16px;
+}
+
+.vt-products-title {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #047857;
+  margin-bottom: 8px;
+}
+
+.vt-products-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 8px;
+}
+
+.vt-product-card {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 68px;
+  padding: 7px;
+  border: 1px solid #d1fae5;
+  border-radius: 8px;
+  background: #f8fffb;
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+}
+
+.vt-product-card:hover {
+  border-color: #86efac;
+  background: #ecfdf5;
+}
+
+.vt-product-img {
+  width: 54px;
+  height: 54px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #dbeafe;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.vt-product-img-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+}
+
+.vt-product-info {
+  min-width: 0;
+}
+
+.vt-product-source {
+  font-size: 12px;
+  font-weight: 800;
+  color: #065f46;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vt-product-name {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vt-product-price {
+  margin-top: 4px;
+  display: inline-flex;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #047857;
+  font-size: 11px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Buttons ── */

@@ -67,6 +67,29 @@
                 </div>
               </el-form-item>
 
+              <el-form-item label="商品码">
+                <div class="ac-type-toggle">
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.product_code_mode === 'with_code' }"
+                    @click="form.product_code_mode = 'with_code'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h10"/><path d="M7 13h6"/></svg>
+                    带商品码
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.product_code_mode === 'without_code' }"
+                    @click="form.product_code_mode = 'without_code'"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M5 5l14 14"/></svg>
+                    非商品码
+                  </button>
+                </div>
+              </el-form-item>
+
               <el-form-item label="人脸模式">
                 <div class="ac-type-toggle">
                   <button
@@ -651,6 +674,7 @@ const form = reactive({
   account_handle: '',
   account_signature: '',
   account_type: 'exclusive',
+  product_code_mode: 'without_code',
   face_mode: 'face',
   gender: 'female',
   style_description: '',
@@ -923,6 +947,7 @@ async function loadAccount() {
     form.account_handle = data.account_handle || ''
     form.account_signature = data.account_signature || ''
     form.account_type = data.account_type || 'exclusive'
+    form.product_code_mode = data.product_code_mode || 'without_code'
     form.face_mode = data.face_mode || 'face'
     form.gender = data.gender || 'female'
     form.style_description = data.style_description || ''
@@ -1005,6 +1030,7 @@ async function handleSave() {
       const payload = {
         account_name: form.account_name.trim(),
         account_type: form.account_type,
+        product_code_mode: form.product_code_mode,
         face_mode: form.face_mode,
         gender: form.gender,
         account_handle: form.account_handle || null,
@@ -1168,6 +1194,7 @@ async function startAIGeneration() {
       const payload = {
         account_name: form.account_name.trim() || '新建账号（AI生成中）',
         account_type: form.account_type,
+        product_code_mode: form.product_code_mode,
         face_mode: form.face_mode,
         gender: form.gender,
         account_handle: form.account_handle || null,

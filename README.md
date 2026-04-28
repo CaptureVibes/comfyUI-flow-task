@@ -145,6 +145,7 @@ publishing -> publish_failed -> stashed
 ```
 
 `ext_products` 从 `video_tasks.shots[].ext_products` 聚合，数据源是 AI 单品图搜索返回的 `topMatch`。
+带商品码账号会在发布文案生成阶段把口令和商品价格清单写入 `publish_meta.description`，发布时复用同一个口令。
 
 主要文件：
 
@@ -160,7 +161,7 @@ publishing -> publish_failed -> stashed
 
 策略：
 
-- 启动时读取数据库已有 `video_publications.promotion_code`
+- 启动时读取数据库已有 `video_publications.promotion_code` 和 `video_sub_tasks.publish_meta.promotion_code`
 - 按 `PROMOTION_CODE_POOL_SIZE` 预生成口令池
 - 补池时同时根据数据库和内存数据去重
 - 内存去重范围包括池内、已租出、已提交、已废弃口令

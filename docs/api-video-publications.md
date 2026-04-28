@@ -11,14 +11,14 @@ Base URL: `http://localhost:8000/api/v1`
 创建一个视频发布任务。调用成功后系统会：
 
 1. 校验 `sub_task_id` 对应的视频子任务存在、已选中、状态允许发布，且已有 `result_video_url`
-2. 从口令分发器获取唯一 8 位数字 `promotion_code`
+2. 优先复用 `video_sub_tasks.publish_meta.promotion_code`；如果没有预生成口令，则从口令分发器获取唯一 8 位数字 `promotion_code`
 3. 从父任务 `video_tasks.shots[].ext_products` 聚合外部商品信息
 4. 按渠道来源提交到内部 Open API 或外部发布 API
 5. 写入 `video_publications.request_payload`、`promotion_code`、`ext_products`、`channels_status`
 
 ### 请求体
 
-`promotion_code` 和 `ext_products` 不由前端传入，发布服务会自动生成和聚合。
+`promotion_code` 和 `ext_products` 不由前端传入。带商品码账号会在发布文案生成阶段写入 `publish_meta.promotion_code`，发布服务会复用该口令；非商品码账号或旧数据没有预生成口令时，发布服务会在创建发布任务时兜底生成。`ext_products` 始终由发布服务从任务 shots 聚合。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -77,7 +77,7 @@ Base URL: `http://localhost:8000/api/v1`
 | `completed_channels` | int | 成功渠道数 |
 | `failed_channels` | int | 失败渠道数 |
 | `channels_status` | object[]/null | 渠道级发布状态 |
-| `promotion_code` | string/null | 发布时生成的 8 位数字带货口令 |
+| `promotion_code` | string/null | 8 位数字带货口令；优先来自 `publish_meta.promotion_code` |
 | `ext_products` | object[]/null | 发布时从 `video_tasks.shots[].ext_products` 聚合的外部商品快照 |
 | `error_message` | string/null | 发布失败信息 |
 | `callback_received` | boolean | 是否收到 Open API 回调 |
@@ -139,6 +139,23 @@ Base URL: `http://localhost:8000/api/v1`
 ```
 
 ## 2. 商品字段来源
+
+带商品码账号在生成 `publish_meta.title` 时会拼接：
+
+```text
+Get my exact look here 👀 👇
+```
+
+同时会在 `publish_meta.description` 末尾追加：
+
+```text
+Love this look? Search code 12345678 on Alvin’s Club to shop the exact outfit.
+Brand A: $99
+Brand B: $59
+Brand C: $129
+```
+
+其中 `12345678` 会同步写入 `publish_meta.promotion_code`，发布阶段使用同一个口令透传给下游。
 
 `ext_products` 的来源链路：
 
@@ -220,4 +237,3 @@ Base URL: `http://localhost:8000/api/v1`
 - `POST /video-publications/{publication_id}/sync`：主动同步内部 Open API 发布状态
 - `GET /video-publications/stats`：数据统计页发布列表，返回 `promotion_code` 和 `ext_products`
 - `GET /video-publications/stats/export`：导出数据统计 CSV
-

@@ -9,7 +9,8 @@ publish_meta 字段格式：
     "status": "pending" | "generating" | "done" | "failed",
     "title": "...",
     "description": "...",
-    "hashtags": ["tag1", "tag2"]
+    "hashtags": ["tag1", "tag2"],
+    "promotion_code": "12345678"  // 带商品码账号才有
 }
 
 队列设计：
@@ -24,9 +25,13 @@ import json as _json
 import logging
 import uuid
 from collections import deque
+from typing import Any
 
 from app.db.session import SessionLocal
+from app.models.account import Account
 from app.models.video_task import VideoSubTask, VideoTask
+from app.services.ext_product_service import build_ext_products_from_shots
+from app.services.promotion_code_service import promotion_code_distributor
 
 logger = logging.getLogger("app.publish_meta_service")
 
@@ -133,11 +138,93 @@ _JSON_SUFFIX = """
 Output strictly as JSON (no markdown, no explanation):
 {"title": "...", "desc": "...", "hashtag": ["tag1", "tag2"]}"""
 
+_PRODUCT_CODE_TITLE_SUFFIX = "Get my exact look here 👀 👇"
+
+
+def _format_price_number(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def _format_product_price(price: Any) -> str:
+    if isinstance(price, dict):
+        extracted_value = price.get("extracted_value")
+        currency = str(price.get("currency") or "").strip()
+        if extracted_value is not None:
+            amount = _format_price_number(extracted_value)
+            if currency in {"$", "USD", "US$"}:
+                return f"${amount}"
+            return f"{currency}{amount}" if currency else amount
+        value = str(price.get("value") or "").strip()
+        if value:
+            return value
+        return ""
+    if isinstance(price, (int, float)):
+        return _format_price_number(price)
+    text = str(price or "").strip()
+    return text
+
+
+def _fallback_brand_label(index: int) -> str:
+    if 1 <= index <= 26:
+        return f"Brand {chr(ord('A') + index - 1)}"
+    return f"Brand {index}"
+
+
+def _build_product_code_description(
+    base_description: str,
+    promotion_code: str,
+    ext_products: list[dict],
+) -> str:
+    lines: list[str] = []
+    base = (base_description or "").strip()
+    if base:
+        lines.append(base)
+
+    product_lines = []
+    for index, product in enumerate(ext_products, start=1):
+        if not isinstance(product, dict):
+            continue
+        label = (
+            product.get("source")
+            or product.get("product_name")
+            or product.get("title")
+            or _fallback_brand_label(index)
+        )
+        price = _format_product_price(product.get("price")) or "price unavailable"
+        product_lines.append(f"{label}: {price}")
+
+    code_lines = [
+        f"Love this look? Search code {promotion_code} on Alvin’s Club to shop the exact outfit.",
+        *product_lines,
+    ]
+    lines.append("\n".join(code_lines))
+    return "\n\n".join(lines)
+
+
+def _build_product_code_title(base_title: str) -> str:
+    title = (base_title or "").strip()
+    if not title:
+        return _PRODUCT_CODE_TITLE_SUFFIX[:100]
+    if _PRODUCT_CODE_TITLE_SUFFIX in title:
+        return title[:100]
+    separator = " "
+    max_base_length = max(0, 100 - len(separator) - len(_PRODUCT_CODE_TITLE_SUFFIX))
+    title_prefix = title[:max_base_length].rstrip()
+    return f"{title_prefix}{separator}{_PRODUCT_CODE_TITLE_SUFFIX}".strip()[:100]
+
 
 async def generate_publish_metadata(
     video_prompt: str,
     ai_config: dict,
     fallback_title: str,
+    promotion_code: str | None = None,
+    ext_products: list[dict] | None = None,
 ) -> tuple[str, str, list[str]]:
     """
     根据视频描述文本调用 Gemini API，生成 title/description/hashtags。
@@ -181,7 +268,15 @@ async def generate_publish_metadata(
                 title = str(data.get("title", "") or "").strip()[:100]
                 if not title:
                     raise ValueError("AI 返回的 JSON 缺少有效 title 字段")
+                if promotion_code:
+                    title = _build_product_code_title(title)
                 desc = str(data.get("desc", "") or "")
+                if promotion_code:
+                    desc = _build_product_code_description(
+                        desc,
+                        promotion_code,
+                        ext_products or [],
+                    )
                 hashtags = [str(t).strip().lstrip("#") for t in data.get("hashtag", []) if t]
 
                 logger.info("【AI预生成标题】成功（第%d次，模型: %s） → %r", attempt, model_name, title)
@@ -226,6 +321,19 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
         video_prompt = (sub.task.prompt or "").strip()
         owner_id = sub.task.owner_id
         fallback_title = video_prompt[:100] or "视频"
+        ext_products = build_ext_products_from_shots(sub.task.shots)
+        account: Account | None = None
+        if sub.task.account_id:
+            account = await session.get(Account, sub.task.account_id)
+        product_code_mode = (account.product_code_mode if account else None) or "without_code"
+        existing_meta = sub.publish_meta if isinstance(sub.publish_meta, dict) else {}
+        existing_promotion_code = existing_meta.get("promotion_code")
+        if not (
+            isinstance(existing_promotion_code, str)
+            and len(existing_promotion_code) == 8
+            and existing_promotion_code.isdigit()
+        ):
+            existing_promotion_code = None
 
     if not video_prompt:
         logger.info("【AI预生成标题】子任务 %s 的 task.prompt 为空，跳过", sub_task_id)
@@ -242,13 +350,37 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
         logger.info("【AI预生成标题】子任务 %s owner 未启用 AI 生成标题，跳过", sub_task_id)
         return
 
+    promotion_code: str | None = None
+    promotion_code_acquired = False
+    if product_code_mode == "with_code":
+        if existing_promotion_code:
+            promotion_code = existing_promotion_code
+        else:
+            promotion_code = await promotion_code_distributor.acquire()
+            promotion_code_acquired = True
+
     # 3. 标记为 generating
     async with SessionLocal() as session:
         sub = await session.get(VideoSubTask, sub_task_id)
         if sub is None:
+            if promotion_code_acquired:
+                await promotion_code_distributor.discard(promotion_code)
             return
-        sub.publish_meta = {"status": "generating"}
-        await session.commit()
+        generating_meta = {"status": "generating"}
+        if promotion_code:
+            generating_meta["promotion_code"] = promotion_code
+            generating_meta["product_code_mode"] = product_code_mode
+            generating_meta["ext_products_count"] = len(ext_products)
+        sub.publish_meta = generating_meta
+        try:
+            await session.commit()
+        except Exception:
+            if promotion_code_acquired:
+                await promotion_code_distributor.discard(promotion_code)
+            raise
+
+    if promotion_code_acquired:
+        await promotion_code_distributor.mark_committed(promotion_code)
 
     logger.info("【AI预生成标题】子任务 %s 开始生成标题，prompt 前50字: %s", sub_task_id, video_prompt[:50])
 
@@ -258,6 +390,8 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
             video_prompt=video_prompt,
             ai_config=ai_config,
             fallback_title=fallback_title,
+            promotion_code=promotion_code,
+            ext_products=ext_products,
         )
         meta = {
             "status": "done",
@@ -265,9 +399,17 @@ async def _process_publish_meta(sub_task_id: uuid.UUID) -> None:
             "description": description,
             "hashtags": hashtags,
         }
+        if promotion_code:
+            meta["promotion_code"] = promotion_code
+            meta["product_code_mode"] = product_code_mode
+            meta["ext_products_count"] = len(ext_products)
     except Exception as e:
         logger.error("【AI预生成标题】子任务 %s 生成失败：%s", sub_task_id, e)
         meta = {"status": "failed"}
+        if promotion_code:
+            meta["promotion_code"] = promotion_code
+            meta["product_code_mode"] = product_code_mode
+            meta["ext_products_count"] = len(ext_products)
 
     # 5. 写回 DB
     async with SessionLocal() as session:

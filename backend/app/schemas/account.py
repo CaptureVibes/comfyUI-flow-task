@@ -40,6 +40,7 @@ SocialBinding = Annotated[
 class AccountCreate(BaseModel):
     account_name: str = Field(min_length=1, max_length=200)
     account_type: Literal["persona", "shared", "exclusive"] = "exclusive"
+    product_code_mode: Literal["with_code", "without_code"] = "without_code"
     face_mode: Literal["face", "no_face"] = "face"
     gender: Literal["male", "female", "unisex"] = "female"
     style_description: str | None = None
@@ -55,6 +56,7 @@ class AccountPatch(BaseModel):
     account_handle: str | None = None
     account_signature: str | None = None
     account_type: Literal["persona", "shared", "exclusive"] | None = None
+    product_code_mode: Literal["with_code", "without_code"] | None = None
     face_mode: Literal["face", "no_face"] | None = None
     gender: Literal["male", "female", "unisex"] | None = None  # None 表示不修改
     style_description: str | None = None
@@ -63,6 +65,21 @@ class AccountPatch(BaseModel):
     photo_url: str | None = None
     social_bindings: list[dict] | None = None
     hashtags: list[str] | None = None
+
+
+class BulkUpdateAccountAttributesBody(BaseModel):
+    account_ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)
+    account_type: Literal["persona", "shared", "exclusive"] | None = None
+    face_mode: Literal["face", "no_face"] | None = None
+    gender: Literal["male", "female", "unisex"] | None = None
+    product_code_mode: Literal["with_code", "without_code"] | None = None
+
+
+class BulkUpdateAccountAttributesResponse(BaseModel):
+    status: str
+    requested_count: int = 0
+    updated_count: int = 0
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class AIGenerateBody(BaseModel):
@@ -355,6 +372,7 @@ class AccountRead(BaseModel):
     account_handle: str | None = None
     account_signature: str | None = None
     account_type: str = "exclusive"
+    product_code_mode: str = "without_code"
     face_mode: str = "face"
     gender: str = "female"
     style_description: str | None

@@ -267,10 +267,11 @@ function handleClose() {
 // 监听打开，初始化数据
 watch(() => props.modelValue, (val) => {
   if (val && props.subTask) {
-    // 从子任务数据初始化标题
-    form.title = props.subTask.title || ''
-    form.description = props.subTask.description || ''
-    form.tags = props.subTask.tags ? [...props.subTask.tags] : []
+    // 从子任务数据初始化标题；优先使用预生成发布文案
+    const publishMeta = props.subTask.publish_meta || {}
+    form.title = props.subTask.title || publishMeta.title || ''
+    form.description = props.subTask.description || publishMeta.description || ''
+    form.tags = props.subTask.tags ? [...props.subTask.tags] : (publishMeta.hashtags ? [...publishMeta.hashtags] : [])
   }
 })
 </script>

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.video_publication import VideoPublication
+from app.models.video_task import VideoSubTask
 
 logger = logging.getLogger("app.promotion_code_service")
 
@@ -111,11 +112,22 @@ class PromotionCodeDistributor:
             rows = await session.execute(
                 select(VideoPublication.promotion_code).where(VideoPublication.promotion_code.is_not(None))
             )
-            return {
+            publication_codes = {
                 str(code)
                 for code in rows.scalars().all()
                 if isinstance(code, str) and len(code) == 8 and code.isdigit()
             }
+            meta_rows = await session.execute(
+                select(VideoSubTask.publish_meta).where(VideoSubTask.publish_meta.is_not(None))
+            )
+            publish_meta_codes = set()
+            for meta in meta_rows.scalars().all():
+                if not isinstance(meta, dict):
+                    continue
+                code = meta.get("promotion_code")
+                if isinstance(code, str) and len(code) == 8 and code.isdigit():
+                    publish_meta_codes.add(code)
+            return publication_codes | publish_meta_codes
 
     def _memory_reserved_codes_locked(self) -> set[str]:
         """Codes already known by this process; caller must hold _lock."""

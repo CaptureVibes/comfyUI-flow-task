@@ -59,6 +59,12 @@
             >
               {{ { male: '男', female: '女', unisex: '中性' }[account.gender || 'female'] }}
             </span>
+            <span
+              class="ad-type-badge"
+              :class="account.product_code_mode === 'with_code' ? 'ad-product-code-yes' : 'ad-product-code-no'"
+            >
+              {{ account.product_code_mode === 'with_code' ? '带商品码' : '非商品码' }}
+            </span>
           </div>
           <div v-if="account.account_handle || account.account_signature" class="ad-hero-handle-wrap">
             <span v-if="account.account_handle" class="ad-hero-handle">@{{ account.account_handle }}</span>
@@ -1653,6 +1659,16 @@ onUnmounted(() => {
 .ad-gender-unisex {
   background: #f3e8ff;
   color: #7c3aed;
+}
+
+.ad-product-code-yes {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.ad-product-code-no {
+  background: #f1f5f9;
+  color: #64748b;
 }
 .ad-tag-badge {
   display: inline-flex;

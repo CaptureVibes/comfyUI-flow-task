@@ -544,8 +544,12 @@ async def regenerate_publish_meta(
     if sub.status != "queued":
         raise HTTPException(status_code=422, detail="只有队列中的子任务才能重新生成标题")
 
-    # 重置为 pending，直接后台生成（不入队，优先执行）
-    sub.publish_meta = {"status": "pending"}
+    # 重置为 pending，直接后台生成（不入队，优先执行）；保留已分配的商品口令，避免重生时浪费或更换口令
+    existing_meta = sub.publish_meta if isinstance(sub.publish_meta, dict) else {}
+    pending_meta = {"status": "pending"}
+    if existing_meta.get("promotion_code"):
+        pending_meta["promotion_code"] = existing_meta["promotion_code"]
+    sub.publish_meta = pending_meta
     await session.commit()
     await session.refresh(sub)
 

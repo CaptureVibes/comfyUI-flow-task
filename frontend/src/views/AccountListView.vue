@@ -850,6 +850,10 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             批量移除标识
           </button>
+          <button class="al-bulk-action-btn is-edit" @click="openBulkAttributeDialog">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            批量修改属性
+          </button>
           <button class="al-bulk-clear-btn" @click="clearSelection">取消选择</button>
         </div>
       </transition>
@@ -961,6 +965,12 @@
                   @click.stop="cycleGender(item)"
                 >
                   {{ { male: '男', female: '女', unisex: '中性' }[item.gender || 'female'] }}
+                </span>
+                <span
+                  class="ac-type-badge"
+                  :class="item.product_code_mode === 'with_code' ? 'ac-product-code-yes' : 'ac-product-code-no'"
+                >
+                  {{ item.product_code_mode === 'with_code' ? '带商品码' : '非商品码' }}
                 </span>
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
@@ -1200,6 +1210,90 @@
       </template>
     </el-dialog>
 
+    <!-- 批量修改账号属性弹窗 -->
+    <el-dialog
+      v-model="showBulkAttributeDialog"
+      width="640px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      class="bae-dialog"
+    >
+      <template #header>
+        <div class="bae-header">
+          <div class="bae-header-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+          </div>
+          <div>
+            <div class="bae-title">批量修改属性</div>
+            <div class="bae-subtitle">已选 {{ selectedIds.size }} 个账号 · {{ bulkAttributeChangedCount }} 项变更</div>
+          </div>
+        </div>
+      </template>
+      <div class="bae-body">
+        <div class="bae-summary">
+          <span class="bae-summary-label">作用范围</span>
+          <strong>{{ selectedIds.size }}</strong>
+          <span>个账号</span>
+          <span class="bae-summary-separator"></span>
+          <span :class="bulkAttributeChangedCount > 0 ? 'bae-summary-active' : 'bae-summary-muted'">
+            {{ bulkAttributeChangedCount > 0 ? `准备修改 ${bulkAttributeChangedCount} 项属性` : '未选择变更项' }}
+          </span>
+        </div>
+
+        <div class="bae-grid">
+          <section
+            v-for="field in BULK_ATTRIBUTE_FIELDS"
+            :key="field.key"
+            class="bae-field"
+            :class="[{ 'is-active': bulkAttributeForm[field.key] }, `is-${field.tone}`]"
+          >
+            <div class="bae-field-head">
+              <span class="bae-field-icon" v-html="field.icon"></span>
+              <div class="bae-field-title-wrap">
+                <span class="bae-field-label">{{ field.label }}</span>
+                <strong>{{ bulkAttributeValueLabel(field.key) }}</strong>
+              </div>
+            </div>
+            <div class="bae-options">
+              <button
+                v-for="option in BULK_ATTRIBUTE_OPTIONS[field.key]"
+                :key="option.value"
+                type="button"
+                class="bae-option"
+                :class="{ active: bulkAttributeForm[field.key] === option.value, 'is-keep': option.value === '' }"
+                @click="bulkAttributeForm[field.key] = option.value"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+      <template #footer>
+        <div class="bae-footer">
+          <button
+            type="button"
+            class="bae-reset"
+            :disabled="bulkAttributeChangedCount === 0 || bulkAttributeSaving"
+            @click="resetBulkAttributeForm"
+          >
+            清空选择
+          </button>
+          <div class="bae-footer-actions">
+            <el-button @click="showBulkAttributeDialog = false">取消</el-button>
+            <el-button
+              type="primary"
+              :loading="bulkAttributeSaving"
+              :disabled="bulkAttributeChangedCount === 0"
+              @click="handleBulkAttributeSubmit"
+            >
+              确认修改
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
+
     <el-empty v-if="!loading && items.length === 0" description="暂无账号，点击「新建账号」开始" :image-size="80" />
 
     <el-dialog
@@ -1257,7 +1351,7 @@ import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, wa
 import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1665,6 +1759,132 @@ async function handleBulkFlagSubmit() {
     ElMessage.error(err?.response?.data?.detail || '操作失败')
   } finally {
     bulkFlagSaving.value = false
+  }
+}
+
+// 批量修改账号属性
+const BULK_ATTRIBUTE_OPTIONS = {
+  account_type: [
+    { label: '不修改', value: '' },
+    { label: '独享号', value: 'exclusive' },
+    { label: '共享号', value: 'shared' },
+    { label: '人设号', value: 'persona' },
+  ],
+  face_mode: [
+    { label: '不修改', value: '' },
+    { label: '人脸', value: 'face' },
+    { label: '非人脸', value: 'no_face' },
+  ],
+  gender: [
+    { label: '不修改', value: '' },
+    { label: '男', value: 'male' },
+    { label: '女', value: 'female' },
+    { label: '中性', value: 'unisex' },
+  ],
+  product_code_mode: [
+    { label: '不修改', value: '' },
+    { label: '带商品码', value: 'with_code' },
+    { label: '非商品码', value: 'without_code' },
+  ],
+}
+
+const BULK_ATTRIBUTE_FIELDS = [
+  {
+    key: 'account_type',
+    label: '账号类型',
+    tone: 'indigo',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6"/><path d="M9 15h6"/></svg>',
+  },
+  {
+    key: 'face_mode',
+    label: '人脸',
+    tone: 'cyan',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9 15c1.6 1 4.4 1 6 0"/></svg>',
+  },
+  {
+    key: 'gender',
+    label: '性别',
+    tone: 'rose',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.4-4 4.1-6 8-6s6.6 2 8 6"/></svg>',
+  },
+  {
+    key: 'product_code_mode',
+    label: '商品码',
+    tone: 'emerald',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><path d="M7 7h.01"/></svg>',
+  },
+]
+
+const showBulkAttributeDialog = ref(false)
+const bulkAttributeSaving = ref(false)
+const bulkAttributeForm = ref({
+  account_type: '',
+  face_mode: '',
+  gender: '',
+  product_code_mode: '',
+})
+
+function resetBulkAttributeForm() {
+  bulkAttributeForm.value = {
+    account_type: '',
+    face_mode: '',
+    gender: '',
+    product_code_mode: '',
+  }
+}
+
+const bulkAttributeChangedCount = computed(() =>
+  ['account_type', 'face_mode', 'gender', 'product_code_mode']
+    .filter(key => !!bulkAttributeForm.value[key]).length
+)
+
+function bulkAttributeValueLabel(key) {
+  return BULK_ATTRIBUTE_OPTIONS[key]?.find(option => option.value === bulkAttributeForm.value[key])?.label || '不修改'
+}
+
+function openBulkAttributeDialog() {
+  if (selectedIds.value.size === 0) {
+    ElMessage.warning('请先勾选账号')
+    return
+  }
+  resetBulkAttributeForm()
+  showBulkAttributeDialog.value = true
+}
+
+function buildBulkAttributePayload() {
+  const payload = { account_ids: [...selectedIds.value] }
+  for (const key of ['account_type', 'face_mode', 'gender', 'product_code_mode']) {
+    if (bulkAttributeForm.value[key]) {
+      payload[key] = bulkAttributeForm.value[key]
+    }
+  }
+  return payload
+}
+
+async function handleBulkAttributeSubmit() {
+  if (bulkAttributeSaving.value) return
+  const payload = buildBulkAttributePayload()
+  const changedFields = Object.keys(payload).filter(k => k !== 'account_ids')
+  if (changedFields.length === 0) {
+    ElMessage.warning('请选择至少一个要修改的字段')
+    return
+  }
+
+  bulkAttributeSaving.value = true
+  try {
+    const result = await bulkUpdateAccountAttributes(payload)
+    if (result.updated_count > 0) {
+      ElMessage.success(`已修改 ${result.updated_count} 个账号`)
+      showBulkAttributeDialog.value = false
+      clearSelection()
+      await loadData()
+    } else {
+      ElMessage.info('没有可修改的账号')
+    }
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '批量修改失败')
+  } finally {
+    bulkAttributeSaving.value = false
   }
 }
 
@@ -2779,6 +2999,274 @@ onMounted(() => {
   padding: 12px 14px;
 }
 
+.bae-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+:deep(.bae-dialog) {
+  border-radius: 12px;
+}
+
+:deep(.bae-dialog .el-dialog__header) {
+  padding: 18px 22px 14px;
+  margin-right: 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+:deep(.bae-dialog .el-dialog__body) {
+  padding: 18px 22px 8px;
+}
+
+:deep(.bae-dialog .el-dialog__footer) {
+  padding: 14px 22px 18px;
+  border-top: 1px solid #eef2f7;
+}
+
+.bae-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bae-header-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #0f766e;
+  background: #ecfeff;
+  border: 1px solid #a5f3fc;
+  flex-shrink: 0;
+}
+
+.bae-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.bae-subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.bae-summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+}
+
+.bae-summary-label {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.bae-summary strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.bae-summary-separator {
+  width: 1px;
+  height: 14px;
+  background: #cbd5e1;
+  margin: 0 4px;
+}
+
+.bae-summary-active {
+  color: #047857;
+  font-weight: 700;
+}
+
+.bae-summary-muted {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.bae-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bae-field {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.bae-field.is-active {
+  border-color: #94a3b8;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.bae-field.is-indigo.is-active {
+  border-color: #818cf8;
+  background: #f8faff;
+}
+
+.bae-field.is-cyan.is-active {
+  border-color: #22d3ee;
+  background: #f0fdff;
+}
+
+.bae-field.is-rose.is-active {
+  border-color: #f9a8d4;
+  background: #fff7fb;
+}
+
+.bae-field.is-emerald.is-active {
+  border-color: #6ee7b7;
+  background: #f4fdf9;
+}
+
+.bae-field-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.bae-field-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #475569;
+  background: #f1f5f9;
+  flex-shrink: 0;
+}
+
+.bae-field.is-indigo.is-active .bae-field-icon {
+  color: #4f46e5;
+  background: #eef2ff;
+}
+
+.bae-field.is-cyan.is-active .bae-field-icon {
+  color: #0891b2;
+  background: #cffafe;
+}
+
+.bae-field.is-rose.is-active .bae-field-icon {
+  color: #be185d;
+  background: #fce7f3;
+}
+
+.bae-field.is-emerald.is-active .bae-field-icon {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.bae-field-title-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bae-field-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.bae-field-title-wrap strong {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.bae-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.bae-option {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bae-option:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.bae-option.active {
+  border-color: #0f172a;
+  background: #0f172a;
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.14);
+}
+
+.bae-option.is-keep.active {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #64748b;
+  box-shadow: none;
+}
+
+.bae-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bae-reset {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bae-reset:hover:not(:disabled) {
+  border-color: #94a3b8;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.bae-reset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bae-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .al-add-btn {
   display: flex;
   align-items: center;
@@ -3329,6 +3817,16 @@ onMounted(() => {
   color: #7c3aed;
 }
 
+.ac-product-code-yes {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.ac-product-code-no {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
 .ac-ai-status {
   flex-shrink: 0;
   font-size: 11px;
@@ -3629,6 +4127,10 @@ onMounted(() => {
 @media (max-width: 640px) {
   .al-page { padding: 16px; }
   .al-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .bae-grid { grid-template-columns: 1fr; }
+  .bae-footer { align-items: stretch; flex-direction: column-reverse; }
+  .bae-footer-actions { justify-content: flex-end; width: 100%; }
+  .bae-reset { width: 100%; }
 }
 
 /* 一键生成按钮 */
@@ -4418,6 +4920,18 @@ onMounted(() => {
   background: #7c3aed;
   color: #fff;
   border-color: #7c3aed;
+}
+
+.al-bulk-action-btn.is-edit {
+  border-color: #67e8f9;
+  background: #fff;
+  color: #0891b2;
+}
+
+.al-bulk-action-btn.is-edit:hover {
+  background: #0891b2;
+  color: #fff;
+  border-color: #0891b2;
 }
 
 .al-bulk-clear-btn {

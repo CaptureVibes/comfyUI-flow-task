@@ -804,7 +804,7 @@ class VideoPublicationService:
         self._openapi_adapter = OpenAPIAdapter(self.open_api)
         self._ext_pub_adapter = ExtPubAdapter(self.ext_pub)
 
-    async def _load_ext_products_for_sub_task(self, sub_task_id: uuid.UUID) -> list[dict]:
+    async def _load_publication_context_for_sub_task(self, sub_task_id: uuid.UUID) -> dict:
         result = await self.db.execute(
             select(VideoSubTask)
             .where(VideoSubTask.id == sub_task_id)
@@ -812,8 +812,19 @@ class VideoPublicationService:
         )
         sub_task = result.scalar_one_or_none()
         if sub_task is None or sub_task.task is None:
-            return []
-        return build_ext_products_from_shots(sub_task.task.shots)
+            return {"ext_products": [], "promotion_code": None}
+        publish_meta = sub_task.publish_meta if isinstance(sub_task.publish_meta, dict) else {}
+        promotion_code = publish_meta.get("promotion_code")
+        if not (
+            isinstance(promotion_code, str)
+            and len(promotion_code) == 8
+            and promotion_code.isdigit()
+        ):
+            promotion_code = None
+        return {
+            "ext_products": build_ext_products_from_shots(sub_task.task.shots),
+            "promotion_code": promotion_code,
+        }
 
     async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
         """创建发布任务。
@@ -831,12 +842,18 @@ class VideoPublicationService:
         if not data.channels:
             raise ValueError("至少需要一个发布渠道")
 
-        ext_products = await self._load_ext_products_for_sub_task(data.sub_task_id)
+        publication_context = await self._load_publication_context_for_sub_task(data.sub_task_id)
+        ext_products = publication_context["ext_products"]
         logger.info(
-            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s ext_products=%d",
-            data.sub_task_id, openapi_channels, ext_channels, len(ext_products),
+            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s ext_products=%d pre_generated_promotion_code=%s",
+            data.sub_task_id,
+            openapi_channels,
+            ext_channels,
+            len(ext_products),
+            bool(publication_context["promotion_code"]),
         )
-        promotion_code = await promotion_code_distributor.acquire()
+        promotion_code = publication_context["promotion_code"] or await promotion_code_distributor.acquire()
+        promotion_code_acquired_for_publication = not publication_context["promotion_code"]
         publication_committed = False
 
         # 记录原始请求（用于 audit / 重试）
@@ -888,7 +905,8 @@ class VideoPublicationService:
                 return_exceptions=True,
             )
         except BaseException:
-            await promotion_code_distributor.discard(promotion_code)
+            if promotion_code_acquired_for_publication:
+                await promotion_code_distributor.discard(promotion_code)
             raise
 
         for (source, _), result in zip(submit_tasks, results):
@@ -954,7 +972,8 @@ class VideoPublicationService:
                 await promotion_code_distributor.mark_committed(promotion_code)
             else:
                 await self.db.rollback()
-                await promotion_code_distributor.discard(promotion_code)
+                if promotion_code_acquired_for_publication:
+                    await promotion_code_distributor.discard(promotion_code)
             raise
 
         logger.info(

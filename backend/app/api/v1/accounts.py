@@ -34,6 +34,7 @@ from app.schemas.account import (
     BulkGenerateNameHandleBody, BulkGenerateNameHandleResponse,
     AccountChannelReservationRead, BindOpenAPIChannelBody, ConfirmChannelReservationsBody,
     ConfirmChannelReservationsResponse, ReserveAIAccountsBody, ReserveAIAccountsResponse,
+    BulkUpdateAccountAttributesBody, BulkUpdateAccountAttributesResponse,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -41,6 +42,7 @@ from app.services.account_service import (
     delete_account,
     get_account_or_404,
     list_accounts,
+    bulk_update_account_attributes,
     patch_account,
 )
 from app.services.channel_status_poller import refresh_reservation_channel_status
@@ -468,6 +470,32 @@ async def list_accounts_endpoint(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.post("/bulk-update-attributes", response_model=BulkUpdateAccountAttributesResponse)
+async def bulk_update_account_attributes_endpoint(
+    body: BulkUpdateAccountAttributesBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> BulkUpdateAccountAttributesResponse:
+    """批量修改账号基础属性：独享号/人脸/性别/商品码。"""
+    accounts = await bulk_update_account_attributes(session, body, owner_id)
+    requested_count = len(set(body.account_ids))
+    updated_ids = [account.id for account in accounts]
+    status_text = "updated" if updated_ids else "no_accounts"
+    logger.info(
+        "bulk_update_account_attributes status=%s requested=%s updated=%s fields=%s",
+        status_text,
+        requested_count,
+        len(updated_ids),
+        body.model_dump(exclude={"account_ids"}, exclude_none=True),
+    )
+    return BulkUpdateAccountAttributesResponse(
+        status=status_text,
+        requested_count=requested_count,
+        updated_count=len(updated_ids),
+        account_ids=updated_ids,
     )
 
 
