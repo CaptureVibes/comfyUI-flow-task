@@ -27,8 +27,39 @@ from app.db.session import SessionLocal
 from app.models.candidate_video import CandidateVideo
 from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
-from app.services.candidate_service import _SearchConfig, _ai_review_single
+from app.services.candidate_service import _SearchConfig
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+
+
+async def _review_with_cdn_url(cdn_url: str, prompt: str, model: str) -> tuple[bool, str]:
+    """直接用已在 CDN 上的 URL 调 Gemini 审核，跳过重新下载上传步骤。"""
+    import json as _json
+    from app.services.ai_api import call_gemini_api
+
+    json_instructions = (
+        "\n\n请必须以JSON格式输出审核结果，包含以下字段：\n"
+        "- \"pass\": 布尔值（true 表示通过审核，false 表示不通过）\n"
+        "- \"reason\": 字符串（简短说明原因，不超过50字）\n"
+        "示例输出：\n"
+        "{\"pass\": false, \"reason\": \"视频内容与关键词不相关\"}"
+    )
+    text = await call_gemini_api(
+        model_name=model,
+        video_url=cdn_url,
+        prompt=prompt + json_instructions,
+    )
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+    result = _json.loads(cleaned)
+    passed = bool(result.get("pass", True))
+    reason = str(result.get("reason", "") or "")
+    return passed, reason
 
 
 async def _load_ai_cfg(owner_id: uuid.UUID | None) -> _SearchConfig:
@@ -104,11 +135,10 @@ async def main(owner_id: uuid.UUID | None, days: int, dry_run: bool) -> None:
 
         try:
             prompt = (cfg.ai_review_prompt or "").replace("{keyword}", keyword)
-            ok, reason = await _ai_review_single(
-                video_url=vs.local_video_url,
+            ok, reason = await _review_with_cdn_url(
+                cdn_url=vs.local_video_url,
                 prompt=prompt,
                 model=cfg.ai_review_model,
-                retry_delay=cfg.retry_delay,
             )
         except Exception as exc:
             print(f"{prefix} ✗ 审核异常，跳过: {exc}")
