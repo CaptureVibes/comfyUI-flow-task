@@ -24,6 +24,7 @@ sys.path.insert(0, ".")
 from sqlalchemy import delete, select
 
 from app.db.session import SessionLocal
+from app.models.candidate_video import CandidateVideo
 from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
 from app.services.candidate_service import _SearchConfig, _ai_review_single
@@ -40,15 +41,31 @@ async def _load_ai_cfg(owner_id: uuid.UUID | None) -> _SearchConfig:
 async def _fetch_recent_videos(
     owner_id: uuid.UUID | None,
     days: int,
-) -> list[VideoSource]:
+) -> list[tuple[VideoSource, str]]:
+    """返回 (VideoSource, keyword_text) 列表。
+    keyword_text 通过 CandidateVideo 关联查询，补充模板来源的视频为空字符串。
+    """
     since = datetime.now(timezone.utc) - timedelta(days=days)
     async with SessionLocal() as session:
         stmt = select(VideoSource).where(VideoSource.created_at >= since)
         if owner_id is not None:
             stmt = stmt.where(VideoSource.owner_id == owner_id)
         rows = (await session.scalars(stmt)).all()
-        # detach from session so we can use outside
-        return [VideoSource(**{c.key: getattr(r, c.key) for c in r.__table__.columns}) for r in rows]
+
+        vs_ids = [r.id for r in rows]
+        # 关联查 CandidateVideo.keyword_text（候选库导入的视频才有）
+        kw_rows = (await session.execute(
+            select(CandidateVideo.video_source_id, CandidateVideo.keyword_text)
+            .where(CandidateVideo.video_source_id.in_(vs_ids))
+        )).all()
+        kw_map: dict[uuid.UUID, str] = {r.video_source_id: r.keyword_text for r in kw_rows}
+
+        result = []
+        for r in rows:
+            vs = VideoSource(**{c.key: getattr(r, c.key) for c in r.__table__.columns})
+            keyword = kw_map.get(r.id, "")
+            result.append((vs, keyword))
+        return result
 
 
 async def _delete_video_and_templates(vs_id: uuid.UUID) -> None:
@@ -78,7 +95,7 @@ async def main(owner_id: uuid.UUID | None, days: int, dry_run: bool) -> None:
     skipped = 0
     deleted = 0
 
-    for i, vs in enumerate(videos, 1):
+    for i, (vs, keyword) in enumerate(videos, 1):
         prefix = f"[{i}/{len(videos)}] {vs.id}"
         if not vs.local_video_url:
             print(f"{prefix} ⚠ 跳过（无 local_video_url）")
@@ -86,7 +103,7 @@ async def main(owner_id: uuid.UUID | None, days: int, dry_run: bool) -> None:
             continue
 
         try:
-            prompt = (cfg.ai_review_prompt or "").replace("{keyword}", "")
+            prompt = (cfg.ai_review_prompt or "").replace("{keyword}", keyword)
             ok, reason = await _ai_review_single(
                 video_url=vs.local_video_url,
                 prompt=prompt,
