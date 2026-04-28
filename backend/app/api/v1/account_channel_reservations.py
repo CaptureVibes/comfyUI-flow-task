@@ -119,34 +119,40 @@ async def reserve_ai_accounts_for_channel_openapi(
     items: list[ExternalAIAccountCandidateItem] = []
     confirmed_count = 0
 
-    async with session.begin_nested():
-        accounts = (await session.execute(stmt)).scalars().all()
-        for account in accounts:
-            reservation = AccountChannelReservation(
+    accounts = (await session.execute(stmt)).scalars().all()
+    for account in accounts:
+        reservation = AccountChannelReservation(
+            account_id=account.id,
+            platform=platform,
+            status="confirmed",
+            source=body.source,
+            channel_source=body.source,
+            reserved_at=now,
+            confirmed_at=now,
+        )
+        session.add(reservation)
+        confirmed_count += 1
+        items.append(
+            ExternalAIAccountCandidateItem(
                 account_id=account.id,
-                platform=platform,
-                status="confirmed",
-                source=body.source,
-                channel_source=body.source,
-                reserved_at=now,
-                confirmed_at=now,
+                platform=body.platform,
+                account_name=account.account_name,
+                account_handle=account.account_handle,
+                account_signature=account.account_signature,
+                hashtags=account.hashtags,
+                avatar_url=account.avatar_url,
+                confirmed=True,
             )
-            session.add(reservation)
-            confirmed_count += 1
-            items.append(
-                ExternalAIAccountCandidateItem(
-                    account_id=account.id,
-                    platform=body.platform,
-                    account_name=account.account_name,
-                    account_handle=account.account_handle,
-                    account_signature=account.account_signature,
-                    hashtags=account.hashtags,
-                    avatar_url=account.avatar_url,
-                    confirmed=True,
-                )
-            )
+        )
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="部分账号已被其他请求占用，请稍后重试",
+        )
     return ExternalReserveAIAccountsResponse(
         items=items,
         requested_count=body.count,
