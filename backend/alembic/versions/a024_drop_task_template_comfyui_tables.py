@@ -15,17 +15,20 @@ depends_on = None
 
 def upgrade() -> None:
     # Drop tables with foreign keys first (child → parent order)
-    op.drop_table('subtask_generated_videos')
-    op.drop_table('subtask_generated_images')
-    op.drop_table('subtask_photos')
-    op.drop_table('subtasks')
-    op.drop_table('tasks')
-    op.drop_table('task_templates')
-    op.drop_table('comfyui_settings')
+    for table_name in (
+        'subtask_generated_videos',
+        'subtask_generated_images',
+        'subtask_photos',
+        'subtasks',
+        'tasks',
+        'task_templates',
+        'comfyui_settings',
+    ):
+        op.execute(sa.text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
 
     # Drop ComfyUI columns from system_settings
-    op.drop_column('system_settings', 'comfyui_server_ip')
-    op.drop_column('system_settings', 'comfyui_ports')
+    op.execute(sa.text('ALTER TABLE system_settings DROP COLUMN IF EXISTS comfyui_server_ip'))
+    op.execute(sa.text('ALTER TABLE system_settings DROP COLUMN IF EXISTS comfyui_ports'))
 
 
 def downgrade() -> None:

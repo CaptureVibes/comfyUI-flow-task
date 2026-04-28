@@ -16,12 +16,19 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        'video_sub_tasks',
-        sa.Column('publish_meta', JSONB, nullable=True),
-    )
+    if not _has_column('video_sub_tasks', 'publish_meta'):
+        op.add_column(
+            'video_sub_tasks',
+            sa.Column('publish_meta', JSONB, nullable=True),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column('video_sub_tasks', 'publish_meta')
+    if _has_column('video_sub_tasks', 'publish_meta'):
+        op.drop_column('video_sub_tasks', 'publish_meta')

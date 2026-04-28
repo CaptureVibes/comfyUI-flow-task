@@ -13,12 +13,19 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "accounts",
-        sa.Column("account_type", sa.String(20), nullable=False, server_default="traffic"),
-    )
+    if not _has_column("accounts", "account_type"):
+        op.add_column(
+            "accounts",
+            sa.Column("account_type", sa.String(20), nullable=False, server_default="traffic"),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("accounts", "account_type")
+    if _has_column("accounts", "account_type"):
+        op.drop_column("accounts", "account_type")

@@ -21,12 +21,14 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = Inspector.from_engine(bind)
     account_columns = {c["name"] for c in inspector.get_columns("accounts")}
+    indexes = {i["name"] for i in inspector.get_indexes("accounts")}
 
     if "classification_type" not in account_columns:
         op.add_column(
             "accounts",
             sa.Column("classification_type", sa.String(length=20), nullable=True),
         )
+    if "idx_accounts_classification_type" not in indexes:
         op.create_index(
             "idx_accounts_classification_type",
             "accounts",

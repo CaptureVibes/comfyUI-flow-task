@@ -16,9 +16,16 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column("accounts", sa.Column("hashtags", JSON, nullable=True))
+    if not _has_column("accounts", "hashtags"):
+        op.add_column("accounts", sa.Column("hashtags", JSON, nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("accounts", "hashtags")
+    if _has_column("accounts", "hashtags"):
+        op.drop_column("accounts", "hashtags")

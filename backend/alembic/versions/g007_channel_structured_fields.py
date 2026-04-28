@@ -15,61 +15,87 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-    op.execute(
-        """
-        INSERT INTO account_channel_reservations (
-            id,
-            account_id,
-            platform,
-            status,
-            source,
-            channel_info,
-            reserved_at,
-            confirmed_at,
-            bound_at,
-            created_at,
-            updated_at
-        )
-        SELECT
-            gen_random_uuid(),
-            accounts.id,
-            LOWER(binding.value->>'platform'),
-            'bound',
-            COALESCE(
-                NULLIF(binding.value->>'channel_source', ''),
-                NULLIF(binding.value->>'source', ''),
-                'openapi'
-            ),
-            binding.value,
-            NOW(),
-            NOW(),
-            NOW(),
-            NOW(),
-            NOW()
-        FROM accounts
-        CROSS JOIN LATERAL json_array_elements(accounts.social_bindings) AS binding(value)
-        WHERE accounts.social_bindings IS NOT NULL
-          AND json_typeof(accounts.social_bindings) = 'array'
-          AND LOWER(binding.value->>'platform') IN ('youtube', 'tiktok', 'instagram')
-          AND NOT EXISTS (
-              SELECT 1
-              FROM account_channel_reservations existing
-              WHERE existing.account_id = accounts.id
-                AND existing.platform = LOWER(binding.value->>'platform')
-          )
-        """
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return (
+        table_name in inspector.get_table_names()
+        and column_name in {column["name"] for column in inspector.get_columns(table_name)}
     )
 
-    op.add_column(
+
+def _has_index(table_name: str, index_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    if table_name not in inspector.get_table_names():
+        return False
+    return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
+
+
+def _add_column_if_missing(table_name: str, column: sa.Column) -> None:
+    if not _has_column(table_name, column.name):
+        op.add_column(table_name, column)
+
+
+def _drop_column_if_exists(table_name: str, column_name: str) -> None:
+    if _has_column(table_name, column_name):
+        op.drop_column(table_name, column_name)
+
+
+def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    if _has_column("accounts", "social_bindings"):
+        op.execute(
+            """
+            INSERT INTO account_channel_reservations (
+                id,
+                account_id,
+                platform,
+                status,
+                source,
+                channel_info,
+                reserved_at,
+                confirmed_at,
+                bound_at,
+                created_at,
+                updated_at
+            )
+            SELECT
+                gen_random_uuid(),
+                accounts.id,
+                LOWER(binding.value->>'platform'),
+                'bound',
+                COALESCE(
+                    NULLIF(binding.value->>'channel_source', ''),
+                    NULLIF(binding.value->>'source', ''),
+                    'openapi'
+                ),
+                binding.value,
+                NOW(),
+                NOW(),
+                NOW(),
+                NOW(),
+                NOW()
+            FROM accounts
+            CROSS JOIN LATERAL json_array_elements(accounts.social_bindings) AS binding(value)
+            WHERE accounts.social_bindings IS NOT NULL
+              AND json_typeof(accounts.social_bindings) = 'array'
+              AND LOWER(binding.value->>'platform') IN ('youtube', 'tiktok', 'instagram')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM account_channel_reservations existing
+                  WHERE existing.account_id = accounts.id
+                    AND existing.platform = LOWER(binding.value->>'platform')
+              )
+            """
+        )
+
+    _add_column_if_missing(
         "account_channel_reservations",
         sa.Column("channel_source", sa.String(length=50), nullable=False, server_default="openapi"),
     )
-    op.add_column("account_channel_reservations", sa.Column("channel_id", sa.String(length=300), nullable=True))
-    op.add_column("account_channel_reservations", sa.Column("channel_name", sa.String(length=300), nullable=True))
-    op.add_column("account_channel_reservations", sa.Column("username", sa.String(length=300), nullable=True))
-    op.add_column("account_channel_reservations", sa.Column("avatar_url", sa.Text(), nullable=True))
+    _add_column_if_missing("account_channel_reservations", sa.Column("channel_id", sa.String(length=300), nullable=True))
+    _add_column_if_missing("account_channel_reservations", sa.Column("channel_name", sa.String(length=300), nullable=True))
+    _add_column_if_missing("account_channel_reservations", sa.Column("username", sa.String(length=300), nullable=True))
+    _add_column_if_missing("account_channel_reservations", sa.Column("avatar_url", sa.Text(), nullable=True))
 
     op.execute(
         """
@@ -89,36 +115,20 @@ def upgrade() -> None:
         """
     )
 
-    op.create_index(
-        op.f("ix_account_channel_reservations_channel_source"),
-        "account_channel_reservations",
-        ["channel_source"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_account_channel_reservations_channel_id"),
-        "account_channel_reservations",
-        ["channel_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_account_channel_reservations_username"),
-        "account_channel_reservations",
-        ["username"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_account_channel_reservations_platform_channel",
-        "account_channel_reservations",
-        ["platform", "channel_source", "channel_id"],
-        unique=False,
-    )
+    for index_name, columns in (
+        (op.f("ix_account_channel_reservations_channel_source"), ["channel_source"]),
+        (op.f("ix_account_channel_reservations_channel_id"), ["channel_id"]),
+        (op.f("ix_account_channel_reservations_username"), ["username"]),
+        ("ix_account_channel_reservations_platform_channel", ["platform", "channel_source", "channel_id"]),
+    ):
+        if not _has_index("account_channel_reservations", index_name):
+            op.create_index(index_name, "account_channel_reservations", columns, unique=False)
 
-    op.drop_column("accounts", "social_bindings")
+    _drop_column_if_exists("accounts", "social_bindings")
 
 
 def downgrade() -> None:
-    op.add_column("accounts", sa.Column("social_bindings", sa.JSON(), nullable=True))
+    _add_column_if_missing("accounts", sa.Column("social_bindings", sa.JSON(), nullable=True))
     op.execute(
         """
         UPDATE accounts
@@ -145,12 +155,16 @@ def downgrade() -> None:
         WHERE accounts.id = sub.account_id
         """
     )
-    op.drop_index("ix_account_channel_reservations_platform_channel", table_name="account_channel_reservations")
-    op.drop_index(op.f("ix_account_channel_reservations_username"), table_name="account_channel_reservations")
-    op.drop_index(op.f("ix_account_channel_reservations_channel_id"), table_name="account_channel_reservations")
-    op.drop_index(op.f("ix_account_channel_reservations_channel_source"), table_name="account_channel_reservations")
-    op.drop_column("account_channel_reservations", "avatar_url")
-    op.drop_column("account_channel_reservations", "username")
-    op.drop_column("account_channel_reservations", "channel_name")
-    op.drop_column("account_channel_reservations", "channel_id")
-    op.drop_column("account_channel_reservations", "channel_source")
+    for index_name in (
+        "ix_account_channel_reservations_platform_channel",
+        op.f("ix_account_channel_reservations_username"),
+        op.f("ix_account_channel_reservations_channel_id"),
+        op.f("ix_account_channel_reservations_channel_source"),
+    ):
+        if _has_index("account_channel_reservations", index_name):
+            op.drop_index(index_name, table_name="account_channel_reservations")
+    _drop_column_if_exists("account_channel_reservations", "avatar_url")
+    _drop_column_if_exists("account_channel_reservations", "username")
+    _drop_column_if_exists("account_channel_reservations", "channel_name")
+    _drop_column_if_exists("account_channel_reservations", "channel_id")
+    _drop_column_if_exists("account_channel_reservations", "channel_source")

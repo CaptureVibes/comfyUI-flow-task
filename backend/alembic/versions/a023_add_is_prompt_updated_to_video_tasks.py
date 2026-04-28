@@ -13,12 +13,19 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "video_tasks",
-        sa.Column("is_prompt_updated", sa.Boolean(), nullable=False, server_default="false"),
-    )
+    if not _has_column("video_tasks", "is_prompt_updated"):
+        op.add_column(
+            "video_tasks",
+            sa.Column("is_prompt_updated", sa.Boolean(), nullable=False, server_default="false"),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("video_tasks", "is_prompt_updated")
+    if _has_column("video_tasks", "is_prompt_updated"):
+        op.drop_column("video_tasks", "is_prompt_updated")

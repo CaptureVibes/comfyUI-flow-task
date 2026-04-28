@@ -16,11 +16,11 @@ depends_on = None
 
 def upgrade() -> None:
     # Drop API key columns from system_settings (now in .env)
-    op.drop_column('system_settings', 'evolink_api_key')
-    op.drop_column('system_settings', 'evolink_api_base_url')
+    op.execute(sa.text('ALTER TABLE system_settings DROP COLUMN IF EXISTS evolink_api_key'))
+    op.execute(sa.text('ALTER TABLE system_settings DROP COLUMN IF EXISTS evolink_api_base_url'))
 
     # Drop the legacy evolink_settings table
-    op.drop_table('evolink_settings')
+    op.execute(sa.text('DROP TABLE IF EXISTS evolink_settings CASCADE'))
 
 
 def downgrade() -> None:

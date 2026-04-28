@@ -13,17 +13,32 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
+def _add_column_if_missing(table_name: str, column: sa.Column) -> None:
+    if not _has_column(table_name, column.name):
+        op.add_column(table_name, column)
+
+
+def _drop_column_if_exists(table_name: str, column_name: str) -> None:
+    if _has_column(table_name, column_name):
+        op.drop_column(table_name, column_name)
+
+
 def upgrade() -> None:
-    op.add_column(
+    _add_column_if_missing(
         "pipeline_settings",
         sa.Column("ai_account_painting_prompt", sa.Text(), nullable=False, server_default=""),
     )
-    op.add_column(
+    _add_column_if_missing(
         "accounts",
         sa.Column("painting_url", sa.Text(), nullable=True),
     )
 
 
 def downgrade() -> None:
-    op.drop_column("pipeline_settings", "ai_account_painting_prompt")
-    op.drop_column("accounts", "painting_url")
+    _drop_column_if_exists("pipeline_settings", "ai_account_painting_prompt")
+    _drop_column_if_exists("accounts", "painting_url")

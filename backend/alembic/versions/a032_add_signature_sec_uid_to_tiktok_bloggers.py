@@ -13,11 +13,20 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column("tiktok_bloggers", sa.Column("signature", sa.Text, nullable=True))
-    op.add_column("tiktok_bloggers", sa.Column("sec_uid", sa.String(200), nullable=True))
+    if not _has_column("tiktok_bloggers", "signature"):
+        op.add_column("tiktok_bloggers", sa.Column("signature", sa.Text, nullable=True))
+    if not _has_column("tiktok_bloggers", "sec_uid"):
+        op.add_column("tiktok_bloggers", sa.Column("sec_uid", sa.String(200), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("tiktok_bloggers", "sec_uid")
-    op.drop_column("tiktok_bloggers", "signature")
+    if _has_column("tiktok_bloggers", "sec_uid"):
+        op.drop_column("tiktok_bloggers", "sec_uid")
+    if _has_column("tiktok_bloggers", "signature"):
+        op.drop_column("tiktok_bloggers", "signature")

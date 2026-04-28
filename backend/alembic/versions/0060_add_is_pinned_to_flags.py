@@ -27,4 +27,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("flags", "is_pinned")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    cols = {c["name"] for c in inspector.get_columns("flags")}
+    if "is_pinned" in cols:
+        op.drop_column("flags", "is_pinned")

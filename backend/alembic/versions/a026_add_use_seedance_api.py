@@ -12,9 +12,16 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column('system_settings', sa.Column('use_seedance_api', sa.Boolean(), server_default='false', nullable=False))
+    if not _has_column('system_settings', 'use_seedance_api'):
+        op.add_column('system_settings', sa.Column('use_seedance_api', sa.Boolean(), server_default='false', nullable=False))
 
 
 def downgrade() -> None:
-    op.drop_column('system_settings', 'use_seedance_api')
+    if _has_column('system_settings', 'use_seedance_api'):
+        op.drop_column('system_settings', 'use_seedance_api')
