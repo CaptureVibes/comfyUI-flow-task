@@ -777,14 +777,32 @@ async def _run_product_search(
     return result
 
 
-def _get_outfit_regen_product_image_url(product: dict) -> str:
-    """最终造型图生成只使用搜索命中的真实商品图。"""
+def _get_outfit_regen_product_image_url(product: dict) -> tuple[str, str]:
+    """返回 (外部商品图URL, AI生成单品图URL)。外部图优先，不可用时降级到AI图。"""
+    external_url = ""
     matched_product = product.get("matched_product")
     if isinstance(matched_product, dict):
         image_url = matched_product.get("image") or matched_product.get("thumbnail")
         if image_url:
-            return str(image_url)
-    return ""
+            external_url = str(image_url)
+    ai_url = str(product.get("product_image_url") or "")
+    return external_url, ai_url
+
+
+async def _resolve_product_image_url(ext_url: str, ai_url: str) -> str:
+    """优先使用外部商品图；若 HEAD 请求返回 4xx，降级到 AI 生成的 CDN 图。"""
+    if not ext_url:
+        return ai_url
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.head(ext_url)
+            if resp.status_code < 400:
+                return ext_url
+            logger.warning("外部商品图不可访问 status=%d url=%s，降级到AI图", resp.status_code, ext_url[:120])
+    except Exception as exc:
+        logger.warning("外部商品图 HEAD 检查失败: %s url=%s，降级到AI图", exc, ext_url[:120])
+    return ai_url
 
 
 async def _run_outfit_regen(
@@ -813,11 +831,12 @@ async def _run_outfit_regen(
         outfit_image_url = detail["image_url"]
         outfit_style = detail.get("outfit_style", "")
         solo_products = detail.get("solo_products", [])
-        product_cdn_urls = [
-            image_url
-            for image_url in (_get_outfit_regen_product_image_url(p) for p in solo_products)
-            if image_url
-        ]
+        product_cdn_urls = []
+        for p in solo_products:
+            ext_url, ai_url = _get_outfit_regen_product_image_url(p)
+            url = await _resolve_product_image_url(ext_url, ai_url)
+            if url:
+                product_cdn_urls.append(url)
 
         new_outfit_url = outfit_image_url
         if product_cdn_urls:
