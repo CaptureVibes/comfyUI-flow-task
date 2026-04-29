@@ -47,7 +47,7 @@ _persist_worker_task: asyncio.Task | None = None
 _shutting_down: bool = False
 
 # 并发数：同时处理的最大任务数
-_CONCURRENCY = 5
+_CONCURRENCY = 10
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
 _PERSIST_INTERVAL = 2.0
 _PRODUCT_SEARCH_STAGE = "product_search"
