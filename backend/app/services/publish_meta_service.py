@@ -190,12 +190,16 @@ def _build_product_code_description(
     for index, product in enumerate(ext_products, start=1):
         if not isinstance(product, dict):
             continue
-        label = (
-            product.get("source")
-            or product.get("product_name")
-            or product.get("title")
-            or _fallback_brand_label(index)
-        )
+        # 内部商品无 source 字段，固定用 "Alvin's Club" 作为来源标签
+        if product.get("is_internal"):
+            label = "Alvin's Club"
+        else:
+            label = (
+                product.get("source")
+                or product.get("product_name")
+                or product.get("title")
+                or _fallback_brand_label(index)
+            )
         price = _format_product_price(product.get("price")) or "price unavailable"
         product_lines.append(f"{label}: {price}")
 

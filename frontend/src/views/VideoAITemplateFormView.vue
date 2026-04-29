@@ -329,6 +329,10 @@
                       <span :class="['vtfd-product-status', productSearchStatusClass(product)]">
                         {{ productSearchStatusLabel(product) }}
                       </span>
+                      <span
+                        v-if="productOriginLabel(product)"
+                        :class="['vtfd-product-origin', isInternalProduct(product) ? 'vtfd-product-origin-internal' : 'vtfd-product-origin-external']"
+                      >{{ productOriginLabel(product) }}</span>
                       <span v-if="productSource(product)" class="vtfd-product-source">{{ productSource(product) }}</span>
                       <span v-if="productPriceText(product)" class="vtfd-product-price">{{ productPriceText(product) }}</span>
                     </div>
@@ -688,6 +692,16 @@ function productLink(product) {
 function productSource(product) {
   const matched = matchedProduct(product)
   return product?.product_source || matched?.source || ''
+}
+
+function isInternalProduct(product) {
+  const matched = matchedProduct(product)
+  return matched?.is_internal === true
+}
+
+function productOriginLabel(product) {
+  if (product?.product_search_status !== 'matched') return ''
+  return isInternalProduct(product) ? '内部商品' : '外部商品'
 }
 
 function productPriceText(product) {
@@ -1548,6 +1562,7 @@ onUnmounted(() => {
 }
 
 .vtfd-product-status,
+.vtfd-product-origin,
 .vtfd-product-source,
 .vtfd-product-price {
   display: inline-flex;
@@ -1557,6 +1572,16 @@ onUnmounted(() => {
   border-radius: 6px;
   font-size: 11px;
   font-weight: 700;
+}
+
+.vtfd-product-origin-internal {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.vtfd-product-origin-external {
+  background: #fef3c7;
+  color: #b45309;
 }
 
 .vtfd-product-status {
