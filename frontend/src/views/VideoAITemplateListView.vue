@@ -409,7 +409,7 @@
                   <label class="vt-label">分支：trend_meme（潮流/梗）</label>
                   <textarea v-model="cfg.understand_prompt_trend_meme" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
                 </div>
-                <div class="cfg-field-hint">支持的占位符：<code>{intent_json}</code>（注入完整意图识别 JSON）、<code>{outfit_ref_images_text}</code>（注入意图 JSON 中的 outfit_ref_images_text 字段）。</div>
+                <div class="cfg-field-hint">支持的占位符：<code>{intent_json}</code>（注入完整意图识别 JSON）。留空使用内置默认提示词。</div>
               </div>
             </div>
 

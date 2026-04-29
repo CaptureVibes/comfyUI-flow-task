@@ -1478,6 +1478,7 @@ async def bulk_generate_video_tasks(
 @router.post("/supplement-templates", status_code=200)
 async def supplement_templates(
     body: SupplementTemplatesBody,
+    creator_id: uuid.UUID = Depends(_get_creator_id),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
 ):
     """
@@ -1494,7 +1495,7 @@ async def supplement_templates(
     _asyncio.create_task(
         supplement_templates_for_accounts(
             account_ids=body.account_ids,
-            owner_id=owner_id,
+            owner_id=owner_id if owner_id is not None else creator_id,
             template_type=template_type,
             max_new_videos=body.max_new_videos,
         )
@@ -1514,6 +1515,7 @@ class AutoSupplementBody(BaseModel):
 @router.post("/auto-supplement-templates", status_code=200)
 async def auto_supplement_templates(
     body: AutoSupplementBody,
+    creator_id: uuid.UUID = Depends(_get_creator_id),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
 ):
     """
@@ -1529,7 +1531,7 @@ async def auto_supplement_templates(
     _asyncio.create_task(
         auto_supplement_for_accounts(
             account_ids=body.account_ids,
-            owner_id=owner_id,
+            owner_id=owner_id if owner_id is not None else creator_id,
             max_new_videos=body.max_new_videos,
         )
     )

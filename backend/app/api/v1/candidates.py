@@ -185,7 +185,9 @@ async def batch_import(
     token: TokenData = Depends(get_current_user),
 ):
     """手动批量导入 ai_passed 的候选视频到视频库（后台异步执行，立即返回）"""
-    owner_id = None if token.is_admin else str(token.user_id)
+    # 始终用 token 中的 user_id 作为 owner_id（admin 也带上自己的 id），
+    # 否则导入出来的 template owner_id=None，后续按 owner_id 读 pipeline_settings 会落空。
+    owner_id = str(token.user_id) if token.user_id else None
     ids = body.ids
 
     async def _bg():

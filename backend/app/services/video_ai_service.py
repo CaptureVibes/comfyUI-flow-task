@@ -503,13 +503,12 @@ async def _run_understanding_stage(
     temperature: float,
     prompts_by_intent: dict[str, str],
 ) -> str:
-    """根据意图选 prompt → 注入 intent_json → 预留造型图占位符 → 调 Gemini → 返回纯文本。"""
+    """根据意图选 prompt → 注入 intent_json → 调 Gemini → 返回纯文本。"""
     intent = intent_json.get("content_intent")
     if intent not in ALLOWED_INTENTS:
         raise ValueError(f"understanding stage got invalid intent: {intent!r}")
     template = (prompts_by_intent.get(intent) or "").strip() or DEFAULT_UNDERSTAND_PROMPTS[intent]
-    prompt_body = template.replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
-    final_prompt = "{outfit_ref_images_text}\n\n" + prompt_body
+    final_prompt = template.replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
     text = await call_gemini_api(
         model_name=model,
         prompt=final_prompt,
@@ -1084,6 +1083,8 @@ async def _sync_task_shots(
             sa_select(VideoTask).where(VideoTask.template_id == uuid_val)
         )).scalars().all()
 
+        from app.services.video_task_service import build_prompt_with_image_refs
+
         for task in tasks:
             if outfit_shots:
                 existing = list(task.shots or [])
@@ -1093,7 +1094,12 @@ async def _sync_task_shots(
                 else:
                     task.shots = outfit_shots
             if prompt_text:
-                task.prompt = prompt_text
+                # 与 create_task 保持一致：按 has_face 与造型图数量拼接 "人物参考/造型参考" 前缀
+                task.prompt = build_prompt_with_image_refs(
+                    prompt_text,
+                    shots_count=len(task.shots or []),
+                    has_face=bool(task.has_face),
+                )
                 task.is_prompt_updated = True
 
         await session.commit()
@@ -1210,8 +1216,9 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     await _persist_states([template_id])
                     return
 
-                # 加载用户流程配置
+                # 加载用户流程配置（admin 也有 owner_id，按 owner_id 直接读）
                 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+                logger.info("[%s] loading pipeline_settings for owner_id=%s", template_id, tpl.owner_id)
                 if tpl.owner_id is not None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
                     # 视频理解（在 outfit_detailing 之后，按 content_intent 分支）
@@ -1245,6 +1252,34 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     outfit_regen_prompt = pipeline_cfg.outfit_regen_prompt or ""
                     outfit_regen_size = pipeline_cfg.outfit_regen_size or "9:16"
                     outfit_regen_quality = pipeline_cfg.outfit_regen_quality or "2K"
+
+                    # 调试：打印从 pipeline_settings 读到的 prompt 文案（空 = 走代码默认）
+                    logger.info(
+                        "[%s] pipeline_settings prompts (owner=%s):\n"
+                        "  outfit_select_prompt (%d chars): %s\n"
+                        "  outfit_detail_prompt (%d chars): %s\n"
+                        "  intent_classify_prompt (%d chars): %s\n"
+                        "  understand_prompt_beauty_show (%d chars): %s\n"
+                        "  understand_prompt_knowledge (%d chars): %s\n"
+                        "  understand_prompt_persona_story (%d chars): %s\n"
+                        "  understand_prompt_trend_meme (%d chars): %s\n"
+                        "  product_imagegen_prompt (%d chars): %s\n"
+                        "  outfit_regen_prompt (%d chars): %s",
+                        template_id, tpl.owner_id,
+                        len(outfit_select_prompt), outfit_select_prompt or "<empty → default>",
+                        len(outfit_detail_prompt), outfit_detail_prompt or "<empty → default>",
+                        len(intent_classify_prompt), intent_classify_prompt or "<empty → default>",
+                        len(understand_prompts_by_intent["beauty_show"]),
+                        understand_prompts_by_intent["beauty_show"] or "<empty → default>",
+                        len(understand_prompts_by_intent["knowledge"]),
+                        understand_prompts_by_intent["knowledge"] or "<empty → default>",
+                        len(understand_prompts_by_intent["persona_story"]),
+                        understand_prompts_by_intent["persona_story"] or "<empty → default>",
+                        len(understand_prompts_by_intent["trend_meme"]),
+                        understand_prompts_by_intent["trend_meme"] or "<empty → default>",
+                        len(product_imagegen_prompt), product_imagegen_prompt or "<empty → default>",
+                        len(outfit_regen_prompt), outfit_regen_prompt or "<empty → default>",
+                    )
                 else:
                     understand_model = "gemini-3.1-pro-preview"
                     understand_temperature = 0.3

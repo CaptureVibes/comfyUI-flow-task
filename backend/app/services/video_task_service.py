@@ -34,6 +34,29 @@ CLI_JOBS = "jimeng/cli-jobs"
 
 SUBTASK_COUNT = 3
 
+
+def build_prompt_with_image_refs(base_prompt: str | None, shots_count: int, has_face: bool) -> str:
+    """在 prompt 最前面拼接造型/人物参考说明，按 has_face 与造型图数量动态生成。
+
+    has_face=True 时假设 shots[0] 是人物图，剩余为造型图：
+      "人物参考: @图片1\n造型参考: @图片2,@图片3\n\n<原 prompt>"
+    has_face=False 时所有 shots 都是造型图：
+      "造型参考: @图片1,@图片2,@图片3\n\n<原 prompt>"
+    无造型图（outfit_count<=0）时不拼接前缀，原 prompt 不变。
+    """
+    outfit_count = max(0, shots_count - (1 if has_face else 0))
+    if outfit_count <= 0:
+        return base_prompt or ""
+    lines: list[str] = []
+    if has_face:
+        lines.append("人物参考: @图片1")
+        outfit_refs = ",".join(f"@图片{i}" for i in range(2, outfit_count + 2))
+        lines.append(f"造型参考: {outfit_refs}")
+    else:
+        outfit_refs = ",".join(f"@图片{i}" for i in range(1, outfit_count + 1))
+        lines.append(f"造型参考: {outfit_refs}")
+    return "\n".join(lines) + "\n\n" + (base_prompt or "")
+
 SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":           {"generating"},
     "generating":        {"reviewing", "abandoned"},
@@ -144,13 +167,15 @@ class VideoTaskService:
 
         has_face = (account.face_mode != "no_face") if account else True
 
+        composed_prompt = build_prompt_with_image_refs(final_prompt, len(normalized_shots), has_face)
+
         task = VideoTask(
             owner_id=user_id,
             account_id=account_id,
             template_id=template_id,
             target_date=target_date,
             status="pending",
-            prompt=final_prompt,
+            prompt=composed_prompt,
             duration=duration,
             shots=normalized_shots,
             has_face=has_face,
