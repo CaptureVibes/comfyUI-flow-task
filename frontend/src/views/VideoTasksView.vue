@@ -75,7 +75,7 @@
         >
           <svg v-if="!batchReanalyzing" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
           <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-          一键重新分析
+          一键重试
         </button>
         <button
           class="vt-btn vt-btn-warning"
@@ -764,15 +764,15 @@ async function handleBatchReanalyze() {
   if (!targetDate.value) return
   try {
     await ElMessageBox.confirm(
-      `确定对 ${targetDate.value} 当天所有任务关联的模板重新执行完整AI流程（视频理解→抽帧→穿搭识别→生图）？将覆盖现有内容。`,
-      '一键重新分析',
+      `确定对 ${targetDate.value} 当天所有任务关联的模板从头重跑整条 AI 流水线（抽帧 → 穿搭识别 → 单品理解 → 视频理解 → 生图 → 造型重生）？现有 prompt_description / 单品图 / 造型图等中间产物会被清空。`,
+      '一键重试',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
   batchReanalyzing.value = true
   try {
     await batchRestartTemplates(targetDate.value)
-    ElMessage.success('已触发当天模板的完整重新处理，后台入队中')
+    ElMessage.success('已触发当天模板从头重跑，后台入队中')
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '触发失败')
   } finally {

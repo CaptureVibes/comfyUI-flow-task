@@ -33,14 +33,11 @@ from app.schemas.video_ai_template import (
 )
 from app.services.video_ai_service import (
     batch_pause_templates,
-    batch_reanalyze_templates,
     batch_retry_templates,
     batch_restart_templates,
-    batch_restart_stage2_templates,
     enqueue_template,
     get_template_state,
     pause_template,
-    reanalyze_template,
     restart_from_stage2,
     restart_template,
     resume_template,
@@ -373,8 +370,8 @@ async def batch_create_and_start(
     return {"status": "accepted"}
 
 
-class BatchReanalyzeBody(BaseModel):
-    target_date: str | None = None  # YYYY-MM-DD，有则只分析当天任务关联的模板
+class BatchTargetDateBody(BaseModel):
+    target_date: str | None = None  # YYYY-MM-DD，有则只处理当天任务关联的模板
 
 
 @router.post("/batch-pause", status_code=status.HTTP_202_ACCEPTED)
@@ -399,37 +396,9 @@ async def batch_retry(
     return {"status": "accepted"}
 
 
-@router.post("/batch-reanalyze", status_code=status.HTTP_202_ACCEPTED)
-async def batch_reanalyze(
-    body: BatchReanalyzeBody = BatchReanalyzeBody(),
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
-    """批量重新分析视频理解内容，后台异步执行。
-    传入 target_date 则只分析当天任务关联的模板；否则分析该 owner 所有 success 模板。"""
-    template_ids: list[str] | None = None
-    if body.target_date:
-        from datetime import date as _date
-        from app.core.security import TokenData
-        parsed_date = _date.fromisoformat(body.target_date)
-        stmt = select(VideoTask.template_id).where(
-            VideoTask.target_date == parsed_date,
-            VideoTask.template_id.is_not(None),
-        )
-        if owner_id is not None:
-            stmt = stmt.where(VideoTask.owner_id == owner_id)
-        rows = (await session.execute(stmt)).scalars().all()
-        template_ids = list({str(tid) for tid in rows})
-    asyncio.create_task(batch_reanalyze_templates(
-        owner_id=str(owner_id) if owner_id else None,
-        template_ids=template_ids,
-    ))
-    return {"status": "accepted"}
-
-
 @router.post("/batch-restart", status_code=status.HTTP_202_ACCEPTED)
 async def batch_restart(
-    body: BatchReanalyzeBody = BatchReanalyzeBody(),
+    body: BatchTargetDateBody = BatchTargetDateBody(),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
@@ -449,17 +418,6 @@ async def batch_restart(
     asyncio.create_task(batch_restart_templates(
         owner_id=str(owner_id) if owner_id else None,
         template_ids=template_ids,
-    ))
-    return {"status": "accepted"}
-
-
-@router.post("/batch-restart-stage2", status_code=status.HTTP_202_ACCEPTED)
-async def batch_restart_stage2(
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
-) -> dict[str, str]:
-    """批量对所有 success 状态的模板执行阶段2重跑（保留视频理解，从抽帧生图重新开始）。"""
-    asyncio.create_task(batch_restart_stage2_templates(
-        owner_id=str(owner_id) if owner_id else None,
     ))
     return {"status": "accepted"}
 
@@ -829,25 +787,9 @@ async def restart_stage2_endpoint(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> VideoAITemplateRead:
-    """保留阶段一（视频理解），从阶段二（抽帧生图）重新开始。"""
+    """重新生图：清空全部已完成阶段与中间产物，从头跑整条流水线。"""
     tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
     await restart_from_stage2(str(tpl.id))
-    await session.refresh(tpl)
-    return await _to_read(session, tpl)
-
-
-@router.post("/{tpl_id}/reanalyze", response_model=VideoAITemplateRead)
-async def reanalyze_template_endpoint(
-    tpl_id: uuid.UUID,
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> VideoAITemplateRead:
-    """仅重新执行视频理解（AI分析），不重跑后续图片生成等步骤。"""
-    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
-    try:
-        await reanalyze_template(str(tpl.id))
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     await session.refresh(tpl)
     return await _to_read(session, tpl)
 

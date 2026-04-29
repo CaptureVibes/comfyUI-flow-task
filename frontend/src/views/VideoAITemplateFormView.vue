@@ -176,10 +176,6 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 {{ templateStatus === 'fail' ? '从断点继续' : '继续处理' }}
               </button>
-              <button class="vtfd-act-btn vtfd-act-stage2" @click="handleRestartStage2" title="保留视频理解，从抽帧生图开始重新运行">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                重新生图
-              </button>
               <button class="vtfd-act-btn vtfd-act-restart" @click="handleRestart">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
                 从头重跑
@@ -189,16 +185,29 @@
 
           <!-- Success state: 重新生图入口 -->
           <div v-if="templateStatus === 'success'" class="vtfd-success-actions">
-            <button class="vtfd-act-btn vtfd-act-stage2" @click="handleRestartStage2" title="保留视频理解，从抽帧生图开始重新运行">
+            <button class="vtfd-act-btn vtfd-act-stage2" @click="handleRestartStage2" title="清空全部已完成阶段，从头跑整条流水线">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-              重新生图（保留视频理解）
+              重新生图
             </button>
           </div>
 
-          <!-- AI Understanding Section -->
+          <!-- Intent Classification (Step 4) -->
+          <div v-if="intentJson" class="vtfd-section">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag">阶段4 意图识别</span>
+              <span v-if="intentJson.content_intent" class="vtfd-section-count">{{ intentJson.content_intent }}</span>
+            </div>
+            <el-collapse>
+              <el-collapse-item title="查看意图识别 JSON">
+                <pre style="background:#0f172a;color:#e2e8f0;padding:12px;border-radius:6px;overflow:auto;max-height:360px;font-size:12px;line-height:1.5">{{ JSON.stringify(intentJson, null, 2) }}</pre>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+
+          <!-- Video Understanding (Step 5) — 输出最终 prompt_description -->
           <div v-if="form.prompt_description || form.prompt_description === ''" class="vtfd-section">
             <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
-              <span class="vtfd-section-tag">AI 理解</span>
+              <span class="vtfd-section-tag">阶段5 视频理解</span>
               <el-button
                 v-if="isEdit"
                 size="small"
@@ -209,7 +218,7 @@
                 {{ isPromptEditMode ? '完成编辑' : '手动修改' }}
               </el-button>
             </div>
-            
+
             <div
               v-if="!isPromptEditMode"
               class="vtfd-section-content markdown-body"
@@ -237,7 +246,7 @@
           <!-- Stage 2: 抽帧图 -->
           <div v-if="frameShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤② 抽帧图</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">阶段1 抽帧图</span>
               <span class="vtfd-section-count">({{ frameShots.length }})</span>
             </div>
             <div class="vtfd-images-grid">
@@ -253,7 +262,7 @@
           <!-- Stage 2b: Unique 穿搭识别结果 -->
           <div v-if="outfitShots.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤② Unique 穿搭</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">阶段2 Unique 穿搭</span>
               <span class="vtfd-section-count">({{ outfitShots.length }})</span>
             </div>
             <div class="vtfd-images-grid">
@@ -269,7 +278,7 @@
           <!-- Stage 3: 单品图 + 商品匹配 -->
           <div v-if="productOutfits.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤③ 单品图 / 商品匹配</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">阶段3+6 单品理解 / 单品图 / 商品匹配</span>
               <span class="vtfd-section-count">({{ productCount }})</span>
             </div>
             <div v-for="(outfit, oidx) in productOutfits" :key="'po-'+oidx" class="vtfd-product-outfit">
@@ -345,7 +354,7 @@
           <!-- Stage 4: 最终造型图 -->
           <div v-if="finalOutfits.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
-              <span class="vtfd-section-tag vtfd-stage-tag">步骤④ 最终造型图</span>
+              <span class="vtfd-section-tag vtfd-stage-tag">阶段7 最终造型图</span>
               <span class="vtfd-section-count">({{ finalOutfits.length }})</span>
             </div>
             <div v-for="(outfit, oidx) in finalOutfits" :key="'fo-'+oidx" style="margin-bottom:20px">
@@ -549,6 +558,10 @@ const extractedShots = computed(() => form.extracted_shots || [])
 const frameShots = computed(() => form.extra?.frame_shots || [])
 const outfitShots = computed(() => form.extra?.outfit_shots || [])
 const finalOutfits = computed(() => form.extra?.final_outfits || [])
+const intentJson = computed(() => {
+  const v = form.extra?.intent_json
+  return v && typeof v === 'object' && Object.keys(v).length > 0 ? v : null
+})
 const faceRemovingShots = computed(() => form.extra?.face_removing_shots || [])
 const productOutfits = computed(() => {
   const searched = form.extra?.product_search_results || []
@@ -814,21 +827,23 @@ async function handleRestartStage2() {
   if (!route.params.id) return
   try {
     await restartStage2VideoAITemplate(route.params.id)
+    form.prompt_description = ''
     form.extracted_shots = []
     if (form.extra) {
       form.extra = { ...form.extra }
       delete form.extra.frame_shots
       delete form.extra.outfit_shots
       delete form.extra.outfit_detailing_progress
+      delete form.extra.intent_json
       delete form.extra.product_gen_results
       delete form.extra.product_search_results
       delete form.extra.final_outfits
     }
-    completedStages.value = form.prompt_description ? ['understanding'] : []
+    completedStages.value = []
     templateStatus.value = 'pending'
     errorMessage.value = ''
     startPolling()
-    ElMessage.success('已保留视频理解，从阶段二重新处理')
+    ElMessage.success('已重新生图，从头跑整条流水线')
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '操作失败')
   }

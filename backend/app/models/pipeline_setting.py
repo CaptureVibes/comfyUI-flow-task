@@ -19,10 +19,20 @@ class PipelineSetting(Base):
 
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
 
-    # 第一阶段：视频理解
+    # 视频理解（在 outfit_detailing 之后执行）— 共用 model/temperature
     understand_model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    understand_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")  # 兼容遗留列，已弃用
     understand_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
+    # 视频理解 - 4 个分支 prompt（按 content_intent 选择）
+    understand_prompt_beauty_show: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_knowledge: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_persona_story: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_trend_meme: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # 意图识别（intent_classify）— JSON 输出，在 outfit_detailing 之后、视频理解之前
+    intent_classify_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
+    intent_classify_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    intent_classify_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
 
     # 第二阶段：抽帧生图（Nano2）
     imagegen_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")

@@ -38,6 +38,8 @@ _sync_shots_on_success: set[str] = set()
 # 队列处理器任务和持久化任务
 _queue_processor_task: asyncio.Task | None = None
 _persist_worker_task: asyncio.Task | None = None
+# 进程关停标志：True 时管道被取消不写 paused，保留运行中状态以便重启后续跑
+_shutting_down: bool = False
 
 # 并发数：同时处理的最大任务数
 _CONCURRENCY = 5
@@ -370,6 +372,164 @@ _OUTFIT_DETAIL_SCHEMA = {
     },
     "required": ["outfit_style", "solo_products"],
 }
+
+
+# 意图识别（intent_classify）相关常量
+ALLOWED_INTENTS = {"beauty_show", "knowledge", "persona_story", "trend_meme"}
+
+INTENT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "outfit_ref_images_text": {"type": "string"},
+        "content_intent": {"type": "string", "enum": list(ALLOWED_INTENTS)},
+        "format_subtype": {"type": "string"},
+        "content_intent_secondary": {"type": "string"},
+        "video_type": {"type": "string"},
+        "cross_cutting": {
+            "type": "object",
+            "properties": {
+                "character": {"type": "string"},
+                "motion": {"type": "string"},
+                "environment": {"type": "string"},
+                "camera": {"type": "string"},
+                "audio_and_on_screen_text": {"type": "string"},
+            },
+        },
+        "key_points": {"type": "array", "items": {"type": "string"}},
+        "avoid": {"type": "array", "items": {"type": "string"}},
+        "reasoning": {"type": "string"},
+        "information_core": {
+            "type": "object",
+            "properties": {
+                "problem_or_question": {"type": "string"},
+                "steps_or_reasoning": {"type": "array", "items": {"type": "string"}},
+                "conclusion_or_takeaway": {"type": "string"},
+                "visual_support": {"type": "string"},
+            },
+        },
+        "narrative_beats": {"type": "object"},
+        "trend_packaging": {"type": "object"},
+    },
+    "required": ["content_intent"],
+}
+
+DEFAULT_INTENT_PROMPT = (
+    "请分析这段视频，结合下面给出的穿搭单品列表（按造型分组的 JSON），判断视频的核心创作意图，"
+    "以严格符合 JSON Schema 的结构化数据返回。content_intent 必须从以下四个枚举值中选一："
+    "beauty_show（穿搭/美感展示）、knowledge（知识/讲解）、persona_story（人物/故事）、trend_meme（潮流/梗）。\n\n"
+    "穿搭单品列表（JSON）：\n{solo_products}\n\n"
+    "请直接输出 JSON，不要附加任何额外文字。"
+)
+
+DEFAULT_UNDERSTAND_PROMPTS = {
+    "beauty_show": (
+        "你是穿搭/美感类视频的创作分析师。基于下面给出的意图识别 JSON 与视频本身，"
+        "撰写一段用于后续视频生成的提示词描述，覆盖人物气质、动作节奏、环境氛围、镜头语言、关键卖点等。\n\n"
+        "意图识别 JSON：\n{intent_json}\n\n"
+        "请直接输出最终提示词文本，不要 JSON。"
+    ),
+    "knowledge": (
+        "你是知识/讲解类视频的创作分析师。基于下面给出的意图识别 JSON 与视频本身，"
+        "撰写一段用于后续视频生成的提示词描述，覆盖核心问题/结论、讲解步骤、可视化支撑、镜头语言。\n\n"
+        "意图识别 JSON：\n{intent_json}\n\n"
+        "请直接输出最终提示词文本，不要 JSON。"
+    ),
+    "persona_story": (
+        "你是人物/故事类视频的创作分析师。基于下面给出的意图识别 JSON 与视频本身，"
+        "撰写一段用于后续视频生成的提示词描述，覆盖人物设定、情节节拍、情绪走向、镜头语言。\n\n"
+        "意图识别 JSON：\n{intent_json}\n\n"
+        "请直接输出最终提示词文本，不要 JSON。"
+    ),
+    "trend_meme": (
+        "你是潮流/梗类视频的创作分析师。基于下面给出的意图识别 JSON 与视频本身，"
+        "撰写一段用于后续视频生成的提示词描述，覆盖梗的核心、潮流元素、节奏卖点、镜头语言。\n\n"
+        "意图识别 JSON：\n{intent_json}\n\n"
+        "请直接输出最终提示词文本，不要 JSON。"
+    ),
+}
+
+
+def _format_solo_products_for_prompt(outfit_details: list[dict]) -> str:
+    """把每套造型的 outfit_style + solo_products 聚合成 JSON 字符串注入 prompt。"""
+    payload = []
+    for idx, detail in enumerate(outfit_details, start=1):
+        payload.append({
+            "index": idx,
+            "outfit_style": detail.get("outfit_style", ""),
+            "solo_products": [
+                {"name": p.get("name", ""), "description": p.get("description", "")}
+                for p in (detail.get("solo_products") or [])
+            ],
+        })
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _run_intent_classify_stage(
+    *,
+    template_id: str,
+    video_url: str,
+    outfit_details: list[dict],
+    model: str,
+    prompt: str,
+    temperature: float,
+) -> dict:
+    """意图识别：调用 Gemini，输入视频 + solo_products JSON，要求返回结构化 JSON；
+    校验 content_intent，最多 3 次重试。
+    """
+    base_prompt = prompt.strip() if (prompt and prompt.strip()) else DEFAULT_INTENT_PROMPT
+    actual_prompt = base_prompt.replace("{solo_products}", _format_solo_products_for_prompt(outfit_details))
+
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            raw = await call_gemini_api(
+                model_name=model,
+                prompt=actual_prompt,
+                video_url=video_url,
+                temperature=temperature,
+                response_schema=INTENT_JSON_SCHEMA,
+            )
+            data = json.loads(raw)
+            intent = data.get("content_intent")
+            if intent in ALLOWED_INTENTS:
+                logger.info("[%s] intent_classify done, content_intent=%s", template_id, intent)
+                return data
+            raise ValueError(f"content_intent invalid: {intent!r}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            delay = min(attempt * 2, 30)
+            logger.warning("[%s] intent_classify attempt %d/3 failed: %s", template_id, attempt, exc)
+            if attempt < 3:
+                await asyncio.sleep(delay)
+    raise ValueError(f"intent_classify failed after 3 attempts: {last_exc}") from last_exc
+
+
+async def _run_understanding_stage(
+    *,
+    template_id: str,
+    video_url: str,
+    intent_json: dict,
+    model: str,
+    temperature: float,
+    prompts_by_intent: dict[str, str],
+) -> str:
+    """根据意图选 prompt → 注入 intent_json → 调 Gemini → 返回纯文本。"""
+    intent = intent_json.get("content_intent")
+    if intent not in ALLOWED_INTENTS:
+        raise ValueError(f"understanding stage got invalid intent: {intent!r}")
+    template = (prompts_by_intent.get(intent) or "").strip() or DEFAULT_UNDERSTAND_PROMPTS[intent]
+    final_prompt = template.replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
+    text = await call_gemini_api(
+        model_name=model,
+        prompt=final_prompt,
+        video_url=video_url,
+        temperature=temperature,
+    )
+    logger.info("[%s] understanding done, intent=%s, prompt_description=%d chars",
+                template_id, intent, len(text or ""))
+    return text
 
 
 async def _run_outfit_selecting_stage(
@@ -961,7 +1121,10 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
     """
     执行视频 AI 处理管道
 
-    流程：理解 → 提取 → 下载 → 上传 → 成功/失败
+    流程（按顺序）：
+        imagegen → outfit_selecting → outfit_detailing →
+        intent_classify → understanding →
+        product_imagegen → product_search → outfit_regen
 
     Args:
         template_id: 模板 ID
@@ -1016,31 +1179,44 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
                 if tpl.owner_id is not None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
+                    # 视频理解（在 outfit_detailing 之后，按 content_intent 分支）
                     understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
-                    understand_prompt = pipeline_cfg.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
                     understand_temperature = pipeline_cfg.understand_temperature
-                    # 步骤3：穿搭识别
+                    understand_prompts_by_intent = {
+                        "beauty_show": pipeline_cfg.understand_prompt_beauty_show or "",
+                        "knowledge": pipeline_cfg.understand_prompt_knowledge or "",
+                        "persona_story": pipeline_cfg.understand_prompt_persona_story or "",
+                        "trend_meme": pipeline_cfg.understand_prompt_trend_meme or "",
+                    }
+                    # 意图识别
+                    intent_classify_model = pipeline_cfg.intent_classify_model or "gemini-3.1-pro-preview"
+                    intent_classify_prompt = pipeline_cfg.intent_classify_prompt or ""
+                    intent_classify_temperature = pipeline_cfg.intent_classify_temperature
+                    # 穿搭识别
                     outfit_select_model = pipeline_cfg.outfit_select_model or "gemini-3.1-pro-preview"
                     outfit_select_prompt = pipeline_cfg.outfit_select_prompt or ""
                     outfit_select_temperature = pipeline_cfg.outfit_select_temperature
-                    # 步骤4a：穿搭单品理解
+                    # 穿搭单品理解
                     outfit_detail_model = pipeline_cfg.outfit_detail_model or "gemini-3.1-pro-preview"
                     outfit_detail_prompt = pipeline_cfg.outfit_detail_prompt or ""
                     outfit_detail_temperature = pipeline_cfg.outfit_detail_temperature
-                    # 步骤4b：单品图生成
+                    # 单品图生成
                     product_imagegen_model = pipeline_cfg.product_imagegen_model or "gemini-3.1-flash-image-preview"
                     product_imagegen_prompt = pipeline_cfg.product_imagegen_prompt or ""
                     product_imagegen_size = pipeline_cfg.product_imagegen_size or "1:1"
                     product_imagegen_quality = pipeline_cfg.product_imagegen_quality or "2K"
-                    # 步骤4c：新造型图生成
+                    # 新造型图生成
                     outfit_regen_model = pipeline_cfg.outfit_regen_model or "gemini-3.1-flash-image-preview"
                     outfit_regen_prompt = pipeline_cfg.outfit_regen_prompt or ""
                     outfit_regen_size = pipeline_cfg.outfit_regen_size or "9:16"
                     outfit_regen_quality = pipeline_cfg.outfit_regen_quality or "2K"
                 else:
                     understand_model = "gemini-3.1-pro-preview"
-                    understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
                     understand_temperature = 0.3
+                    understand_prompts_by_intent = {k: "" for k in ALLOWED_INTENTS}
+                    intent_classify_model = "gemini-3.1-pro-preview"
+                    intent_classify_prompt = ""
+                    intent_classify_temperature = 0.3
                     outfit_select_model = "gemini-3.1-pro-preview"
                     outfit_select_prompt = ""
                     outfit_select_temperature = 0.3
@@ -1092,43 +1268,19 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 state["final_outfits"] = _extra.get("final_outfits") or []
             if "outfit_detailing" in completed_stages and not state.get("outfit_detailing_progress"):
                 state["outfit_detailing_progress"] = _extra.get("outfit_detailing_progress") or []
+            if "intent_classify" in completed_stages and not state.get("intent_json"):
+                state["intent_json"] = _extra.get("intent_json") or {}
             if ("product_imagegen" in completed_stages or _PRODUCT_SEARCH_STAGE in completed_stages) and not state.get("product_gen_results"):
                 state["product_gen_results"] = _extra.get("product_search_results") or _extra.get("product_gen_results") or []
             if _PRODUCT_SEARCH_STAGE in completed_stages and not state.get("product_search_results"):
                 state["product_search_results"] = _extra.get("product_search_results") or state.get("product_gen_results") or []
 
-            # ========== 步骤 1: 视频整体理解（最多重试 3 次）==========
-            if "understanding" in completed_stages:
-                prompt_description = state.get("prompt_description") or ""
-                logger.info("[%s] understanding skipped (already completed), prompt_description=%d chars",
-                            template_id, len(prompt_description))
-            else:
-                _set_status(template_id, VideoAIProcessStatus.understanding)
-                logger.info("[%s] understanding started", template_id)
-
-                prompt_description = await call_gemini_api(
-                    model_name=understand_model,
-                    video_url=video_url,
-                    prompt=understand_prompt,
-                    temperature=understand_temperature,
-                )
-
-                state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.understanding))
-                state["prompt_description"] = prompt_description
-                state["updated_at"] = _utcnow_iso()
-                if "understanding" not in state.get("completed_stages", []):
-                    state.setdefault("completed_stages", []).append("understanding")
-                _mark_dirty(template_id)
-
-                # 立即持久化 prompt_description 到数据库
-                async with SessionLocal() as session:
-                    tpl = await session.get(VideoAITemplate, uuid_val)
-                    if tpl:
-                        tpl.prompt_description = prompt_description
-                        tpl.process_state = json.dumps(state, ensure_ascii=False)
-                        await session.commit()
-
-            # ========== 步骤 2: 抽帧并上传 CDN（1s一帧，最多重试 3 次）==========
+            # ========== 步骤 1: 抽帧并上传 CDN（1s一帧，最多重试 3 次）==========
+            # 流水线顺序：
+            # 1) imagegen → 2) outfit_selecting → 3) outfit_detailing
+            # 4) intent_classify → 5) understanding
+            # 6) product_imagegen → 7) product_search → 8) outfit_regen
+            # （视频理解依赖 outfit_detailing 输出的 solo_products 与 intent_classify 输出的 JSON）
             if "imagegen" in completed_stages:
                 frame_shots = state.get("frame_shots") or []
                 logger.info("[%s] imagegen(frame extraction) skipped (already completed), %d frames", template_id, len(frame_shots))
@@ -1174,7 +1326,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] imagegen stage completed, %d frames saved", template_id, len(frame_shots))
 
-            # ========== 步骤 3: Gemini 识别 Unique 穿搭（最多重试 3 次）==========
+            # ========== 步骤 2: Gemini 识别 Unique 穿搭（最多重试 3 次）==========
             if "outfit_selecting" in completed_stages:
                 outfit_shots = state.get("outfit_shots") or []
                 logger.info("[%s] outfit_selecting skipped (already completed), %d outfits", template_id, len(outfit_shots))
@@ -1222,7 +1374,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] outfit_selecting stage completed, %d unique outfits", template_id, len(outfit_shots))
 
-            # ========== 步骤 4a: 穿搭单品理解（每个穿搭 → outfit_style + solo_products）==========
+            # ========== 步骤 3: 穿搭单品理解（每个穿搭 → outfit_style + solo_products）==========
             if "outfit_detailing" in completed_stages:
                 outfit_details = state.get("outfit_detailing_progress") or []
                 logger.info("[%s] outfit_detailing skipped (already completed), %d outfits", template_id, len(outfit_details))
@@ -1251,7 +1403,67 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] outfit_detailing stage completed, %d outfits analyzed", template_id, len(outfit_details))
 
-            # ========== 步骤 4b: 单品图生成 ==========
+            # ========== 步骤 4: 意图识别（JSON 输出，最多重试 3 次）==========
+            if "intent_classify" in completed_stages:
+                intent_json = state.get("intent_json") or {}
+                logger.info("[%s] intent_classify skipped (already completed), intent=%s",
+                            template_id, intent_json.get("content_intent"))
+            else:
+                _set_status(template_id, VideoAIProcessStatus.understanding)
+                logger.info("[%s] intent_classify stage started", template_id)
+                intent_json = await _run_intent_classify_stage(
+                    template_id=template_id,
+                    video_url=video_url,
+                    outfit_details=outfit_details,
+                    model=intent_classify_model,
+                    prompt=intent_classify_prompt,
+                    temperature=intent_classify_temperature,
+                )
+                state["intent_json"] = intent_json
+                state["updated_at"] = _utcnow_iso()
+                if "intent_classify" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("intent_classify")
+                _mark_dirty(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        extra = dict(tpl.extra or {})
+                        extra["intent_json"] = intent_json
+                        tpl.extra = extra
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
+                        await session.commit()
+                logger.info("[%s] intent_classify stage completed", template_id)
+
+            # ========== 步骤 5: 视频理解（按 content_intent 选 prompt，输出文本）==========
+            if "understanding" in completed_stages:
+                prompt_description = state.get("prompt_description") or ""
+                logger.info("[%s] understanding skipped (already completed), prompt_description=%d chars",
+                            template_id, len(prompt_description))
+            else:
+                _set_status(template_id, VideoAIProcessStatus.understanding)
+                logger.info("[%s] understanding stage started", template_id)
+                prompt_description = await _run_understanding_stage(
+                    template_id=template_id,
+                    video_url=video_url,
+                    intent_json=intent_json,
+                    model=understand_model,
+                    temperature=understand_temperature,
+                    prompts_by_intent=understand_prompts_by_intent,
+                )
+                state["prompt_description"] = prompt_description
+                state["updated_at"] = _utcnow_iso()
+                if "understanding" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("understanding")
+                _mark_dirty(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        tpl.prompt_description = prompt_description
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
+                        await session.commit()
+                logger.info("[%s] understanding stage completed", template_id)
+
+            # ========== 步骤 6: 单品图生成 ==========
             if "product_imagegen" in completed_stages:
                 product_gen_results = state.get("product_gen_results") or []
                 logger.info("[%s] product_imagegen skipped (already completed)", template_id)
@@ -1282,7 +1494,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] product_imagegen stage completed", template_id)
 
-            # ========== 步骤 4b2: 商品搜索（单品描述 + 单品图 → topMatch）==========
+            # ========== 步骤 7: 商品搜索（单品描述 + 单品图 → topMatch）==========
             if _PRODUCT_SEARCH_STAGE in completed_stages:
                 product_gen_results = state.get("product_search_results") or state.get("product_gen_results") or []
                 logger.info("[%s] product_search skipped (already completed)", template_id)
@@ -1310,7 +1522,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] product_search stage completed", template_id)
 
-            # ========== 步骤 4c: 新造型图生成 ==========
+            # ========== 步骤 8: 新造型图生成 ==========
             if "outfit_regen" in completed_stages:
                 final_outfits = state.get("final_outfits") or []
                 logger.info("[%s] outfit_regen skipped (already completed), %d outfits", template_id, len(final_outfits))
@@ -1371,9 +1583,13 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 )
 
         except asyncio.CancelledError:
-            # 任务被取消，标记为暂停
-            _set_status(template_id, VideoAIProcessStatus.paused)
-            await _persist_states([template_id])
+            # 进程关停时取消的任务保留运行中状态，由 recover_stuck_templates_on_startup 续跑；
+            # 仅在用户显式 pause 触发的取消时写 paused。
+            if not _shutting_down:
+                _set_status(template_id, VideoAIProcessStatus.paused)
+                await _persist_states([template_id])
+            else:
+                logger.info("[%s] pipeline cancelled due to shutdown; status preserved for resume", template_id)
             raise
         except Exception as exc:
             # 任务失败，记录错误
@@ -1459,6 +1675,31 @@ async def enqueue_template(template_id: str, *, clear_stages: bool = False) -> N
         state["completed_stages"] = []
         state["prompt_description"] = ""
         state["extracted_shots"] = []
+        for key in (
+            "frame_shots", "outfit_shots", "outfit_detailing_progress",
+            "intent_json", "product_gen_results", "product_search_results", "final_outfits",
+        ):
+            state.pop(key, None)
+        # 同步清掉 DB extra 与 extracted_shots，并重置 process_status，避免队列处理器跳过 paused/fail 模板
+        try:
+            uuid_val = UUID(template_id)
+            async with SessionLocal() as session:
+                tpl = await session.get(VideoAITemplate, uuid_val)
+                if tpl:
+                    extra = dict(tpl.extra or {})
+                    for key in (
+                        "frame_shots", "outfit_shots", "outfit_detailing_progress",
+                        "intent_json", "product_gen_results", "product_search_results", "final_outfits",
+                    ):
+                        extra.pop(key, None)
+                    tpl.extra = extra
+                    tpl.extracted_shots = []
+                    tpl.prompt_description = ""
+                    tpl.process_status = VideoAIProcessStatus.pending
+                    tpl.process_error = None
+                    await session.commit()
+        except Exception as exc:
+            logger.warning("[%s] enqueue_template clear_stages DB cleanup failed: %s", template_id, exc)
         logger.info("[%s] restarting from scratch (completed_stages cleared)", template_id)
     else:
         logger.info("[%s] resuming from completed_stages=%s", template_id, state.get("completed_stages", []))
@@ -1510,208 +1751,13 @@ async def restart_template(template_id: str) -> None:
 
 async def restart_from_stage2(template_id: str) -> None:
     """
-    从阶段二重跑：保留阶段一（视频理解/prompt_description），
-    清除 imagegen 及之后的所有阶段数据，重新执行抽帧生图→穿搭识别→…流程。
+    重新生图：清除全部已完成阶段与中间产物，从头开始整条流水线。
+
+    新管道下视频理解依赖 outfit_detailing 输出，无法再独立保留，因此与
+    `restart_template` 行为一致——保留入口名以兼容现有调用方/前端按钮。
     """
-    # 先停止正在运行的任务
-    task = video_ai_worker_tasks.get(template_id)
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-    # 确保内存中有 state（从 DB 恢复）
-    if template_id not in video_ai_states:
-        try:
-            uuid_val = UUID(template_id)
-            async with SessionLocal() as session:
-                tpl = await session.get(VideoAITemplate, uuid_val)
-                if tpl and tpl.process_state:
-                    video_ai_states[template_id] = json.loads(tpl.process_state)
-        except Exception as exc:
-            logger.warning("[%s] restart_from_stage2: failed to restore state: %s", template_id, exc)
-
-    state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
-
-    # 只保留 understanding 阶段，清除其余
-    completed = state.get("completed_stages") or []
-    state["completed_stages"] = [s for s in completed if s == "understanding"]
-    state["frame_shots"] = []
-    state["outfit_shots"] = []
-    state["outfit_detailing_progress"] = []
-    state["product_gen_results"] = []
-    state["product_search_results"] = []
-    state["final_outfits"] = []
-    state["extracted_shots"] = []
-    state["status"] = VideoAIProcessStatus.pending.value
-    state["error_message"] = ""
-    state["updated_at"] = _utcnow_iso()
-    _mark_dirty(template_id)
-
-    # 同步清理 DB extra 字段（保留 understanding 之外的快照数据不需要了）
-    try:
-        uuid_val = UUID(template_id)
-        async with SessionLocal() as session:
-            tpl = await session.get(VideoAITemplate, uuid_val)
-            if tpl:
-                tpl.process_status = VideoAIProcessStatus.pending
-                tpl.process_error = None
-                tpl.extracted_shots = []
-                extra = dict(tpl.extra or {})
-                for key in ("frame_shots", "outfit_shots", "outfit_detailing_progress",
-                            "product_gen_results", "product_search_results", "final_outfits"):
-                    extra.pop(key, None)
-                tpl.extra = extra
-                tpl.process_state = json.dumps(state, ensure_ascii=False)
-                await session.commit()
-    except Exception as exc:
-        logger.warning("[%s] restart_from_stage2: DB cleanup failed: %s", template_id, exc)
-
-    dirty_video_ai_ids.discard(template_id)
-    _ensure_persist_worker()
-    await video_ai_queue.put(template_id)
-    logger.info("[%s] restart_from_stage2 enqueued (keeping understanding stage)", template_id)
-
-
-async def reanalyze_template(template_id: str, max_retries: int = 3) -> None:
-    """
-    仅重新执行视频理解（understanding）步骤，更新 prompt_description，
-    不跑后续的抽帧、穿搭识别和生成阶段。
-    失败自动重试最多 max_retries 次。
-    """
-    from uuid import UUID
-    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
-    from app.services.ai_api import call_gemini_api
-    from app.models.video_source import VideoSource
-
-    uuid_val = UUID(template_id)
-
-    async with SessionLocal() as session:
-        tpl = await session.get(VideoAITemplate, uuid_val)
-        if not tpl:
-            raise ValueError("模板不存在")
-
-        # 加载视频 URL
-        video_url: str | None = None
-        if tpl.video_source_id:
-            vs = await session.get(VideoSource, tpl.video_source_id)
-            if vs:
-                video_url = vs.local_video_url or vs.video_url
-        if not video_url:
-            raise ValueError("视频地址不可用")
-
-        # 加载配置
-        if tpl.owner_id is not None:
-            pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
-            understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
-            understand_prompt = pipeline_cfg.understand_prompt or "请描述这个视频的内容，包括场景、人物、服装风格等。"
-            understand_temperature = pipeline_cfg.understand_temperature
-        else:
-            understand_model = "gemini-3.1-pro-preview"
-            understand_prompt = "请描述这个视频的内容，包括场景、人物、服装风格等。"
-            understand_temperature = 0.3
-
-    # 带重试的 AI 调用（在 session 外执行，避免长时间占用连接）
-    last_exc: Exception | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            prompt_description = await call_gemini_api(
-                model_name=understand_model,
-                video_url=video_url,
-                prompt=understand_prompt,
-                temperature=understand_temperature,
-            )
-            break
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("[%s] reanalyze attempt %d/%d failed: %s", template_id, attempt, max_retries, exc)
-            if attempt < max_retries:
-                await asyncio.sleep(2 ** attempt)
-    else:
-        raise last_exc  # type: ignore[misc]
-
-    # 更新数据库
-    async with SessionLocal() as session:
-        from sqlalchemy import select as sa_select, update as sa_update
-        from app.models.video_task import VideoTask
-
-        tpl = await session.get(VideoAITemplate, uuid_val)
-        if tpl:
-            tpl.prompt_description = prompt_description
-            await session.commit()
-
-        # 将新 prompt 回写到关联的 video_tasks，并标记 is_prompt_updated=True
-        await session.execute(
-            sa_update(VideoTask)
-            .where(VideoTask.template_id == uuid_val)
-            .values(prompt=prompt_description, is_prompt_updated=True)
-        )
-        await session.commit()
-
-    # 同步更新内存状态（如果存在的话）
-    if template_id in video_ai_states:
-        video_ai_states[template_id]["prompt_description"] = prompt_description
-        video_ai_states[template_id]["updated_at"] = _utcnow_iso()
-
-    logger.info("[%s] reanalyze completed, prompt_description=%d chars", template_id, len(prompt_description))
-
-
-async def batch_reanalyze_templates(
-    owner_id: str | None = None,
-    concurrency: int = 5,
-    template_ids: list[str] | None = None,
-) -> dict:
-    """
-    后台批量重新分析所有 success 状态的模板。
-    使用 Semaphore 控制并发，每个模板内部自带重试。
-    如果传入 template_ids，则只分析指定的模板（仍过滤 success 状态）。
-
-    Returns:
-        {"total": N, "success": N, "fail": N, "errors": {template_id: error_msg}}
-    """
-    from sqlalchemy import select as sa_select
-    from uuid import UUID
-
-    # 1. 查询目标模板
-    async with SessionLocal() as session:
-        stmt = sa_select(VideoAITemplate.id).where(
-            VideoAITemplate.process_status == VideoAIProcessStatus.success
-        )
-        if owner_id is not None:
-            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
-        if template_ids is not None:
-            stmt = stmt.where(VideoAITemplate.id.in_([UUID(tid) for tid in template_ids]))
-        rows = (await session.execute(stmt)).scalars().all()
-
-    template_ids = [str(tid) for tid in rows]
-    if not template_ids:
-        return {"total": 0, "success": 0, "fail": 0, "errors": {}}
-
-    logger.info("batch_reanalyze started: %d templates, concurrency=%d", len(template_ids), concurrency)
-
-    # 2. 并发执行，Semaphore 限流
-    sem = asyncio.Semaphore(_CONCURRENCY)
-    results: dict[str, str | None] = {}  # template_id -> error_msg or None
-
-    async def _worker(tid: str) -> None:
-        async with sem:
-            try:
-                await reanalyze_template(tid)
-                results[tid] = None
-            except Exception as exc:
-                results[tid] = str(exc)
-                logger.error("[%s] batch_reanalyze failed: %s", tid, exc)
-
-    await asyncio.gather(*[_worker(tid) for tid in template_ids])
-
-    success_count = sum(1 for v in results.values() if v is None)
-    fail_count = sum(1 for v in results.values() if v is not None)
-    errors = {k: v for k, v in results.items() if v is not None}
-
-    logger.info("batch_reanalyze done: total=%d success=%d fail=%d", len(template_ids), success_count, fail_count)
-    return {"total": len(template_ids), "success": success_count, "fail": fail_count, "errors": errors}
+    await enqueue_template(template_id, clear_stages=True)
+    logger.info("[%s] restart_from_stage2 (full reset) enqueued", template_id)
 
 
 async def batch_restart_templates(
@@ -1843,47 +1889,6 @@ async def batch_pause_templates(
             logger.error("[%s] batch_pause failed: %s", tid, exc)
 
     logger.info("batch_pause done: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
-    return {"total": len(tids), "success": success_count, "fail": fail_count}
-
-
-async def batch_restart_stage2_templates(owner_id: str | None = None) -> dict:
-    """
-    后台批量对所有 success 状态的模板执行 restart_from_stage2（保留视频理解，从阶段2抽帧重跑）。
-    Returns:
-        {"total": N, "success": N, "fail": N}
-    """
-    from sqlalchemy import select as sa_select
-    from uuid import UUID
-
-    async with SessionLocal() as session:
-        stmt = sa_select(VideoAITemplate.id).where(
-            VideoAITemplate.process_status == VideoAIProcessStatus.success
-        )
-        if owner_id is not None:
-            stmt = stmt.where(VideoAITemplate.owner_id == UUID(owner_id))
-        rows = (await session.execute(stmt)).scalars().all()
-
-    tids = [str(tid) for tid in rows]
-    if not tids:
-        return {"total": 0, "success": 0, "fail": 0}
-
-    logger.info("batch_restart_stage2 started: %d templates", len(tids))
-    sem = asyncio.Semaphore(_CONCURRENCY)
-    success_count = 0
-    fail_count = 0
-
-    async def _worker(tid: str) -> None:
-        nonlocal success_count, fail_count
-        async with sem:
-            try:
-                await restart_from_stage2(tid)
-                success_count += 1
-            except Exception as exc:
-                fail_count += 1
-                logger.error("[%s] batch_restart_stage2 failed: %s", tid, exc)
-
-    await asyncio.gather(*[_worker(tid) for tid in tids])
-    logger.info("batch_restart_stage2 done: total=%d success=%d fail=%d", len(tids), success_count, fail_count)
     return {"total": len(tids), "success": success_count, "fail": fail_count}
 
 
@@ -2023,7 +2028,10 @@ async def stop_video_ai_queue_processor() -> None:
 
     在应用关闭时调用
     """
-    global _queue_processor_task, _persist_worker_task
+    global _queue_processor_task, _persist_worker_task, _shutting_down
+
+    # 标记进程正在关停，避免被取消的管道把状态写成 paused
+    _shutting_down = True
 
     # 取消所有正在运行的管道任务
     for tid, task in list(video_ai_worker_tasks.items()):

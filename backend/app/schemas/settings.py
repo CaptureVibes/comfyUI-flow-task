@@ -59,8 +59,16 @@ class CandidateVideoListResponse(BaseModel):
 
 class PipelineSettingsPayload(BaseModel):
     understand_model: str = ""
-    understand_prompt: str = ""
+    understand_prompt: str = ""  # 兼容字段，已弃用
     understand_temperature: float = 0.3
+    understand_prompt_beauty_show: str = ""
+    understand_prompt_knowledge: str = ""
+    understand_prompt_persona_story: str = ""
+    understand_prompt_trend_meme: str = ""
+    # 意图识别（视频理解之前）
+    intent_classify_model: str = "gemini-3.1-pro-preview"
+    intent_classify_prompt: str = ""
+    intent_classify_temperature: float = 0.3
     # 第二阶段：抽帧生图（Nano2）
     imagegen_model: str = "gemini-3.1-flash-image-preview"
     imagegen_prompt: str = ""

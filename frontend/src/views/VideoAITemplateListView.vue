@@ -33,14 +33,6 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button class="vai-retry-btn" :loading="batchStage2ing" @click="handleBatchRestartStage2">
-          <svg v-if="!batchStage2ing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          一键生成造型图
-        </el-button>
-        <el-button class="vai-retry-btn" :loading="batchReanalyzing" @click="handleBatchReanalyze">
-          <svg v-if="!batchReanalyzing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-          一键重新分析
-        </el-button>
         <el-button class="vai-config-btn" @click="openConfig">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:6px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           流程配置
@@ -62,17 +54,9 @@
         <div class="vai-stat-value">{{ templateStats.pending || 0 }}</div>
         <div class="vai-stat-sub">pending</div>
       </div>
-      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'understanding' }" style="--stat-color: #6366f1; --stat-bg: #eef2ff;" @click="toggleFilter('understanding')">
-        <div class="vai-stat-top">
-          <span class="vai-stat-label">理解视频</span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-        </div>
-        <div class="vai-stat-value">{{ templateStats.understanding || 0 }}</div>
-        <div class="vai-stat-sub">understanding</div>
-      </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'imagegen' }" style="--stat-color: #8b5cf6; --stat-bg: #ede9fe;" @click="toggleFilter('imagegen')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">抽帧上传</span>
+          <span class="vai-stat-label">阶段1 抽帧上传</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
         </div>
         <div class="vai-stat-value">{{ templateStats.imagegen || 0 }}</div>
@@ -80,7 +64,7 @@
       </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_selecting' }" style="--stat-color: #ec4899; --stat-bg: #fce7f3;" @click="toggleFilter('outfit_selecting')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">穿搭识别</span>
+          <span class="vai-stat-label">阶段2 穿搭识别</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.57a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.57a2 2 0 0 0-1.34-2.23z"/></svg>
         </div>
         <div class="vai-stat-value">{{ templateStats.outfit_selecting || 0 }}</div>
@@ -88,15 +72,23 @@
       </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_detailing' }" style="--stat-color: #a855f7; --stat-bg: #faf5ff;" @click="toggleFilter('outfit_detailing')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">单品分析</span>
+          <span class="vai-stat-label">阶段3 单品理解</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         </div>
         <div class="vai-stat-value">{{ templateStats.outfit_detailing || 0 }}</div>
         <div class="vai-stat-sub">outfit_detailing</div>
       </div>
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'understanding' }" style="--stat-color: #6366f1; --stat-bg: #eef2ff;" @click="toggleFilter('understanding')">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">阶段4-5 视频理解</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.understanding || 0 }}</div>
+        <div class="vai-stat-sub">intent + understanding</div>
+      </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'product_imagegen' }" style="--stat-color: #f97316; --stat-bg: #fff7ed;" @click="toggleFilter('product_imagegen')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">单品生图</span>
+          <span class="vai-stat-label">阶段6 单品生图</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         </div>
         <div class="vai-stat-value">{{ templateStats.product_imagegen || 0 }}</div>
@@ -104,7 +96,7 @@
       </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_regen' }" style="--stat-color: #06b6d4; --stat-bg: #ecfeff;" @click="toggleFilter('outfit_regen')">
         <div class="vai-stat-top">
-          <span class="vai-stat-label">造型重生</span>
+          <span class="vai-stat-label">阶段7 造型重生</span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
         </div>
         <div class="vai-stat-value">{{ templateStats.outfit_regen || 0 }}</div>
@@ -295,12 +287,13 @@
           <div class="vt-tabs">
             <button
               v-for="tab in [
-                { key: 'step1', label: '阶段1 视频理解' },
-                { key: 'step2', label: '阶段2 抽帧上传' },
-                { key: 'step2b', label: '阶段3 穿搭识别' },
-                { key: 'step3a', label: '阶段4 单品理解' },
-                { key: 'step3b', label: '阶段4 单品生图' },
-                { key: 'step3c', label: '阶段4 造型重生' }
+                { key: 'step_imagegen', label: '阶段1 抽帧上传' },
+                { key: 'step_outfit_select', label: '阶段2 穿搭识别' },
+                { key: 'step_outfit_detail', label: '阶段3 单品理解' },
+                { key: 'step_intent', label: '阶段4 意图识别' },
+                { key: 'step_understand', label: '阶段5 视频理解' },
+                { key: 'step_product_gen', label: '阶段6 单品生图' },
+                { key: 'step_outfit_regen', label: '阶段7 造型重生' }
               ]"
               :key="tab.key"
               class="vt-tab-btn"
@@ -312,34 +305,15 @@
           </div>
 
           <div class="vt-tab-content">
-            <!-- Step 1 -->
-            <div v-if="configTab === 'step1'">
-              <div class="cfg-step-desc">AI 理解视频全局内容，输出整体文字描述。此结果将作为背景信息展示在模板详情中。</div>
-              <div class="vt-form">
-                <div class="vt-form-item">
-                  <label class="vt-label">模型名称</label>
-                  <input type="text" v-model="cfg.understand_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
-                </div>
-                <div class="vt-form-item">
-                  <label class="vt-label">提示词 (Prompt)</label>
-                  <textarea v-model="cfg.understand_prompt" class="vt-textarea" rows="4" placeholder="请描述这个视频的内容，包括场景、人物、服装风格等。"></textarea>
-                </div>
-                <div class="vt-form-item">
-                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.understand_temperature).toFixed(1) }}</label>
-                  <input type="range" v-model.number="cfg.understand_temperature" min="0" max="2" step="0.1" class="vt-range" />
-                </div>
-              </div>
-            </div>
-
-            <!-- Step 2：抽帧上传（无需配置，仅说明） -->
-            <div v-if="configTab === 'step2'">
+            <!-- 阶段1：抽帧上传（无需配置，仅说明） -->
+            <div v-if="configTab === 'step_imagegen'">
               <div class="cfg-step-desc">
                 对视频（超过 15s 只取前 15s）每隔 <strong>1 秒</strong>抽一帧，并发上传到 CDN。抽帧图将落库保存，供后续识别穿搭使用。此步骤无需配置。
               </div>
             </div>
 
-            <!-- Step 2b：穿搭识别 -->
-            <div v-if="configTab === 'step2b'">
+            <!-- 阶段2：穿搭识别 -->
+            <div v-if="configTab === 'step_outfit_select'">
               <div class="cfg-step-desc">
                 将所有抽帧图发给 Gemini，识别视频中出现的 Unique 穿搭，每套穿搭选出最能代表该穿搭的一帧。必须输出 JSON（使用 json_schema 约束），结果落库保存。
               </div>
@@ -360,8 +334,8 @@
               </div>
             </div>
 
-            <!-- Step 3a：单品理解 -->
-            <div v-if="configTab === 'step3a'">
+            <!-- 阶段3：单品理解 -->
+            <div v-if="configTab === 'step_outfit_detail'">
               <div class="cfg-step-desc">
                 对每一个 Unique 穿搭图，让 Gemini 输出整体造型风格描述和所有穿搭单品的名称、描述。输出为 JSON 格式（含 outfit_style 和 solo_products 数组）。
               </div>
@@ -382,8 +356,65 @@
               </div>
             </div>
 
-            <!-- Step 3b：单品生图 -->
-            <div v-if="configTab === 'step3b'">
+            <!-- 阶段4：意图识别 -->
+            <div v-if="configTab === 'step_intent'">
+              <div class="cfg-step-desc">
+                结合视频与上一步输出的 solo_products（按造型分组的 JSON），让 Gemini 判断视频的核心创作意图。必须返回结构化 JSON（含 content_intent 等字段，已自动约束 json_schema），content_intent 必须是
+                <strong>beauty_show / knowledge / persona_story / trend_meme</strong> 之一，否则自动重试最多 3 次。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">意图识别模型</label>
+                  <input type="text" v-model="cfg.intent_classify_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">意图识别提示词 (Prompt)</label>
+                  <textarea v-model="cfg.intent_classify_prompt" class="vt-textarea" rows="6" placeholder="请分析这段视频，结合下面给出的穿搭单品列表（JSON），判断视频的核心创作意图...&#10;穿搭单品列表（JSON）：&#10;{solo_products}"></textarea>
+                  <div class="cfg-field-hint">支持变量 <code>{solo_products}</code>（注入聚合后的 outfit_style + solo_products JSON）。留空使用内置默认提示词。</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.intent_classify_temperature).toFixed(1) }}</label>
+                  <input type="range" v-model.number="cfg.intent_classify_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 阶段5：视频理解（按 content_intent 分支，4 个 prompt 共用模型/温度） -->
+            <div v-if="configTab === 'step_understand'">
+              <div class="cfg-step-desc">
+                根据上一步输出的 <code>content_intent</code> 选择对应分支提示词，结合视频生成一段最终用于后续视频生成的提示词文本（落库到 prompt_description）。
+              </div>
+              <div class="vt-form">
+                <div class="vt-form-item">
+                  <label class="vt-label">视频理解模型</label>
+                  <input type="text" v-model="cfg.understand_model" class="vt-input" placeholder="gemini-2.5-flash-preview-05-20（留空使用默认）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.understand_temperature).toFixed(1) }}</label>
+                  <input type="range" v-model.number="cfg.understand_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">分支：beauty_show（穿搭/美感）</label>
+                  <textarea v-model="cfg.understand_prompt_beauty_show" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">分支：knowledge（知识/讲解）</label>
+                  <textarea v-model="cfg.understand_prompt_knowledge" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">分支：persona_story（人物/故事）</label>
+                  <textarea v-model="cfg.understand_prompt_persona_story" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">分支：trend_meme（潮流/梗）</label>
+                  <textarea v-model="cfg.understand_prompt_trend_meme" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                </div>
+                <div class="cfg-field-hint">每个分支提示词中可使用 <code>{intent_json}</code> 占位符（自动 json.dumps 注入完整意图识别 JSON）。</div>
+              </div>
+            </div>
+
+            <!-- 阶段6：单品生图 -->
+            <div v-if="configTab === 'step_product_gen'">
               <div class="cfg-step-desc">
                 针对每个单品，以其描述为提示词 + 造型图为参考，生成该单品的独立展示图。所有单品并发生成。
               </div>
@@ -424,8 +455,8 @@
               </div>
             </div>
 
-            <!-- Step 3c：新造型图生成 -->
-            <div v-if="configTab === 'step3c'">
+            <!-- 阶段7：新造型图生成 -->
+            <div v-if="configTab === 'step_outfit_regen'">
               <div class="cfg-step-desc">
                 将每个穿搭的所有单品图 + outfit_style 作为提示词，生成新的整体造型图。新造型图将作为最终结果进入后续步骤。
               </div>
@@ -562,9 +593,7 @@ import {
   deleteVideoAITemplate,
   batchPauseTemplates,
   batchRetryTemplates,
-  batchReanalyzeTemplates,
   batchRestartTemplates,
-  batchRestartStage2Templates,
 } from '../api/video_ai_templates'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 import { isDuplicateRequestError } from '../api/http'
@@ -581,8 +610,6 @@ const actioning = ref(null)
 const batchResuming = ref(false)
 const batchPausing = ref(false)
 const batchRestarting = ref(false)
-const batchStage2ing = ref(false)
-const batchReanalyzing = ref(false)
 const items = ref([])
 const total = ref(0)
 const page = ref(Number(route.query.page) || 1)
@@ -597,29 +624,36 @@ const batchPrimaryLoading = computed(() => batchPausing.value || batchResuming.v
 
 // Config dialog state
 const showConfig = ref(false)
-const configTab = ref('step1')
+const configTab = ref('step_imagegen')
 const configLoading = ref(false)
 const configSaving = ref(false)
 
 const cfg = reactive({
-  // 步骤1
-  understand_model: '',
-  understand_prompt: '',
-  understand_temperature: 0.3,
-  // 步骤2b：穿搭识别
+  // 阶段2：穿搭识别
   outfit_select_model: 'gemini-2.5-flash-preview-05-20',
   outfit_select_prompt: '',
   outfit_select_temperature: 0.3,
-  // 步骤3a：单品理解
+  // 阶段3：单品理解
   outfit_detail_model: 'gemini-2.5-flash-preview-05-20',
   outfit_detail_prompt: '',
   outfit_detail_temperature: 0.3,
-  // 步骤3b：单品生图
+  // 阶段4：意图识别（JSON）
+  intent_classify_model: 'gemini-2.5-flash-preview-05-20',
+  intent_classify_prompt: '',
+  intent_classify_temperature: 0.3,
+  // 阶段5：视频理解（按 content_intent 分支，共用 model/temperature）
+  understand_model: '',
+  understand_temperature: 0.3,
+  understand_prompt_beauty_show: '',
+  understand_prompt_knowledge: '',
+  understand_prompt_persona_story: '',
+  understand_prompt_trend_meme: '',
+  // 阶段6：单品生图
   product_imagegen_model: 'gemini-2.5-flash-preview-05-20',
   product_imagegen_prompt: '',
   product_imagegen_size: '1:1',
   product_imagegen_quality: '2K',
-  // 步骤3c：新造型图生成
+  // 阶段8：新造型图生成
   outfit_regen_model: 'gemini-2.5-flash-preview-05-20',
   outfit_regen_prompt: '',
   outfit_regen_size: '9:16',
@@ -630,20 +664,26 @@ const hasJsonError = computed(() => false)
 
 async function openConfig() {
   showConfig.value = true
-  configTab.value = 'step1'
+  configTab.value = 'step_imagegen'
   configLoading.value = true
   try {
     const data = await fetchPipelineSettings()
     Object.assign(cfg, {
-      understand_model: data.understand_model || '',
-      understand_prompt: data.understand_prompt || '',
-      understand_temperature: data.understand_temperature ?? 0.3,
       outfit_select_model: data.outfit_select_model || 'gemini-2.5-flash-preview-05-20',
       outfit_select_prompt: data.outfit_select_prompt || '',
       outfit_select_temperature: data.outfit_select_temperature ?? 0.3,
       outfit_detail_model: data.outfit_detail_model || 'gemini-2.5-flash-preview-05-20',
       outfit_detail_prompt: data.outfit_detail_prompt || '',
       outfit_detail_temperature: data.outfit_detail_temperature ?? 0.3,
+      intent_classify_model: data.intent_classify_model || 'gemini-2.5-flash-preview-05-20',
+      intent_classify_prompt: data.intent_classify_prompt || '',
+      intent_classify_temperature: data.intent_classify_temperature ?? 0.3,
+      understand_model: data.understand_model || '',
+      understand_temperature: data.understand_temperature ?? 0.3,
+      understand_prompt_beauty_show: data.understand_prompt_beauty_show || '',
+      understand_prompt_knowledge: data.understand_prompt_knowledge || '',
+      understand_prompt_persona_story: data.understand_prompt_persona_story || '',
+      understand_prompt_trend_meme: data.understand_prompt_trend_meme || '',
       product_imagegen_model: data.product_imagegen_model || 'gemini-2.5-flash-preview-05-20',
       product_imagegen_prompt: data.product_imagegen_prompt || '',
       product_imagegen_size: data.product_imagegen_size || '1:1',
@@ -669,8 +709,14 @@ async function saveConfig() {
   try {
     await updatePipelineSettings({
       understand_model: cfg.understand_model,
-      understand_prompt: cfg.understand_prompt,
       understand_temperature: cfg.understand_temperature,
+      understand_prompt_beauty_show: cfg.understand_prompt_beauty_show,
+      understand_prompt_knowledge: cfg.understand_prompt_knowledge,
+      understand_prompt_persona_story: cfg.understand_prompt_persona_story,
+      understand_prompt_trend_meme: cfg.understand_prompt_trend_meme,
+      intent_classify_model: cfg.intent_classify_model,
+      intent_classify_prompt: cfg.intent_classify_prompt,
+      intent_classify_temperature: cfg.intent_classify_temperature,
       outfit_select_model: cfg.outfit_select_model,
       outfit_select_prompt: cfg.outfit_select_prompt,
       outfit_select_temperature: cfg.outfit_select_temperature,
@@ -734,12 +780,12 @@ function toggleFilter(status) {
 
 const STATUS_CONFIG = {
   pending: { label: '排队中', type: 'info' },
-  understanding: { label: '理解视频', type: 'primary' },
-  imagegen: { label: '抽帧上传', type: '', customColor: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' },
-  outfit_selecting: { label: '穿搭识别', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' },
-  outfit_detailing: { label: '单品分析', type: '', customColor: '#a855f7', bg: '#faf5ff', border: '#e9d5ff' },
-  product_imagegen: { label: '单品生图', type: '', customColor: '#f97316', bg: '#fff7ed', border: '#fed7aa' },
-  outfit_regen: { label: '造型重生', type: '', customColor: '#06b6d4', bg: '#ecfeff', border: '#a5f3fc' },
+  imagegen: { label: '阶段1 抽帧上传', type: '', customColor: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' },
+  outfit_selecting: { label: '阶段2 穿搭识别', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' },
+  outfit_detailing: { label: '阶段3 单品理解', type: '', customColor: '#a855f7', bg: '#faf5ff', border: '#e9d5ff' },
+  understanding: { label: '阶段4-5 视频理解', type: 'primary' },
+  product_imagegen: { label: '阶段6 单品生图', type: '', customColor: '#f97316', bg: '#fff7ed', border: '#fed7aa' },
+  outfit_regen: { label: '阶段7 造型重生', type: '', customColor: '#06b6d4', bg: '#ecfeff', border: '#a5f3fc' },
   splitting: { label: '拆分图片', type: '', customColor: '#ec4899', bg: '#fdf2f8', border: '#fbcfe8' }, // legacy
   face_removing: { label: '消除人脸', type: '', customColor: '#f59e0b', bg: '#fffbeb', border: '#fde68a' }, // legacy
   upscaling: { label: '图片超分', type: '', customColor: '#0ea5e9', bg: '#f0f9ff', border: '#bae6fd' }, // legacy
@@ -871,29 +917,6 @@ async function handleBatchRestart() {
   }
 }
 
-async function handleBatchRestartStage2() {
-  try {
-    await ElMessageBox.confirm(
-      '将对所有"成功"状态的模板重跑阶段2（抽帧生图），保留视频理解结果。确认继续？',
-      '一键生成造型图',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  batchStage2ing.value = true
-  try {
-    await batchRestartStage2Templates()
-    ElMessage.success('已触发批量生成造型图，后台处理中…')
-    await loadData()
-    await loadStats()
-  } catch (err) {
-    ElMessage.error(err?.response?.data?.detail || '触发失败')
-  } finally {
-    batchStage2ing.value = false
-  }
-}
-
 async function loadData() {
   loading.value = true
   try {
@@ -996,27 +1019,6 @@ async function handleRestart(item) {
     ElMessage.error(err?.response?.data?.detail || '重跑失败')
   } finally {
     actioning.value = null
-  }
-}
-
-async function handleBatchReanalyze() {
-  try {
-    await ElMessageBox.confirm(
-      '确定对所有已成功的模板重新执行AI视频分析？将覆盖现有分析内容。',
-      '一键重新分析',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch { return }
-  batchReanalyzing.value = true
-  try {
-    await batchReanalyzeTemplates()
-    ElMessage.success('已触发批量重新分析，后台处理中')
-    await loadData()
-    await loadStats()
-  } catch (err) {
-    ElMessage.error(err?.response?.data?.detail || '触发批量重新分析失败')
-  } finally {
-    batchReanalyzing.value = false
   }
 }
 
