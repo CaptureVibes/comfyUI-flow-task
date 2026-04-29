@@ -525,7 +525,12 @@ async def _run_understanding_stage(
     if intent not in ALLOWED_INTENTS:
         raise ValueError(f"understanding stage got invalid intent: {intent!r}")
     template = (prompts_by_intent.get(intent) or "").strip() or DEFAULT_UNDERSTAND_PROMPTS[intent]
-    final_prompt = template.replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
+    outfit_ref_images_text = str(intent_json.get("outfit_ref_images_text") or "")
+    final_prompt = (
+        template
+        .replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
+        .replace("{outfit_ref_images_text}", outfit_ref_images_text)
+    )
     text = await call_gemini_api(
         model_name=model,
         prompt=final_prompt,
