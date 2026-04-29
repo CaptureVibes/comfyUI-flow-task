@@ -359,7 +359,7 @@
             <!-- 阶段4：意图识别 -->
             <div v-if="configTab === 'step_intent'">
               <div class="cfg-step-desc">
-                结合视频与上一步输出的 solo_products（按造型分组的 JSON），让 Gemini 判断视频的核心创作意图。必须返回结构化 JSON（含 content_intent 等字段，已自动约束 json_schema），content_intent 必须是
+                让 Gemini 直接基于视频判断核心创作意图。必须返回结构化 JSON（含 content_intent 等字段，已自动约束 json_schema），content_intent 必须是
                 <strong>beauty_show / knowledge / persona_story / trend_meme</strong> 之一，否则自动重试最多 3 次。
               </div>
               <div class="vt-form">
@@ -369,8 +369,8 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">意图识别提示词 (Prompt)</label>
-                  <textarea v-model="cfg.intent_classify_prompt" class="vt-textarea" rows="6" placeholder="请分析这段视频，结合下面给出的穿搭单品列表（JSON），判断视频的核心创作意图...&#10;穿搭单品列表（JSON）：&#10;{solo_products}"></textarea>
-                  <div class="cfg-field-hint">支持变量 <code>{solo_products}</code>（注入聚合后的 outfit_style + solo_products JSON）。留空使用内置默认提示词。</div>
+                  <textarea v-model="cfg.intent_classify_prompt" class="vt-textarea" rows="6" placeholder="请分析这段视频，判断视频的核心创作意图..."></textarea>
+                  <div class="cfg-field-hint">留空使用内置默认提示词。content_intent 由 json_schema 强约束。</div>
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">温度 (Temperature)：{{ Number(cfg.intent_classify_temperature).toFixed(1) }}</label>
