@@ -559,8 +559,10 @@ class OpenAPIAdapter(PublishAdapter):
             "title": data.title,
             "description": data.description,
             "tags": data.tags or [],
-            "promotion_code": promotion_code,
-            "ext_products": ext_products,
+            "ext_info": {
+                "promotion_code": promotion_code,
+                "ext_products": ext_products,
+            },
             "channels": [{"platform": c["platform"], "channel_id": c["channel_id"]} for c in channels],
             "external_id": str(data.sub_task_id),
         }
