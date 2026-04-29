@@ -402,22 +402,29 @@ async def batch_restart(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """批量全流程重跑（从头到尾入队），传入 target_date 只处理当天任务关联的模板。"""
+    """批量全流程重跑（从头到尾入队），传入 target_date 只处理当天任务关联的模板。
+
+    传入 target_date 时，模板若失败会把当天关联的视频任务标记为 abandoned。
+    """
     template_ids: list[str] | None = None
+    abandon_map: dict[str, list[str]] = {}
     if body.target_date:
         from datetime import date as _date
         parsed_date = _date.fromisoformat(body.target_date)
-        stmt = select(VideoTask.template_id).where(
+        stmt = select(VideoTask.id, VideoTask.template_id).where(
             VideoTask.target_date == parsed_date,
             VideoTask.template_id.is_not(None),
         )
         if owner_id is not None:
             stmt = stmt.where(VideoTask.owner_id == owner_id)
-        rows = (await session.execute(stmt)).scalars().all()
-        template_ids = list({str(tid) for tid in rows})
+        rows = (await session.execute(stmt)).all()
+        for task_id, tpl_id in rows:
+            abandon_map.setdefault(str(tpl_id), []).append(str(task_id))
+        template_ids = list(abandon_map.keys())
     asyncio.create_task(batch_restart_templates(
         owner_id=str(owner_id) if owner_id else None,
         template_ids=template_ids,
+        abandon_task_ids_on_fail=abandon_map or None,
     ))
     return {"status": "accepted"}
 

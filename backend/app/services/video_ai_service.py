@@ -34,6 +34,11 @@ video_ai_worker_tasks: dict[str, asyncio.Task] = {}
 video_ai_queue: asyncio.Queue[str] = asyncio.Queue()
 # pipeline 完成后需要同步 shots 到 video_tasks 的模板 ID 集合
 _sync_shots_on_success: set[str] = set()
+# pipeline 失败时需要把指定 video_tasks 标记为 abandoned 的映射：
+# {template_id: [video_task_id, ...]}
+# 由 daily-tasks "一键重试" 通过 batch_restart_templates 写入；
+# _sync_task_shots 在管道终态统一处理（成功仅同步 shots，失败 abandoned 关联任务）。
+_abandon_task_ids_on_fail: dict[str, list[str]] = {}
 
 # 队列处理器任务和持久化任务
 _queue_processor_task: asyncio.Task | None = None
@@ -1118,6 +1123,31 @@ async def _sync_task_shots(
     )
 
 
+async def _abandon_linked_tasks_if_marked(template_id: str) -> None:
+    """daily-tasks "一键重试" 专用：模板失败时，把对应 video_tasks 标记为 abandoned。
+
+    仅当 batch_restart_templates 通过 abandon_task_ids_on_fail 提前登记过本模板时
+    才生效；其他重跑入口不会触发，因此不影响 _run_pipeline 的主流程语义。
+    """
+    task_ids = _abandon_task_ids_on_fail.pop(template_id, None)
+    if not task_ids:
+        return
+    try:
+        from sqlalchemy import update as sa_update
+        from app.models.video_task import VideoTask
+        async with SessionLocal() as session:
+            await session.execute(
+                sa_update(VideoTask)
+                .where(VideoTask.id.in_([UUID(t) for t in task_ids]))
+                .where(VideoTask.status.notin_(["published", "abandoned"]))
+                .values(status="abandoned")
+            )
+            await session.commit()
+        logger.info("[%s] template failed → abandoned %d linked video_tasks", template_id, len(task_ids))
+    except Exception as exc:
+        logger.error("[%s] failed to abandon linked video_tasks: %s", template_id, exc)
+
+
 async def _delete_template_and_video_source(template_id: str, uuid_val: UUID) -> None:
     """删除模板及其关联的视频源（用于阶段3/4不可恢复失败时的清理）。"""
     try:
@@ -1602,6 +1632,8 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     _final_outfits,
                     state.get("prompt_description") or "",
                 )
+            # 模板成功跑完 → 取消"失败时废弃关联视频任务"的标记
+            _abandon_task_ids_on_fail.pop(template_id, None)
 
         except asyncio.CancelledError:
             # 进程关停时取消的任务保留运行中状态，由 recover_stuck_templates_on_startup 续跑；
@@ -1617,6 +1649,7 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             logger.exception("[%s] pipeline failed: %s", template_id, exc)
             _set_status(template_id, VideoAIProcessStatus.fail, error=str(exc))
             await _persist_states([template_id])
+            await _abandon_linked_tasks_if_marked(template_id)
         finally:
             # 清理任务引用
             video_ai_worker_tasks.pop(template_id, None)
@@ -1784,10 +1817,14 @@ async def restart_from_stage2(template_id: str) -> None:
 async def batch_restart_templates(
     owner_id: str | None = None,
     template_ids: list[str] | None = None,
+    abandon_task_ids_on_fail: dict[str, list[str]] | None = None,
 ) -> dict:
     """
     批量全流程重跑：入队 → 等待每个 pipeline 完成 → 同步 shots 到关联 video_tasks。
     传入 template_ids 则只处理这些模板；否则处理该 owner 所有模板。
+    abandon_task_ids_on_fail：{template_id: [video_task_id, ...]}，仅 daily-tasks
+    "一键重试" 使用——通过 _abandon_task_ids_on_fail 标记集传给
+    `_sync_task_shots` 在管道结束时统一处理（成功不影响、失败则 abandoned）。
     """
     from sqlalchemy import select as sa_select
     from uuid import UUID
@@ -1803,6 +1840,12 @@ async def batch_restart_templates(
     tids = [str(tid) for tid in rows]
     if not tids:
         return {"total": 0, "success": 0, "fail": 0}
+
+    if abandon_task_ids_on_fail:
+        for _tid in tids:
+            mapped = abandon_task_ids_on_fail.get(_tid)
+            if mapped:
+                _abandon_task_ids_on_fail[_tid] = list(mapped)
 
     logger.info("batch_restart started: %d templates", len(tids))
     success_count = 0
