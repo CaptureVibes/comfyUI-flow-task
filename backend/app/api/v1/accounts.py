@@ -1280,7 +1280,14 @@ async def _load_bulk_video_task_templates(
     if not unique_tagged_tpls:
         return ([], "no_tag_matching_templates") if with_reason else []
 
-    # TODO: 当前一键生成允许任何模板状态，包括 fail；后期如需收紧状态条件，在这里恢复过滤。
+    # 一键生成排除失败状态的模板（fail 模板的 prompt_description / shots 不完整或为空）
+    from app.models.enums import VideoAIProcessStatus
+    unique_tagged_tpls = [
+        tpl for tpl in unique_tagged_tpls if tpl.process_status != VideoAIProcessStatus.fail
+    ]
+    if not unique_tagged_tpls:
+        return ([], "all_templates_failed") if with_reason else []
+
     if use_used:
         unique_tpls = [tpl for tpl in unique_tagged_tpls if tpl.is_used]
         mode_skip_reason = "no_used_templates"
