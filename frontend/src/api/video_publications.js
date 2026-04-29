@@ -104,6 +104,11 @@ export async function syncPublicationStatus(publicationId) {
   return data
 }
 
+export async function retryPublication(publicationId) {
+  const { data } = await http.post(`/video-publications/${publicationId}/retry`)
+  return data
+}
+
 /**
  * 查询上传任务各渠道视频指标
  * @param {Object} params - { task_id?, external_id? }

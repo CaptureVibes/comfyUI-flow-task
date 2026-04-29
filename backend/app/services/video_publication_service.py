@@ -486,12 +486,12 @@ async def _apply_publication_status_to_sub_task(
         return
 
     if target_status == "publishing":
-        if sub_task.status in ("queued", "pending_publish"):
+        if sub_task.status in ("queued", "pending_publish", "publish_failed"):
             sub_task.status = "publishing"
             sub_task.task.status = "publishing"
         return
 
-    if sub_task.status in ("queued", "pending_publish", "publishing"):
+    if sub_task.status in ("queued", "pending_publish", "publish_failed", "publishing"):
         sub_task.status = target_status
         sub_task.task.status = _compute_parent_status(sub_task.task.sub_tasks)
 
@@ -986,6 +986,45 @@ class VideoPublicationService:
             raise RuntimeError(f"所有发布渠道提交失败: {error_message}")
 
         return publication
+
+    async def retry_publication(self, publication_id: uuid.UUID, owner_id: uuid.UUID | None) -> VideoPublication:
+        """用上次的 request_payload 直接重新发布，sub_task 必须处于 publish_failed 状态。"""
+        from app.models.video_task import VideoSubTask, VideoTask
+
+        pub = await self.get_publication(publication_id)
+        if pub is None:
+            raise HTTPException(status_code=404, detail="发布记录不存在")
+
+        # 权限校验
+        result = await self.db.execute(
+            select(VideoSubTask)
+            .where(VideoSubTask.id == pub.sub_task_id)
+            .options(selectinload(VideoSubTask.task))
+        )
+        sub_task = result.scalar_one_or_none()
+        if sub_task is None:
+            raise HTTPException(status_code=404, detail="子任务不存在")
+        if owner_id is not None and sub_task.task.owner_id != owner_id:
+            raise HTTPException(status_code=403, detail="无权操作")
+
+        if sub_task.status != "publish_failed":
+            raise HTTPException(status_code=422, detail=f"只有发布失败的任务才能重试，当前状态: {sub_task.status}")
+
+        payload = pub.request_payload
+        if not payload:
+            raise HTTPException(status_code=422, detail="发布记录缺少原始请求参数，无法重试")
+
+        data = VideoPublicationCreate(
+            sub_task_id=pub.sub_task_id,
+            video_url=payload.get("video_url", ""),
+            original_video_url=payload.get("original_video_url"),
+            video_type=payload.get("video_type"),
+            title=payload.get("title", ""),
+            description=payload.get("description"),
+            tags=payload.get("tags"),
+            channels=payload.get("channels", []),
+        )
+        return await self.create_publication(data)
 
     async def get_publication(self, publication_id: uuid.UUID) -> VideoPublication | None:
         """获取发布任务"""

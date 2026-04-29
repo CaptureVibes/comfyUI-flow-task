@@ -756,7 +756,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish, patchAccount } from '../api/accounts'
 import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask, regeneratePublishMeta } from '../api/video_tasks'
-import { fetchSubTaskPublications, fetchUploadMetrics } from '../api/video_publications'
+import { fetchSubTaskPublications, fetchUploadMetrics, retryPublication } from '../api/video_publications'
 import http from '../api/http'
 
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
@@ -1039,16 +1039,20 @@ async function handlePublishSuccess() {
   await loadTasks()
 }
 
-// 重试发布（publish_failed → pending_publish）
+// 重试发布：直接用上次参数重新调用发布接口
 async function handleRetryPublish(_task, sub) {
   retrying.value = sub.id
   try {
-    await patchSubTaskStatus(sub.id, { status: 'pending_publish' })
-    ElMessage.success('已重置为待发布')
-    activeTab.value = 'pending_publish'
-    // watch(activeTab) triggers loadTab
+    const pubs = await fetchSubTaskPublications(sub.id)
+    if (!pubs.length) {
+      ElMessage.error('找不到上次的发布记录，无法重试')
+      return
+    }
+    await retryPublication(pubs[0].id)
+    ElMessage.success('重试发布已提交，正在后台处理...')
+    await loadTasks()
   } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '重置失败')
+    ElMessage.error(e?.response?.data?.detail || '重试发布失败')
   } finally {
     retrying.value = null
   }

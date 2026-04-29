@@ -354,6 +354,23 @@ async def sync_publication_status(
         raise HTTPException(status_code=500, detail=f"同步状态失败: {str(e)}")
 
 
+@router.post("/video-publications/{publication_id}/retry", response_model=VideoPublicationRead)
+async def retry_publication(
+    publication_id: uuid.UUID,
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """用上次的发布参数直接重新发布（sub_task 必须处于 publish_failed 状态）"""
+    owner_id = None if current_user.is_admin else current_user.user_id
+    service = VideoPublicationService(db)
+    try:
+        return await service.retry_publication(publication_id, owner_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重试发布失败: {str(e)}")
+
+
 @router.post("/open-api/callback/publication")
 async def handle_publication_callback(
     callback_data: VideoPublicationStatusUpdate,

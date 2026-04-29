@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 
-VALID_STATUSES = {"pending", "generating", "reviewing", "stashed", "decision_rejected", "queued", "publishing", "published", "publish_failed", "abandoned"}
+VALID_STATUSES = {"pending", "generating", "reviewing", "stashed", "decision_rejected", "queued", "pending_publish", "publishing", "published", "publish_failed", "abandoned"}
 
 JOB = "jimeng/jobs"
 CLI_JOBS = "jimeng/cli-jobs"
@@ -38,11 +38,12 @@ SUB_TASK_TRANSITIONS: dict[str, set[str]] = {
     "pending":           {"generating"},
     "generating":        {"reviewing", "abandoned"},
     "reviewing":         {"stashed", "decision_rejected", "abandoned"},
-    "stashed":           {"queued", "abandoned"},
+    "stashed":           {"queued", "pending_publish", "abandoned"},
     "decision_rejected": set(),
     "queued":            {"publishing", "stashed"},
+    "pending_publish":   {"queued", "stashed"},
     "publishing":        {"published", "publish_failed"},
-    "publish_failed":    {"stashed"},
+    "publish_failed":    {"stashed", "pending_publish"},
     "published":         set(),
     "abandoned":         set(),
 }
@@ -752,10 +753,10 @@ class VideoTaskService:
         if owner_id is not None and sub.task.owner_id != owner_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子任务不存在")
 
-        if sub.status != "stashed":
+        if sub.status not in ("stashed", "pending_publish"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"只有暂存状态的子任务才能进入队列",
+                detail=f"只有暂存/待发布状态的子任务才能进入队列",
             )
 
         sub.status = "queued"
