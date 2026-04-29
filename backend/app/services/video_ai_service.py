@@ -385,7 +385,6 @@ ALLOWED_INTENTS = {"beauty_show", "knowledge", "persona_story", "trend_meme"}
 INTENT_JSON_SCHEMA = {
     "type": "object",
     "properties": {
-        "outfit_ref_images_text": {"type": "string"},
         "content_intent": {"type": "string", "enum": list(ALLOWED_INTENTS)},
         "format_subtype": {"type": "string"},
         "content_intent_secondary": {"type": "string"},
@@ -419,10 +418,9 @@ INTENT_JSON_SCHEMA = {
 }
 
 DEFAULT_INTENT_PROMPT = (
-    "请分析这段视频，结合下面给出的穿搭单品列表（按造型分组的 JSON），判断视频的核心创作意图，"
+    "请分析这段视频，判断视频的核心创作意图，"
     "以严格符合 JSON Schema 的结构化数据返回。content_intent 必须从以下四个枚举值中选一："
     "beauty_show（穿搭/美感展示）、knowledge（知识/讲解）、persona_story（人物/故事）、trend_meme（潮流/梗）。\n\n"
-    "穿搭单品列表（JSON）：\n{solo_products}\n\n"
     "请直接输出 JSON，不要附加任何额外文字。"
 )
 
@@ -454,21 +452,6 @@ DEFAULT_UNDERSTAND_PROMPTS = {
 }
 
 
-def _format_solo_products_for_prompt(outfit_details: list[dict]) -> str:
-    """把每套造型的 outfit_style + solo_products 聚合成 JSON 字符串注入 prompt。"""
-    payload = []
-    for idx, detail in enumerate(outfit_details, start=1):
-        payload.append({
-            "index": idx,
-            "outfit_style": detail.get("outfit_style", ""),
-            "solo_products": [
-                {"name": p.get("name", ""), "description": p.get("description", "")}
-                for p in (detail.get("solo_products") or [])
-            ],
-        })
-    return json.dumps(payload, ensure_ascii=False)
-
-
 async def _run_intent_classify_stage(
     *,
     template_id: str,
@@ -478,11 +461,11 @@ async def _run_intent_classify_stage(
     prompt: str,
     temperature: float,
 ) -> dict:
-    """意图识别：调用 Gemini，输入视频 + solo_products JSON，要求返回结构化 JSON；
+    """意图识别：调用 Gemini，输入视频，要求返回结构化 JSON；
     校验 content_intent，最多 3 次重试。
+    （outfit_details 参数保留以兼容调用方，但不再注入 prompt。）
     """
-    base_prompt = prompt.strip() if (prompt and prompt.strip()) else DEFAULT_INTENT_PROMPT
-    actual_prompt = base_prompt.replace("{solo_products}", _format_solo_products_for_prompt(outfit_details))
+    actual_prompt = prompt.strip() if (prompt and prompt.strip()) else DEFAULT_INTENT_PROMPT
 
     last_exc: Exception | None = None
     for attempt in range(1, 4):
@@ -520,17 +503,13 @@ async def _run_understanding_stage(
     temperature: float,
     prompts_by_intent: dict[str, str],
 ) -> str:
-    """根据意图选 prompt → 注入 intent_json → 调 Gemini → 返回纯文本。"""
+    """根据意图选 prompt → 注入 intent_json → 预留造型图占位符 → 调 Gemini → 返回纯文本。"""
     intent = intent_json.get("content_intent")
     if intent not in ALLOWED_INTENTS:
         raise ValueError(f"understanding stage got invalid intent: {intent!r}")
     template = (prompts_by_intent.get(intent) or "").strip() or DEFAULT_UNDERSTAND_PROMPTS[intent]
-    outfit_ref_images_text = str(intent_json.get("outfit_ref_images_text") or "")
-    final_prompt = (
-        template
-        .replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
-        .replace("{outfit_ref_images_text}", outfit_ref_images_text)
-    )
+    prompt_body = template.replace("{intent_json}", json.dumps(intent_json, ensure_ascii=False))
+    final_prompt = "{outfit_ref_images_text}\n\n" + prompt_body
     text = await call_gemini_api(
         model_name=model,
         prompt=final_prompt,

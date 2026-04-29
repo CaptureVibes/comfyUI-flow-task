@@ -9,6 +9,7 @@ from datetime import datetime, date, timezone
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1024,9 +1025,137 @@ class VideoPublicationService:
             title=payload.get("title", ""),
             description=payload.get("description"),
             tags=payload.get("tags"),
-            channels=payload.get("channels", []),
+            channels=payload.get("channels") or [],
         )
-        return await self.create_publication(data)
+        ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
+        openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
+        if not data.channels:
+            raise HTTPException(status_code=422, detail="发布记录缺少发布渠道，无法重试")
+
+        ext_products = payload.get("ext_products")
+        if not isinstance(ext_products, list):
+            ext_products = pub.ext_products if isinstance(pub.ext_products, list) else []
+
+        payload_promotion_code = payload.get("promotion_code")
+        if (
+            isinstance(payload_promotion_code, str)
+            and len(payload_promotion_code) == 8
+            and payload_promotion_code.isdigit()
+        ):
+            promotion_code = payload_promotion_code
+        else:
+            promotion_code = pub.promotion_code
+        if not (
+            isinstance(promotion_code, str)
+            and len(promotion_code) == 8
+            and promotion_code.isdigit()
+        ):
+            raise HTTPException(status_code=422, detail="发布记录缺少商品口令，无法重试")
+
+        request_payload = dict(payload)
+        request_payload.update({
+            "promotion_code": promotion_code,
+            "ext_products": ext_products,
+            "_has_openapi": bool(openapi_channels),
+            "_has_ext_pub": bool(ext_channels),
+        })
+
+        logger.info(
+            "retry_publication request_payload: publication_id=%s sub_task_id=%s payload=%s",
+            pub.id,
+            data.sub_task_id,
+            _payload_for_log(request_payload),
+        )
+
+        open_api_task_id: str | None = None
+        all_channel_statuses: list[dict] = []
+        errors: list[str] = []
+
+        submit_tasks = []
+        if openapi_channels:
+            submit_tasks.append(("openapi", self._openapi_adapter.submit(
+                data,
+                openapi_channels,
+                promotion_code,
+                ext_products,
+            )))
+        if ext_channels:
+            submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(
+                data,
+                ext_channels,
+                promotion_code,
+                ext_products,
+            )))
+
+        results = await asyncio.gather(
+            *[t for _, t in submit_tasks],
+            return_exceptions=True,
+        )
+
+        for (source, _), result in zip(submit_tasks, results):
+            if isinstance(result, Exception):
+                logger.error("retry_publication %s side failed: %s", source, result)
+                errors.append(f"{source}: {result}")
+                failed_channels = ext_channels if source == "ext_pub" else openapi_channels
+                all_channel_statuses.extend([
+                    {
+                        "platform": c.get("platform", ""),
+                        "channel_id": c["channel_id"],
+                        "channel_name": c.get("channel_name", ""),
+                        "status": "failed",
+                        "platform_video_id": None,
+                        "platform_video_url": None,
+                        "error_message": str(result),
+                        "uploaded_at": None,
+                        "_source": _SOURCE_EXT_PUB if source == "ext_pub" else _SOURCE_OPENAPI,
+                    }
+                    for c in failed_channels
+                ])
+            else:
+                task_id, channel_statuses = result
+                if source == "openapi" and task_id:
+                    open_api_task_id = task_id
+                all_channel_statuses.extend(channel_statuses)
+
+        overall_status = _compute_publication_status(all_channel_statuses)
+        error_message = "; ".join(errors) if errors else None
+
+        pub.open_api_task_id = open_api_task_id
+        pub.external_id = str(pub.sub_task_id)
+        pub.status = overall_status
+        pub.request_payload = request_payload
+        pub.promotion_code = promotion_code
+        pub.ext_products = ext_products
+        pub.response_data = None
+        pub.channels_status = all_channel_statuses or None
+        pub.metrics_snapshot = None
+        pub.total_channels = len(all_channel_statuses)
+        pub.completed_channels = sum(1 for c in all_channel_statuses if c.get("status") in _SUCCESS_STATUSES)
+        pub.failed_channels = sum(1 for c in all_channel_statuses if c.get("status") in _FAILED_STATUSES)
+        pub.callback_received = False
+        pub.callback_received_at = None
+        pub.error_message = error_message
+        pub.completed_at = utcnow() if overall_status in ("completed", "partial", "failed") else None
+
+        await _apply_publication_status_to_sub_task(
+            self.db,
+            sub_task_id=pub.sub_task_id,
+            publication_status=overall_status,
+        )
+        await self.db.commit()
+        await self.db.refresh(pub)
+
+        logger.info(
+            "retry_publication done: publication_id=%s sub_task_id=%s status=%s",
+            pub.id,
+            pub.sub_task_id,
+            overall_status,
+        )
+
+        if errors and len(errors) == len(submit_tasks):
+            raise RuntimeError(f"所有发布渠道提交失败: {error_message}")
+
+        return pub
 
     async def get_publication(self, publication_id: uuid.UUID) -> VideoPublication | None:
         """获取发布任务"""

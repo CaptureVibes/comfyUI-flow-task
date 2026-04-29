@@ -62,6 +62,8 @@ async def create_publication(
     try:
         publication = await service.create_publication(data)
         return publication
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
