@@ -679,11 +679,14 @@ async def _run_product_imagegen(
     default_prompt = "根据这张穿搭参考图，生成图中【{name}】单品的独立展示图。描述：{description}。保持原图风格，白色或简洁背景，突出单品细节。"
 
     result = []
+    total_products = 0
+    total_failed = 0
     for i, detail in enumerate(outfit_details):
         outfit_image_url = detail["image_url"]
         solo_products = detail.get("solo_products", [])
 
         async def _gen_one(product: dict, outfit_url: str, idx: int) -> str | None:
+            # 底层 generate_image 已自带 10 次重试，这里不再叠加业务重试
             name = product.get("name", "")
             desc = product.get("description", "")
             p_prompt = prompt.strip()
@@ -702,19 +705,37 @@ async def _run_product_imagegen(
                 _ct, _ext = detect_image_content_type(img_bytes)
                 res = await upload_svc.upload_image(img_bytes, _ct, f"product_{idx}_{name[:20]}{_ext}")
                 return res.url
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                logger.warning("[%s] Product image gen failed outfit[%d] '%s': %s", template_id, i, name, exc)
+                logger.error("[%s] Product image gen outfit[%d] '%s' failed (after lower-level retries): %s",
+                             template_id, i, name, exc)
                 return None
 
         tasks = [_gen_one(p, outfit_image_url, i) for p in solo_products]
         img_urls = await asyncio.gather(*tasks)
+
+        outfit_failed = sum(1 for u in img_urls if not u)
+        total_products += len(solo_products)
+        total_failed += outfit_failed
+        if solo_products and outfit_failed == len(solo_products):
+            raise ValueError(
+                f"product_imagegen outfit[{i}] 所有 {len(solo_products)} 个单品图均生成失败，终止流水线"
+            )
 
         products_with_images = [
             {**p, "product_image_url": url or ""}
             for p, url in zip(solo_products, img_urls)
         ]
         result.append({**detail, "solo_products": products_with_images})
-        logger.info("[%s] Product imagegen outfit[%d]: %d products done", template_id, i, len(solo_products))
+        logger.info("[%s] Product imagegen outfit[%d]: %d/%d 成功", template_id, i,
+                    len(solo_products) - outfit_failed, len(solo_products))
+
+    # 整体保护：超过一半单品生图失败也视为流水线失败，避免后续 outfit_regen 拿不到足够素材
+    if total_products > 0 and total_failed * 2 > total_products:
+        raise ValueError(
+            f"product_imagegen 整体失败比例过高（{total_failed}/{total_products}），终止流水线"
+        )
     return result
 
 
