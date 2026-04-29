@@ -231,50 +231,95 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
                     async for chunk in resp.aiter_bytes(65536):
                         f.write(chunk)
 
-        # 2. 用 ffprobe 获取视频时长
+        # 2. 用 ffprobe 获取视频时长（带大 probesize/analyzeduration，应对部分容器需要更多字节才能识别流）
         probe_proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "ffprobe", "-v", "error",
+            "-probesize", "50M", "-analyzeduration", "100M",
+            "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", video_path,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        probe_out, _ = await probe_proc.communicate()
+        probe_out, probe_err = await probe_proc.communicate()
         try:
             duration = float(probe_out.decode().strip())
         except ValueError:
             duration = _MAX_VIDEO_SECONDS
+            err_tail = probe_err.decode(errors="replace")[-300:] if probe_err else ""
+            logger.warning("[%s] ffprobe duration parse failed (using fallback=%.1fs); ffprobe stderr: %s",
+                           template_id, _MAX_VIDEO_SECONDS, err_tail)
         effective_duration = min(duration, _MAX_VIDEO_SECONDS)
         logger.info("[%s] Video duration=%.1fs, effective=%.1fs", template_id, duration, effective_duration)
 
-        # 3. 计算帧时间戳：0, interval, 2*interval … 抛弃尾帧（确保时间戳 < effective_duration）
-        max_frames = max(1, int(effective_duration / interval) + 1)
-        timestamps = []
-        t = 0.0
-        while t < effective_duration and len(timestamps) < max_frames:
-            timestamps.append(t)
-            t += interval
-        logger.info("[%s] Extracting %d frames at timestamps: %s", template_id, len(timestamps), timestamps)
-
-        # 4. 用 ffmpeg 批量抽帧
+        # 3. 单次 ffmpeg 调用顺序抽帧：用 fps 过滤器代替逐帧 seek，避免 "no decoder found for: none"
+        #    类问题（部分容器 codec 探测不稳定时，前置 -ss 会失败）。
         file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
         logger.info("[%s] Downloaded video file size: %d bytes", template_id, file_size)
 
         frames_dir = os.path.join(tmpdir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
+        out_pattern = os.path.join(frames_dir, "frame_%03d.jpg")
+        # interval=1 → fps=1；interval=0.5 → fps=2，以此类推
+        fps_value = 1.0 / max(interval, 0.001)
 
-        frame_paths = []
-        for i, ts in enumerate(timestamps):
-            frame_path = os.path.join(frames_dir, f"frame_{i:03d}.jpg")
+        async def _run_extract(input_path: str) -> tuple[int, str]:
+            cmd = [
+                "ffmpeg", "-y",
+                "-probesize", "50M", "-analyzeduration", "100M",
+                "-t", str(effective_duration),  # 限制只取前 N 秒
+                "-i", input_path,
+                "-vf", f"fps={fps_value}",
+                "-q:v", "3",
+                "-start_number", "0",
+                out_pattern,
+            ]
             proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y", "-ss", str(ts), "-i", video_path,
-                "-vframes", "1", "-q:v", "3", frame_path,
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await proc.communicate()
+            return proc.returncode or 0, (err.decode(errors="replace") if err else "")
+
+        rc, stderr_text = await _run_extract(video_path)
+        # 收集生成的帧文件
+        frame_paths = sorted(
+            os.path.join(frames_dir, fn)
+            for fn in os.listdir(frames_dir) if fn.startswith("frame_") and fn.endswith(".jpg")
+        )
+
+        # 若一帧都没抽出来，尝试 remux 修复容器（-c copy 重写 moov），再抽一次
+        if not frame_paths:
+            logger.warning("[%s] Frame extraction returned 0 frames (rc=%s); ffmpeg stderr tail: %s",
+                           template_id, rc, stderr_text[-500:])
+            remuxed_path = os.path.join(tmpdir, "remuxed.mp4")
+            remux_proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-fflags", "+genpts",
+                "-probesize", "50M", "-analyzeduration", "100M",
+                "-i", video_path, "-c", "copy", "-movflags", "+faststart", remuxed_path,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr_data = await proc.communicate()
-            if os.path.exists(frame_path) and os.path.getsize(frame_path) > 0:
-                frame_paths.append(frame_path)
+            _, remux_err = await remux_proc.communicate()
+            if remux_proc.returncode == 0 and os.path.exists(remuxed_path) and os.path.getsize(remuxed_path) > 0:
+                logger.info("[%s] Re-muxed video, retrying frame extraction", template_id)
+                rc2, stderr_text2 = await _run_extract(remuxed_path)
+                frame_paths = sorted(
+                    os.path.join(frames_dir, fn)
+                    for fn in os.listdir(frames_dir) if fn.startswith("frame_") and fn.endswith(".jpg")
+                )
+                if not frame_paths:
+                    logger.warning("[%s] Frame extraction still failed after remux (rc=%s); stderr tail: %s",
+                                   template_id, rc2, stderr_text2[-500:])
             else:
-                stderr_text = stderr_data.decode(errors="replace")[-300:] if stderr_data else ""
-                logger.warning("[%s] Frame at t=%.1fs failed to extract, ffmpeg stderr: %s", template_id, ts, stderr_text)
+                logger.warning("[%s] Re-mux failed (rc=%s); stderr tail: %s",
+                               template_id, remux_proc.returncode,
+                               (remux_err.decode(errors="replace")[-500:] if remux_err else ""))
+
+        if not frame_paths:
+            raise RuntimeError(
+                f"frame extraction failed: ffmpeg could not decode video "
+                f"(file_size={file_size}B, duration={effective_duration:.1f}s). "
+                "Check that the video is a real MP4 with a recognizable codec."
+            )
+
+        logger.info("[%s] Extracted %d frames via single-pass fps filter", template_id, len(frame_paths))
 
         # 5. 读取帧为 GCS 可上传的临时 URL（这里返回 base64 data URL 供后续上传）
         data_urls = []
