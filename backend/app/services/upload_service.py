@@ -98,10 +98,12 @@ class UpstreamImageUploadService:
 
         response = None
         attempt = 0
-        while True:
+        last_exc: Exception | None = None
+        _MAX_ATTEMPTS = 15  # 之前是 while True 无限重试，CDN 抖动会把 pipeline 永远挂在 imagegen
+        while attempt < _MAX_ATTEMPTS:
             attempt += 1
             try:
-                async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
+                async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
                     response = await client.post(
                         settings.upload_api_url,
                         files={"file": (safe_name, content, content_type)},
@@ -109,16 +111,22 @@ class UpstreamImageUploadService:
                     )
                 if response.status_code >= 400:
                     raise UpstreamError(f"Upload upstream returned {response.status_code}: {response.text[:300]}")
+                last_exc = None
                 break
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                delay = min(attempt * 2, 30)
+                last_exc = exc
+                delay = min(attempt * 2, 10)
                 import logging as _logging
                 _logging.getLogger("app.upload_service").warning(
-                    "upload_image attempt %d failed (%ds后重试): %s", attempt, delay, exc
+                    "upload_image attempt %d/%d failed (%ds后重试): %s",
+                    attempt, _MAX_ATTEMPTS, delay, exc,
                 )
-                await asyncio.sleep(delay)
+                if attempt < _MAX_ATTEMPTS:
+                    await asyncio.sleep(delay)
+        if last_exc is not None:
+            raise UpstreamError(f"upload_image 重试 {_MAX_ATTEMPTS} 次仍失败: {last_exc}") from last_exc
 
         try:
             payload = response.json()
