@@ -448,11 +448,27 @@
             <div class="al-supplement-type-desc">从已使用过的模板中随机抽取 N 个</div>
           </button>
         </div>
+        <!-- 补充策略二选一 -->
+        <div class="al-supplement-config">
+          <div class="al-supplement-config-label">补充策略</div>
+          <div class="al-supplement-config-row" style="gap:18px;flex-wrap:wrap;justify-content:flex-start">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="radio" value="count" v-model="bulkGenForm.fill_mode" />
+              <span>补充 X 个</span>
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="radio" value="target_total" v-model="bulkGenForm.fill_mode" />
+              <span>补充到 X 个（含当前 queued 任务）</span>
+            </label>
+          </div>
+        </div>
         <!-- 数量配置 -->
         <div class="al-supplement-config">
-          <div class="al-supplement-config-label">每账号最多使用模板数（0 = 不限制）</div>
+          <div class="al-supplement-config-label">
+            {{ bulkGenForm.fill_mode === 'target_total' ? '每账号补到 N 个 queued 任务' : '每账号新增模板数（0 = 不限制）' }}
+          </div>
           <div class="al-supplement-config-row">
-            <button class="al-supplement-minus" @click="bulkGenForm.limit = Math.max(0, bulkGenForm.limit - 1)">−</button>
+            <button class="al-supplement-minus" @click="bulkGenForm.limit = Math.max(bulkGenForm.fill_mode === 'target_total' ? 1 : 0, bulkGenForm.limit - 1)">−</button>
             <span class="al-supplement-num">{{ bulkGenForm.limit }}</span>
             <button class="al-supplement-plus" @click="bulkGenForm.limit = Math.min(99, bulkGenForm.limit + 1)">+</button>
             <span class="al-supplement-num-hint">个</span>
@@ -2325,17 +2341,21 @@ async function cycleGender(item) {
 const bulkVideoGenerating = ref(false)
 const bulkVideoGenProgress = ref({ current: 0, total: 0 })
 const showBulkGenDialog = ref(false)
-const bulkGenForm = ref({ mode: 'unused', limit: 0, subtaskCount: 3 })
+const bulkGenForm = ref({ mode: 'unused', fill_mode: 'count', limit: 5, subtaskCount: 3 })
 
 
 function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
-  bulkGenForm.value = { mode: 'unused', limit: 0, subtaskCount: 3 }
+  bulkGenForm.value = { mode: 'unused', fill_mode: 'count', limit: 5, subtaskCount: 3 }
   showBulkGenDialog.value = true
 }
 
 async function startBulkVideoGenerate() {
-  const { mode, limit } = bulkGenForm.value
+  const { mode, limit, fill_mode } = bulkGenForm.value
+  if (fill_mode === 'target_total' && limit <= 0) {
+    ElMessage.warning('"补充到 X 个" 模式下数量必须大于 0')
+    return
+  }
   showBulkGenDialog.value = false
   bulkVideoGenerating.value = true
 
@@ -2362,7 +2382,7 @@ async function startBulkVideoGenerate() {
       return
     }
 
-    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount)
+    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount, fill_mode)
     const skipMsg = result.skipped_accounts > 0 ? `，${result.skipped_accounts} 个账号无可用模板` : ''
     ElMessage.success(result.message || `后台已启动，预计创建 ${result.planned || 0} 个生成任务${skipMsg}`)
   } catch (err) {

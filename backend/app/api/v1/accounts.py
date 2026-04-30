@@ -5,7 +5,6 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-import random
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -1196,7 +1195,8 @@ class SupplementTemplatesBody(BaseModel):
 class BulkGenerateVideoTasksBody(BaseModel):
     account_ids: list[uuid.UUID]
     mode: str = "unused"         # "unused" | "used"
-    limit: int = 0               # 每账号最多使用模板数，0 = 不限制
+    fill_mode: str = "count"     # "count" = 每号补 limit 个；"target_total" = 每号补到 limit 个 queued 任务
+    limit: int = 0               # 数量值（fill_mode=count 时是新增数；target_total 时是目标 queued 总数）
     subtask_count: int = 3       # 每个任务创建的子任务数量
 
 
@@ -1209,6 +1209,7 @@ _BULK_VIDEO_TASK_SKIP_REASON_LABELS = {
     "only_used_nonrepeatable_templates": "未用过模式下仅有已使用且不可重复模板",
     "no_templates_for_mode": "当前模式无可生成模板",
     "no_classification_match": "分类不匹配",
+    "already_satisfied": "已达目标 queued 数量，无需补充",
 }
 
 
@@ -1236,8 +1237,7 @@ async def _load_bulk_video_task_templates(
 
     cls_type = account.classification_type
     summary = account.classification_summary or {}
-    if cls_type in ("chaos", "insufficient"):
-        return ([], "classification_unavailable") if with_reason else []
+    # 仅 single / dual 走小类硬过滤；chaos / insufficient / None 不限分类（仅靠标签交集）
     if cls_type == "single":
         primary_idx = summary.get("primary_index")
         if primary_idx is not None:
@@ -1327,17 +1327,86 @@ async def _load_bulk_video_task_templates(
     return unique_tpls
 
 
+async def _count_queued_tasks(session: AsyncSession, account_id: uuid.UUID) -> int:
+    """统计该账号当前 status='queued' 的 video_tasks 数。供 fill_mode='target_total' 使用。"""
+    from app.models.video_task import VideoTask
+    from sqlalchemy import func as sa_func
+    return int(await session.scalar(
+        select(sa_func.count(VideoTask.id))
+        .where(VideoTask.account_id == account_id)
+        .where(VideoTask.status == "queued")
+    ) or 0)
+
+
+async def _load_vs_map(session: AsyncSession, vs_ids: list[uuid.UUID]) -> dict:
+    from app.models.video_source import VideoSource
+    if not vs_ids:
+        return {}
+    rows = (await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))).scalars().all()
+    return {vs.id: vs for vs in rows}
+
+
+def _sort_tpls_by_view_count(tpls: list, vs_map: dict) -> list:
+    """按对应 VideoSource.view_count 降序，None 视为 0；缺 video_source 排到最后。"""
+    def _key(t):
+        if not t.video_source_id:
+            return 0
+        vs = vs_map.get(t.video_source_id)
+        return -(vs.view_count or 0) if vs else 0
+    return sorted(tpls, key=_key)
+
+
+async def _resolve_account_pool(
+    session: AsyncSession,
+    *,
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None,
+    use_used: bool,
+    fill_mode: str,
+    limit: int,
+    with_reason: bool = False,
+):
+    """
+    统一在 planning + background 两条链路调用：
+    返回 (items_to_use: list, vs_map: dict, skip_reason: str|None)
+    items_to_use 是按 view_count 降序、按需求量截取后的最终模板列表。
+    """
+    unique_tpls, skip_reason = await _load_bulk_video_task_templates(
+        session,
+        account_id=account_id,
+        owner_id=owner_id,
+        use_used=use_used,
+        with_reason=True,
+    )
+    if not unique_tpls:
+        return [], {}, skip_reason
+
+    vs_ids = list({t.video_source_id for t in unique_tpls if t.video_source_id})
+    vs_map = await _load_vs_map(session, vs_ids)
+    sorted_tpls = _sort_tpls_by_view_count(unique_tpls, vs_map)
+
+    if fill_mode == "target_total":
+        current = await _count_queued_tasks(session, account_id)
+        need = max(0, int(limit) - current)
+        if need == 0:
+            return [], vs_map, "already_satisfied"
+    else:  # count
+        need = int(limit) if limit and limit > 0 else len(sorted_tpls)
+
+    items_to_use = sorted_tpls[:need]
+    return items_to_use, vs_map, None
+
+
 async def _run_bulk_generate_video_tasks(
     *,
     account_ids: list[uuid.UUID],
     owner_id: uuid.UUID | None,
     user_id: uuid.UUID,
     mode: str,
+    fill_mode: str,
     limit: int,
     subtask_count: int,
 ) -> None:
-    from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_source import VideoSource
     from app.services.video_task_service import VideoTaskService
 
     use_used = mode == "used"
@@ -1350,27 +1419,17 @@ async def _run_bulk_generate_video_tasks(
 
         for account_id in account_ids:
             try:
-                unique_tpls: list[VideoAITemplate] = await _load_bulk_video_task_templates(
+                items_to_use, vs_map, _skip_reason = await _resolve_account_pool(
                     session,
                     account_id=account_id,
                     owner_id=owner_id,
                     use_used=use_used,
+                    fill_mode=fill_mode,
+                    limit=limit,
                 )
-                if not unique_tpls:
+                if not items_to_use:
                     total_skipped += 1
                     continue
-
-                pool = random.sample(unique_tpls, len(unique_tpls)) if use_used else unique_tpls
-                items_to_use = pool[:limit] if limit > 0 else pool
-
-                vs_ids = list({t.video_source_id for t in items_to_use if t.video_source_id})
-                vs_map: dict[uuid.UUID, VideoSource] = {}
-                if vs_ids:
-                    vs_rows = (
-                        await session.execute(select(VideoSource).where(VideoSource.id.in_(vs_ids)))
-                    ).scalars().all()
-                    for vs in vs_rows:
-                        vs_map[vs.id] = vs
 
                 for tpl in items_to_use:
                     try:
@@ -1400,11 +1459,12 @@ async def _run_bulk_generate_video_tasks(
                 total_skipped += 1
 
     logger.info(
-        "bulk_generate_video_tasks done: created=%s failed=%s skipped=%s mode=%s limit=%s accounts=%s",
+        "bulk_generate_video_tasks done: created=%s failed=%s skipped=%s mode=%s fill_mode=%s limit=%s accounts=%s",
         total_created,
         total_failed,
         total_skipped,
         mode,
+        fill_mode,
         limit,
         len(account_ids),
     )
@@ -1419,13 +1479,21 @@ async def bulk_generate_video_tasks(
 ) -> dict:
     """
     为指定账号批量创建视频生成任务。
-    只根据账号绑定的标签查找模板，不再根据已绑定的 TikTok 博主筛选模板。
-    mode=unused: 选取未使用(is_used=False)的模板，按创建时间倒序取前 limit 个。
-    mode=used:   选取已使用(is_used=True)的模板，随机打乱后取前 limit 个。
+
+    - mode=unused / used：取未使用 / 已使用的模板（搭配 repeatable 规则）
+    - fill_mode=count：每账号最多创建 limit 个；limit=0 → 无限（全部模板）
+    - fill_mode=target_total：每账号补到 limit 个 status='queued' 任务；够了就跳过
+    - 模板按对应 video_source.view_count 从高到低排序后取需求量
+    - chaos / insufficient / 未分类账号不再被分类硬阻断；仅按标签交集出候选
+    - single / dual 仍按小类(category_index)硬过滤
     先计算预计创建的任务数并立即返回，真正创建过程放到后台执行。
     """
     if not body.account_ids:
         return {"status": "no_accounts", "planned": 0, "skipped_accounts": 0, "account_count": 0}
+    if body.fill_mode not in ("count", "target_total"):
+        raise HTTPException(status_code=422, detail="fill_mode 必须是 'count' 或 'target_total'")
+    if body.fill_mode == "target_total" and body.limit <= 0:
+        raise HTTPException(status_code=422, detail="fill_mode=target_total 时 limit 必须 > 0")
 
     use_used = body.mode == "used"
     total_planned = 0
@@ -1434,20 +1502,21 @@ async def bulk_generate_video_tasks(
 
     for account_id in body.account_ids:
         try:
-            unique_tpls, skip_reason = await _load_bulk_video_task_templates(
+            items_to_use, _vs_map, skip_reason = await _resolve_account_pool(
                 session,
                 account_id=account_id,
                 owner_id=owner_id,
                 use_used=use_used,
+                fill_mode=body.fill_mode,
+                limit=body.limit,
                 with_reason=True,
             )
-            if not unique_tpls:
+            if not items_to_use:
                 total_skipped += 1
                 if skip_reason:
                     skip_reasons[skip_reason] = skip_reasons.get(skip_reason, 0) + 1
                 continue
-            planned_for_account = min(len(unique_tpls), body.limit) if body.limit > 0 else len(unique_tpls)
-            total_planned += planned_for_account
+            total_planned += len(items_to_use)
         except Exception as exc:
             logger.warning("bulk_generate_video_tasks planning failed account=%s: %s", account_id, exc)
             total_skipped += 1
@@ -1469,6 +1538,7 @@ async def bulk_generate_video_tasks(
             owner_id=owner_id,
             user_id=current_user.user_id,
             mode=body.mode,
+            fill_mode=body.fill_mode,
             limit=body.limit,
             subtask_count=body.subtask_count,
         )

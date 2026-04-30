@@ -131,12 +131,19 @@ export async function supplementTemplates(accountIds, templateType = 'shared', m
   return data
 }
 
-export async function bulkGenerateVideoTasks(accountIds, mode = 'unused', limit = 0, subtaskCount = 3) {
+export async function bulkGenerateVideoTasks(
+  accountIds,
+  mode = 'unused',
+  limit = 0,
+  subtaskCount = 3,
+  fillMode = 'count',
+) {
   const { data } = await http.post('/accounts/bulk-generate-video-tasks', {
     account_ids: accountIds,
     mode,
     limit,
     subtask_count: subtaskCount,
+    fill_mode: fillMode,
   })
   return data
 }
