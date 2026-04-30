@@ -533,25 +533,37 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
 
     compressed_path = os.path.join(tmpdir, "compressed.mp4")
 
-    def _run_ffmpeg() -> None:
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", file_path,
-            "-vcodec", "libx264",
-            "-crf", "28",          # 画质：18=高质量 28=适中 35=较低，可调
-            "-preset", "fast",
-            "-vf", "scale='min(1280,iw)':-2",  # 最大 1280px 宽，保持比例
-            "-acodec", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            compressed_path,
-        ]
-        import subprocess
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg 压缩失败: {result.stderr[-500:]}")
+    # 改用 asyncio.create_subprocess_exec + 全局 ffmpeg 信号量 + 5 分钟超时，
+    # 避免多个 libx264 压缩并发把 4 vCPU 机器 CPU 撑爆
+    from app.services.video_ai_service import _get_ffmpeg_semaphore
 
-    await asyncio.to_thread(_run_ffmpeg)
+    cmd = [
+        "ffmpeg", "-y", "-threads", "1",
+        "-i", file_path,
+        "-vcodec", "libx264",
+        "-crf", "28",          # 画质：18=高质量 28=适中 35=较低，可调
+        "-preset", "fast",
+        "-vf", "scale='min(1280,iw)':-2",  # 最大 1280px 宽，保持比例
+        "-acodec", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        compressed_path,
+    ]
+    async with _get_ffmpeg_semaphore():
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=300.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError(f"ffmpeg 压缩超时 5min，已 kill: {file_path}")
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg 压缩失败 rc={proc.returncode}: "
+                f"{(stderr_data.decode(errors='replace') if stderr_data else '')[-500:]}"
+            )
 
     compressed_size = os.path.getsize(compressed_path)
     logger.info(
