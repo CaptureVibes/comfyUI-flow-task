@@ -541,6 +541,7 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
         "ffmpeg", "-y", "-threads", "1",
         "-i", file_path,
         "-vcodec", "libx264",
+        "-x264-params", "threads=1",  # libx264 自带线程池，必须单独关
         "-crf", "28",          # 画质：18=高质量 28=适中 35=较低，可调
         "-preset", "fast",
         "-vf", "scale='min(1280,iw)':-2",  # 最大 1280px 宽，保持比例

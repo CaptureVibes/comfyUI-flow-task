@@ -161,6 +161,7 @@ async def _ffmpeg_concat(
         "-map", "[outv]",
         "-map", "[outa]",
         "-c:v", "libx264",
+        "-x264-params", "threads=1",  # libx264 自带线程池，必须单独关
         "-preset", "fast",
         "-crf", "23",
         "-c:a", "aac",
