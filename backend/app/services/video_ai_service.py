@@ -1047,6 +1047,7 @@ async def _run_outfit_regen(
     default_prompt = "根据以下单品图片，生成一张完整穿搭造型图。整体风格：{outfit_style}。人物使用商场展示用的塑料模特形象（非真人），面部为光滑无表情的标准模特脸，保持服装风格一致，背景简洁时尚。"
 
     final_outfits = []
+    failed_outfit_indices: list[int] = []
     for i, detail in enumerate(product_gen_results):
         outfit_image_url = detail["image_url"]
         outfit_style = detail.get("outfit_style", "")
@@ -1058,40 +1059,52 @@ async def _run_outfit_regen(
             if url:
                 product_cdn_urls.append(url)
 
-        new_outfit_url = outfit_image_url
-        # 没有单品图时，用 outfit 原截图作为唯一参考图
-        ref_urls = product_cdn_urls if product_cdn_urls else ([outfit_image_url] if outfit_image_url else [])
+        # 严格模式：拿不到任何单品参考图 → 这套造型直接失败，不再拿抽帧图凑
         if not product_cdn_urls:
-            logger.info(
-                "[%s] Outfit regen [%d] no product images (solo_products=%d), using outfit shot as ref",
+            failed_outfit_indices.append(i)
+            logger.error(
+                "[%s] Outfit regen [%d] FAIL: no product images available (solo_products=%d)",
                 template_id, i, len(solo_products),
             )
-        if ref_urls:
-            r_prompt = prompt.strip()
-            if not r_prompt:
-                r_prompt = default_prompt.format(outfit_style=outfit_style)
-            else:
-                r_prompt = r_prompt.replace("{outfit_style}", outfit_style)
-            try:
-                img_bytes = await generate_image(
-                    model_name=model,
-                    prompt=r_prompt,
-                    image_urls=ref_urls,
-                    aspect_ratio=size,
-                    image_size=quality,
-                )
-                _ct, _ext = detect_image_content_type(img_bytes)
-                res = await upload_svc.upload_image(img_bytes, _ct, f"outfit_regen_{i}{_ext}")
-                new_outfit_url = res.url
-                logger.info("[%s] Outfit regen [%d] uploaded: %s", template_id, i, new_outfit_url[:80])
-            except Exception as exc:
-                logger.warning("[%s] Outfit regen [%d] failed, using original: %s", template_id, i, exc)
+            continue
+
+        r_prompt = prompt.strip()
+        if not r_prompt:
+            r_prompt = default_prompt.format(outfit_style=outfit_style)
+        else:
+            r_prompt = r_prompt.replace("{outfit_style}", outfit_style)
+
+        new_outfit_url: str | None = None
+        try:
+            img_bytes = await generate_image(
+                model_name=model,
+                prompt=r_prompt,
+                image_urls=product_cdn_urls,
+                aspect_ratio=size,
+                image_size=quality,
+            )
+            _ct, _ext = detect_image_content_type(img_bytes)
+            res = await upload_svc.upload_image(img_bytes, _ct, f"outfit_regen_{i}{_ext}")
+            new_outfit_url = res.url
+            logger.info("[%s] Outfit regen [%d] uploaded: %s", template_id, i, new_outfit_url[:80])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failed_outfit_indices.append(i)
+            logger.error("[%s] Outfit regen [%d] FAIL: generate_image error: %s", template_id, i, exc)
+            continue
 
         final_outfits.append({
             **detail,
             "image_url": new_outfit_url,
             "original_outfit_image_url": outfit_image_url,
         })
+
+    if failed_outfit_indices:
+        raise ValueError(
+            f"outfit_regen failed for {len(failed_outfit_indices)}/{len(product_gen_results)} outfits "
+            f"(indices={failed_outfit_indices})；不再用抽帧图替代，直接终止流水线。"
+        )
     return final_outfits
 
 
