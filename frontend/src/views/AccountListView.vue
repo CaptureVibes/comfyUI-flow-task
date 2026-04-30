@@ -332,27 +332,27 @@
         <el-form-item label="继续阶段">
           <el-select v-model="bulkResumeStage" style="width: 100%">
             <el-option label="按当前数据库阶段断点续跑" value="current" />
-            <el-option label="从视频理解开始" value="video_analyzing" />
-            <el-option label="从名称生成开始" value="name_generating" />
             <el-option label="从照片生成开始" value="photo_generating" />
+            <el-option label="从视频理解开始" value="video_analyzing" />
             <el-option label="从头像生成开始" value="avatar_generating" />
+            <el-option label="从名称生成开始" value="name_generating" />
           </el-select>
         </el-form-item>
         <div class="al-bulk-resume-desc">
           <template v-if="bulkResumeStage === 'photo_generating'">
-            会清空已有照片候选、已选照片和头像，并重新生成照片与头像。
-          </template>
-          <template v-else-if="bulkResumeStage === 'avatar_generating'">
-            会保留照片候选和已选照片，只重新生成头像。
-          </template>
-          <template v-else-if="bulkResumeStage === 'name_generating'">
-            会保留照片、视频理解结果和头像，只重新生成名称。
+            清空照片候选、头像、名称，重跑「照片生成 → 待选照片 → 视频理解 → 头像生成 → 名称生成」。需要再次手动选照片。
           </template>
           <template v-else-if="bulkResumeStage === 'video_analyzing'">
-            会从视频理解开始重跑整个 AI 博主流程。
+            保留已选照片，重跑「视频理解 → 头像生成 → 名称生成」。
+          </template>
+          <template v-else-if="bulkResumeStage === 'avatar_generating'">
+            保留已选照片和视频理解结果，重跑「头像生成 → 名称生成」。
+          </template>
+          <template v-else-if="bulkResumeStage === 'name_generating'">
+            保留照片、视频理解结果和头像，仅重新生成名称。
           </template>
           <template v-else>
-            会按照数据库里当前记录的阶段断点续跑。
+            会按照数据库里当前记录的阶段断点续跑（处于"待选照片"的账号会被跳过，需要先去选照片）。
           </template>
         </div>
       </div>
