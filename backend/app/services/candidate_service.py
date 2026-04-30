@@ -1727,17 +1727,7 @@ async def auto_supplement_for_account(
                 skipped += 1
                 continue
 
-            # ── Step 3: Gemini 分类 ────────────────────────────────────────
-            major = await _classify_video_for_auto_supplement(local_video_url, owner_id)
-            if major not in allowed_categories:
-                logger.info(
-                    "【自动补充】分类不匹配 major=%s allowed=%s，丢弃（不写库）%s",
-                    major, allowed_categories, video_url,
-                )
-                filtered += 1
-                continue
-
-            # ── Step 3.5: AI 审核（若启用）────────────────────────────────
+            # ── Step 3: AI 审核（若启用）先跑，比 Gemini 分类更便宜 ────────
             if ai_review_enabled:
                 prompt = (ai_review_prompt or "").replace("{keyword}", tag_name or blogger_handle or "")
                 ai_passed, ai_reason = await _ai_review_single(
@@ -1755,7 +1745,17 @@ async def auto_supplement_for_account(
                     continue
                 logger.info("【自动补充】AI审核通过 %s", video_url)
 
-            # ── Step 4: 分类通过 + 审核通过 → 写 video_source（local_video_url 已就绪）
+            # ── Step 3.5: Gemini 分类 ─────────────────────────────────────
+            major = await _classify_video_for_auto_supplement(local_video_url, owner_id)
+            if major not in allowed_categories:
+                logger.info(
+                    "【自动补充】分类不匹配 major=%s allowed=%s，丢弃（不写库）%s",
+                    major, allowed_categories, video_url,
+                )
+                filtered += 1
+                continue
+
+            # ── Step 4: 审核通过 + 分类通过 → 写 video_source（local_video_url 已就绪）
             async with SessionLocal() as session:
                 payload = VideoSourceCreate(
                     source_url=parse_result.source_url,
