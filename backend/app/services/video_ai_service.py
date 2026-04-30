@@ -46,8 +46,20 @@ _persist_worker_task: asyncio.Task | None = None
 # 进程关停标志：True 时管道被取消不写 paused，保留运行中状态以便重启后续跑
 _shutting_down: bool = False
 
-# 并发数：同时处理的最大任务数
+# 并发数：同时处理的最大 pipeline 数（pipeline 大头是 Gemini/外部 API，I/O 密集，可较高）
 _CONCURRENCY = 10
+# 抽帧/拼接等 ffmpeg 子进程是 CPU 密集，单独用更小的信号量限流，避免 4 vCPU 机器 load 爆掉
+_FFMPEG_CONCURRENCY = 2
+_ffmpeg_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_ffmpeg_semaphore() -> asyncio.Semaphore:
+    global _ffmpeg_semaphore
+    if _ffmpeg_semaphore is None:
+        _ffmpeg_semaphore = asyncio.Semaphore(_FFMPEG_CONCURRENCY)
+    return _ffmpeg_semaphore
+
+
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
 _PERSIST_INTERVAL = 2.0
 _PRODUCT_SEARCH_STAGE = "product_search"
@@ -236,19 +248,22 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
                         f.write(chunk)
 
         # 2. 用 ffprobe 获取视频时长（带大 probesize/analyzeduration，应对部分容器需要更多字节才能识别流）
-        probe_proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error",
-            "-probesize", "50M", "-analyzeduration", "100M",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", video_path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            probe_out, probe_err = await asyncio.wait_for(probe_proc.communicate(), timeout=60.0)
-        except asyncio.TimeoutError:
-            probe_proc.kill()
-            await probe_proc.wait()
-            raise RuntimeError(f"ffprobe timeout after 60s for template {template_id}")
+        # -threads 1：单进程占 1 核；外加全局 ffmpeg 信号量，限制同时运行的 ffmpeg/ffprobe 数量
+        async with _get_ffmpeg_semaphore():
+            probe_proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error",
+                "-threads", "1",
+                "-probesize", "50M", "-analyzeduration", "100M",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", video_path,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                probe_out, probe_err = await asyncio.wait_for(probe_proc.communicate(), timeout=60.0)
+            except asyncio.TimeoutError:
+                probe_proc.kill()
+                await probe_proc.wait()
+                raise RuntimeError(f"ffprobe timeout after 60s for template {template_id}")
         try:
             duration = float(probe_out.decode().strip())
         except ValueError:
@@ -273,6 +288,7 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
         async def _run_extract(input_path: str) -> tuple[int, str]:
             cmd = [
                 "ffmpeg", "-y",
+                "-threads", "1",
                 "-probesize", "50M", "-analyzeduration", "100M",
                 "-t", str(effective_duration),  # 限制只取前 N 秒
                 "-i", input_path,
@@ -281,18 +297,19 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
                 "-start_number", "0",
                 out_pattern,
             ]
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                # 15s 短视频抽帧正常 < 5s；给 60s 上限避免 ffmpeg 卡死把 CPU 撑满
-                _, err = await asyncio.wait_for(proc.communicate(), timeout=60.0)
-                return proc.returncode or 0, (err.decode(errors="replace") if err else "")
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                logger.error("[%s] ffmpeg extraction timeout (60s) for %s, killed", template_id, input_path)
-                return -9, "TIMEOUT_KILLED"
+            async with _get_ffmpeg_semaphore():
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    # 15s 短视频抽帧正常 < 5s；给 60s 上限避免 ffmpeg 卡死把 CPU 撑满
+                    _, err = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                    return proc.returncode or 0, (err.decode(errors="replace") if err else "")
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    logger.error("[%s] ffmpeg extraction timeout (60s) for %s, killed", template_id, input_path)
+                    return -9, "TIMEOUT_KILLED"
 
         rc, stderr_text = await _run_extract(video_path)
         # 收集生成的帧文件
@@ -306,19 +323,20 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
             logger.warning("[%s] Frame extraction returned 0 frames (rc=%s); ffmpeg stderr tail: %s",
                            template_id, rc, stderr_text[-500:])
             remuxed_path = os.path.join(tmpdir, "remuxed.mp4")
-            remux_proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y", "-fflags", "+genpts",
-                "-probesize", "50M", "-analyzeduration", "100M",
-                "-i", video_path, "-c", "copy", "-movflags", "+faststart", remuxed_path,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                _, remux_err = await asyncio.wait_for(remux_proc.communicate(), timeout=60.0)
-            except asyncio.TimeoutError:
-                remux_proc.kill()
-                await remux_proc.wait()
-                logger.error("[%s] ffmpeg remux timeout (60s), killed", template_id)
-                remux_err = b"TIMEOUT_KILLED"
+            async with _get_ffmpeg_semaphore():
+                remux_proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg", "-y", "-threads", "1", "-fflags", "+genpts",
+                    "-probesize", "50M", "-analyzeduration", "100M",
+                    "-i", video_path, "-c", "copy", "-movflags", "+faststart", remuxed_path,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    _, remux_err = await asyncio.wait_for(remux_proc.communicate(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    remux_proc.kill()
+                    await remux_proc.wait()
+                    logger.error("[%s] ffmpeg remux timeout (60s), killed", template_id)
+                    remux_err = b"TIMEOUT_KILLED"
             if remux_proc.returncode == 0 and os.path.exists(remuxed_path) and os.path.getsize(remuxed_path) > 0:
                 logger.info("[%s] Re-muxed video, retrying frame extraction", template_id)
                 rc2, stderr_text2 = await _run_extract(remuxed_path)

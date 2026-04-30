@@ -154,7 +154,7 @@ async def _ffmpeg_concat(
     )
 
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-threads", "1",
         "-i", src_path,
         "-i", logo_path,
         "-filter_complex", filter_complex,
