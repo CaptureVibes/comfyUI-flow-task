@@ -34,7 +34,9 @@ async def concat_video_with_logo(source_video_url: str, account_type: str = "tra
     if not os.path.isfile(logo_path):
         raise RuntimeError(f"Logo 文件不存在: {logo_path}")
 
-    with tempfile.TemporaryDirectory(prefix="logo_concat_") as tmpdir:
+    from app.utils.tmp_storage import disk_tempdir, ensure_free_space
+    ensure_free_space(min_bytes=500 * 1024 * 1024, label="logo_concat")
+    with disk_tempdir(prefix="logo_concat_") as tmpdir:
         src_path = os.path.join(tmpdir, "source.mp4")
         await _download_video(source_video_url, src_path)
 

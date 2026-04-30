@@ -73,8 +73,9 @@ class ImageUploadService:
         Returns:
             Dictionary with upload result
         """
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp_file:
+        # Create a temporary file (落到项目级 .tmp，避免吃 /tmp tmpfs/RAM)
+        from app.utils.tmp_storage import disk_namedtempfile
+        with disk_namedtempfile(suffix=Path(filename).suffix, delete=False) as tmp_file:
             tmp_file.write(image_data)
             tmp_file_path = tmp_file.name
 

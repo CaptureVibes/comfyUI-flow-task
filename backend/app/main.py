@@ -96,6 +96,12 @@ async def startup_event() -> None:
     logger.info("Starting API with env=%s db=%s", settings.app_env, settings.database_url)
     if settings.auto_create_tables:
         await init_db()
+    # 清理上次进程被强杀残留的 .tmp/ 子目录（>1h），避免磁盘越占越大
+    from app.utils.tmp_storage import cleanup_stale_tmp
+    try:
+        cleanup_stale_tmp(max_age_seconds=3600)
+    except Exception as exc:
+        logger.warning("cleanup_stale_tmp on startup failed: %s", exc)
     await start_promotion_code_distributor()
     start_video_ai_queue_processor()
     start_ai_account_queue_processor()

@@ -91,7 +91,9 @@ async def download_video_to_temp_file(
     suffix = Path(source_filename).suffix or ".mp4"
     max_size = max_size_mb * 1024 * 1024 if max_size_mb else None
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+    from app.utils.tmp_storage import disk_namedtempfile, ensure_free_space
+    ensure_free_space(min_bytes=500 * 1024 * 1024, label="gcs_video_download")
+    with disk_namedtempfile(suffix=suffix, delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
     total = 0

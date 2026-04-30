@@ -655,7 +655,9 @@ async def _do_download_and_upload(vs_id: UUID) -> None:
                 safe_title = (vs.video_title or str(vs_id))[:60].replace("/", "_").replace("\\", "_")
                 filename = f"{safe_title}.mp4"
 
-                with tempfile.TemporaryDirectory() as tmpdir:
+                from app.utils.tmp_storage import disk_tempdir, ensure_free_space
+                ensure_free_space(min_bytes=500 * 1024 * 1024, label="video_source_download")
+                with disk_tempdir(prefix="vsrc_dl_") as tmpdir:
                     out_template = os.path.join(tmpdir, "video")
                     actual_path = await _download_video(vs.source_url, out_template)
                     if not os.path.exists(actual_path):
@@ -741,10 +743,12 @@ async def get_stats_history(
 async def download_video_to_cdn(source_url: str, title: str | None = None) -> str:
     """下载视频并上传到 CDN，返回永久 URL。不涉及任何 DB 操作。
     供自动补充等需要"先分类再决定是否入库"的场景使用。"""
-    import tempfile as _tempfile, os as _os
+    import os as _os
+    from app.utils.tmp_storage import disk_tempdir, ensure_free_space
     safe_title = (title or "video")[:60].replace("/", "_").replace("\\", "_")
     filename = f"{safe_title}.mp4"
-    with _tempfile.TemporaryDirectory() as tmpdir:
+    ensure_free_space(min_bytes=500 * 1024 * 1024, label="download_video_to_cdn")
+    with disk_tempdir(prefix="vsrc_cdn_") as tmpdir:
         out_template = _os.path.join(tmpdir, "video")
         actual_path = await _download_video(source_url, out_template)
         if not _os.path.exists(actual_path):

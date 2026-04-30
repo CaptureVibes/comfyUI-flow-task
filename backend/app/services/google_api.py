@@ -136,7 +136,8 @@ async def _download_media_to_temp_file(
     filename = _filename_from_url(url, fallback_extension)
     suffix = Path(filename).suffix or fallback_extension
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+    from app.utils.tmp_storage import disk_namedtempfile
+    with disk_namedtempfile(suffix=suffix, delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
     total = 0

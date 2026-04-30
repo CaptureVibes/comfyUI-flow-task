@@ -230,7 +230,11 @@ async def download_and_upload(tiktok_url: str, filename: str | None = None) -> s
     ]
     errors: list[str] = []
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # 下载到项目级 .tmp（磁盘）而非系统 /tmp（tmpfs/RAM），并预检空间避免连环 ENOSPC
+    from app.utils.tmp_storage import disk_tempdir, ensure_free_space
+    ensure_free_space(min_bytes=500 * 1024 * 1024, label="tiktok_download")
+
+    with disk_tempdir(prefix="tiktok_dl_") as tmpdir:
         out_template = os.path.join(tmpdir, "video")
 
         for name, get_url_fn in providers:

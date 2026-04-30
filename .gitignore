@@ -32,4 +32,5 @@ logs/
 backend/job.json
 backend/job_result.json
 backend/tmp/
+backend/.tmp/
 backend/test_*.py

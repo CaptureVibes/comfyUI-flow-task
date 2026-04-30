@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 import uuid
 from pathlib import Path
 from uuid import UUID
@@ -39,7 +38,8 @@ async def _download_and_upload_avatar(avatar_url: str) -> str | None:
             elif "gif" in content_type:
                 ext = "gif"
 
-        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+        from app.utils.tmp_storage import disk_namedtempfile
+        with disk_namedtempfile(suffix=f".{ext}", delete=False) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
 

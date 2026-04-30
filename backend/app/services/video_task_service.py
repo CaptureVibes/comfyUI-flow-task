@@ -508,7 +508,8 @@ class VideoTaskService:
 
     async def _upload_gcs_video_to_cdn(self, blob: Any, filename: str) -> str:
         """Download a GCS blob to a temp file and upload to CDN. Returns CDN URL."""
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        from app.utils.tmp_storage import disk_namedtempfile
+        with disk_namedtempfile(suffix=".mp4", delete=False) as tmp:
             tmp_path = tmp.name
         try:
             await asyncio.to_thread(blob.download_to_filename, tmp_path)

@@ -219,7 +219,11 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
     超过 15s 的视频只截取前 15s，按 interval 秒抽一帧，抛弃尾帧。
     使用 ffmpeg 命令行完成：先下载视频到临时文件，再抽帧。
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
+    from app.utils.tmp_storage import disk_tempdir, ensure_free_space
+    # 抽帧前预检：1 个视频 + 几十帧 jpg，给 500MB 余量足够
+    ensure_free_space(min_bytes=500 * 1024 * 1024, label=f"frame_extract({template_id})")
+
+    with disk_tempdir(prefix=f"vai_{template_id[:8]}_") as tmpdir:
         video_path = os.path.join(tmpdir, "video.mp4")
 
         # 1. 下载视频（流式，限速以免 OOM）
