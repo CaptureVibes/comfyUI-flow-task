@@ -63,6 +63,7 @@ async def list_accounts(
     gender: str | None = None,
     account_type: str | None = None,
     face_mode: str | None = None,
+    product_code_mode: str | None = None,
     platform_binding_status: str | None = None,
     classification_type: str | None = None,
 ) -> tuple[list[Account], int]:
@@ -110,6 +111,9 @@ async def list_accounts(
     if face_mode:
         stmt = stmt.where(Account.face_mode == face_mode)
         total_stmt = total_stmt.where(Account.face_mode == face_mode)
+    if product_code_mode:
+        stmt = stmt.where(Account.product_code_mode == product_code_mode)
+        total_stmt = total_stmt.where(Account.product_code_mode == product_code_mode)
     if platform_binding_status:
         # "bound" = has at least one reservation with status='bound'
         # "confirmed" = has at least one reservation with status='confirmed'

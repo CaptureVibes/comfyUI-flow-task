@@ -818,6 +818,11 @@
           <option value="face">人脸</option>
           <option value="no_face">非人脸</option>
         </select>
+        <select class="al-col-filter-select" v-model="filterProductCodeMode" @change="onFilterChange">
+          <option value="">商品码 · 全部</option>
+          <option value="with_code">带商品码</option>
+          <option value="without_code">非商品码</option>
+        </select>
         <select class="al-col-filter-select" v-model="filterPlatformBindingStatus" @change="onFilterChange">
           <option value="">平台绑定 · 全部</option>
           <option value="bound">已绑定</option>
@@ -1398,11 +1403,12 @@ function toggleSort(field) {
 const filterGender = ref('')
 const filterAccountType = ref('')
 const filterFaceMode = ref('')
+const filterProductCodeMode = ref('')
 const filterPlatformBindingStatus = ref('')
 const filterClassificationType = ref('')
 
 const hasActiveColFilters = computed(() =>
-  filterGender.value || filterAccountType.value || filterFaceMode.value || filterPlatformBindingStatus.value || filterClassificationType.value
+  filterGender.value || filterAccountType.value || filterFaceMode.value || filterProductCodeMode.value || filterPlatformBindingStatus.value || filterClassificationType.value
 )
 
 function onFilterChange() {
@@ -1414,6 +1420,7 @@ function clearColFilters() {
   filterGender.value = ''
   filterAccountType.value = ''
   filterFaceMode.value = ''
+  filterProductCodeMode.value = ''
   filterPlatformBindingStatus.value = ''
   filterClassificationType.value = ''
   page.value = 1
@@ -2175,6 +2182,7 @@ async function loadData() {
     if (filterGender.value) params.gender = filterGender.value
     if (filterAccountType.value) params.account_type = filterAccountType.value
     if (filterFaceMode.value) params.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
     if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
     if (filterClassificationType.value) params.classification_type = filterClassificationType.value
     const data = await fetchAccounts(params)
@@ -2338,7 +2346,14 @@ async function startBulkVideoGenerate() {
     if (isSelection) {
       accountIds = [...selectedMap.value.values()].map(a => a.id)
     } else {
-      const data = await fetchAccounts({ page: 1, page_size: 9999 })
+      const params = { page: 1, page_size: 9999 }
+      if (filterGender.value) params.gender = filterGender.value
+      if (filterAccountType.value) params.account_type = filterAccountType.value
+      if (filterFaceMode.value) params.face_mode = filterFaceMode.value
+      if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
+      if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
+      if (filterClassificationType.value) params.classification_type = filterClassificationType.value
+      const data = await fetchAccounts(params)
       accountIds = (data.items || []).map(a => a.id)
     }
 
