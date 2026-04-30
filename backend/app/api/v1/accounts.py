@@ -1227,9 +1227,9 @@ async def _load_bulk_video_task_templates(
     from app.models.video_ai_template import VideoAITemplate
     from app.models.video_classification import VideoClassification
 
-    # ── 按分类类型决定允许的大类 ──────────────────────────────────────────────
+    # ── 按分类类型决定允许的小类（category_index）──────────────────────────────
     account = await session.get(Account, account_id)
-    allowed_major: list[str] | None = None  # None = 不限制
+    allowed_indices: list[int] | None = None  # None = 不限制
 
     if account is None:
         return ([], "account_missing") if with_reason else []
@@ -1239,13 +1239,13 @@ async def _load_bulk_video_task_templates(
     if cls_type in ("chaos", "insufficient"):
         return ([], "classification_unavailable") if with_reason else []
     if cls_type == "single":
-        primary = summary.get("primary")
-        if primary:
-            allowed_major = [primary]
+        primary_idx = summary.get("primary_index")
+        if primary_idx is not None:
+            allowed_indices = [int(primary_idx)]
     elif cls_type == "dual":
-        primary = summary.get("primary")
-        secondary = summary.get("secondary")
-        allowed_major = [c for c in [primary, secondary] if c]
+        primary_idx = summary.get("primary_index")
+        secondary_idx = summary.get("secondary_index")
+        allowed_indices = [int(i) for i in [primary_idx, secondary_idx] if i is not None]
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
     tagged_tpls: list[VideoAITemplate] = []
@@ -1303,9 +1303,9 @@ async def _load_bulk_video_task_templates(
     if not unique_tpls:
         return ([], mode_skip_reason) if with_reason else []
 
-    # 分类只作为优先级：有匹配分类时优先使用匹配模板；没有匹配时回退到原候选。
-    # 一键生成的硬条件是标签/模式，不再因为分类不匹配跳过账号。
-    if allowed_major is not None:
+    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 小类（category_index）
+    # 完全匹配的模板，没有匹配则跳过该账号（不再回退到全部候选）。
+    if allowed_indices is not None:
         vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
         matched_vs_ids: set[uuid.UUID] = set()
         if vs_ids:
@@ -1314,13 +1314,13 @@ async def _load_bulk_video_task_templates(
                     select(VideoClassification.video_source_id)
                     .where(VideoClassification.video_source_id.in_(vs_ids))
                     .where(VideoClassification.status == "success")
-                    .where(VideoClassification.major_category.in_(allowed_major))
+                    .where(VideoClassification.category_index.in_(allowed_indices))
                 )
             ).scalars().all()
             matched_vs_ids = set(rows)
-        matched_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
-        if matched_tpls:
-            unique_tpls = matched_tpls
+        unique_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
+        if not unique_tpls:
+            return ([], "no_classification_match") if with_reason else []
 
     if with_reason:
         return unique_tpls, None
