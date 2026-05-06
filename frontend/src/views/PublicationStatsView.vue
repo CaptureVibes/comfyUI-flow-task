@@ -61,6 +61,23 @@
           :value="account.id"
         />
       </el-select>
+      <el-select
+        v-model="filters.category_indices"
+        multiple
+        collapse-tags
+        collapse-tags-tooltip
+        clearable
+        placeholder="视频分类"
+        size="small"
+        style="width:200px"
+      >
+        <el-option
+          v-for="cat in CATEGORY_OPTIONS"
+          :key="cat.index"
+          :label="`${cat.index}. ${cat.label}`"
+          :value="cat.index"
+        />
+      </el-select>
       <el-input
         v-model.trim="filters.keyword"
         placeholder="标题、账号、渠道名、平台链接"
@@ -88,6 +105,7 @@
               <button class="ps-sort-btn" @click="toggleSort('account_name')">账号{{ sortMark('account_name') }}</button>
             </th>
             <th class="ps-th">平台</th>
+            <th class="ps-th">视频分类</th>
             <th class="ps-th">
               <button class="ps-sort-btn" @click="toggleSort('published_at')">发布时间{{ sortMark('published_at') }}</button>
             </th>
@@ -133,6 +151,14 @@
                 >{{ PLATFORM_LABELS[channel.platform] || channel.platform }}</a>
                 <span v-if="!item.metrics_channels?.length" class="ps-dash">-</span>
               </div>
+            </td>
+            <td class="ps-td ps-td-category">
+              <span
+                v-if="item.category_label"
+                class="ps-cat-tag"
+                :class="`is-${item.major_category || 'unknown'}`"
+              >{{ item.category_label }}</span>
+              <span v-else class="ps-dash">-</span>
             </td>
             <td class="ps-td ps-td-date">{{ formatDateTime(item.published_at || item.created_at) }}</td>
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_views) }}</td>
@@ -303,6 +329,7 @@ async function handleExport() {
       date_from: filters.date_from || undefined,
       date_to: filters.date_to || undefined,
       keyword: filters.keyword || undefined,
+      category_indices: filters.category_indices.length ? filters.category_indices.join(',') : undefined,
     })
     const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -332,6 +359,24 @@ const PLATFORM_LABELS = {
   instagram: 'Instagram',
 }
 
+// 与后端 video_classification_service.CATEGORY_LABELS 对齐
+const CATEGORY_OPTIONS = [
+  { index: 0, label: '单套衣服展示美', major: 'display' },
+  { index: 1, label: '换装展示美', major: 'display' },
+  { index: 2, label: '镜头感或表演型展示美', major: 'display' },
+  { index: 3, label: '生活场景中的展示美', major: 'display' },
+  { index: 4, label: '单品语言讲解', major: 'knowledge' },
+  { index: 5, label: '造型选择或对比', major: 'knowledge' },
+  { index: 6, label: '搭配教程或方法论', major: 'knowledge' },
+  { index: 7, label: '单品展示无人讲解', major: 'knowledge' },
+  { index: 8, label: '单品展示字幕讲解', major: 'knowledge' },
+  { index: 9, label: '人生故事', major: 'persona' },
+  { index: 10, label: '人生阶段', major: 'persona' },
+  { index: 11, label: '个人态度表达', major: 'persona' },
+  { index: 12, label: '热门梗段子反转梗流行文案', major: 'trending' },
+  { index: 13, label: '明星影视综艺节日社会话题相关穿搭', major: 'trending' },
+]
+
 const filters = reactive({
   platform: '',
   account_id: '',
@@ -341,6 +386,7 @@ const filters = reactive({
   date_from: '',
   date_to: '',
   keyword: '',
+  category_indices: [],
   sort_by: 'published_at',
   sort_order: 'desc',
   page: 1,
@@ -501,6 +547,7 @@ async function load() {
       date_from: filters.date_from || undefined,
       date_to: filters.date_to || undefined,
       keyword: filters.keyword || undefined,
+      category_indices: filters.category_indices.length ? filters.category_indices.join(',') : undefined,
       sort_by: filters.sort_by,
       sort_order: filters.sort_order,
       page: filters.page,
@@ -529,6 +576,7 @@ function resetFilters() {
   filters.single_date = ''
   filters.date_range = []
   filters.keyword = ''
+  filters.category_indices = []
   filters.sort_by = 'published_at'
   filters.sort_order = 'desc'
   filters.page = 1
@@ -866,6 +914,22 @@ video:-moz-full-screen {
 .ps-platform-instagram { background: #fff7ed; color: #c2410c; }
 
 .ps-dash { color: #94a3b8; }
+
+.ps-cat-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #475569;
+}
+.ps-cat-tag.is-display { background: #fce7f3; color: #be185d; }
+.ps-cat-tag.is-knowledge { background: #dbeafe; color: #1d4ed8; }
+.ps-cat-tag.is-persona { background: #fef3c7; color: #b45309; }
+.ps-cat-tag.is-trending { background: #d1fae5; color: #047857; }
 
 /* Footer pagination */
 .ps-footer {

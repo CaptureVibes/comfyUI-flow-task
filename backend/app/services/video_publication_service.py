@@ -17,6 +17,8 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.models.account import Account
 from app.models.account_channel_reservation import AccountChannelReservation
+from app.models.video_ai_template import VideoAITemplate
+from app.models.video_classification import VideoClassification
 from app.models.video_publication import VideoPublication
 from app.models.video_task import VideoSubTask, VideoTask
 from app.schemas.video_publication import (
@@ -28,6 +30,15 @@ from app.services.ext_product_service import build_ext_products_from_shots
 from app.services.promotion_code_service import promotion_code_distributor
 
 logger = logging.getLogger("app.video_publication_service")
+
+
+def _classification_label(classification: VideoClassification | None) -> str | None:
+    if classification is None or classification.category_index is None:
+        return None
+    from app.services.video_classification_service import CATEGORY_LABELS
+
+    return CATEGORY_LABELS.get(classification.category_index)
+
 
 # ── 后台轮询器 ──────────────────────────────────────────────────────────────────
 _POLL_INTERVAL_SECONDS = 600.0
@@ -1186,10 +1197,15 @@ class VideoPublicationService:
         from app.models.video_task import VideoSubTask, VideoTask
 
         stmt = (
-            select(VideoPublication, VideoSubTask, VideoTask, Account)
+            select(VideoPublication, VideoSubTask, VideoTask, Account, VideoClassification)
             .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
             .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
             .outerjoin(Account, Account.id == VideoTask.account_id)
+            .outerjoin(VideoAITemplate, VideoAITemplate.id == VideoTask.template_id)
+            .outerjoin(
+                VideoClassification,
+                VideoClassification.video_source_id == VideoAITemplate.video_source_id,
+            )
             .where(VideoPublication.status.in_(["completed", "partial"]))
             .order_by(
                 VideoPublication.completed_at.desc().nullslast(),
@@ -1209,10 +1225,12 @@ class VideoPublicationService:
             stmt = stmt.where(
                 VideoPublication.completed_at < datetime.combine(date_to_exclusive, datetime.min.time(), tzinfo=timezone.utc)
             )
+        if query.category_indices:
+            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
 
         rows = (await self.db.execute(stmt)).all()
         bindings_by_account = await self._load_social_bindings_by_account([
-            account.id for _, _, _, account in rows if account is not None
+            account.id for _, _, _, account, _ in rows if account is not None
         ])
         items = [
             self._build_stats_item(
@@ -1221,8 +1239,9 @@ class VideoPublicationService:
                 task,
                 account,
                 bindings_by_account.get(account.id, []) if account is not None else [],
+                classification=classification,
             )
-            for publication, sub_task, task, account in rows
+            for publication, sub_task, task, account, classification in rows
         ]
 
         platform = (query.platform or "").strip().lower()
@@ -1249,10 +1268,15 @@ class VideoPublicationService:
         from app.models.video_task import VideoSubTask, VideoTask
 
         stmt = (
-            select(VideoPublication, VideoSubTask, VideoTask, Account)
+            select(VideoPublication, VideoSubTask, VideoTask, Account, VideoClassification)
             .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
             .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
             .outerjoin(Account, Account.id == VideoTask.account_id)
+            .outerjoin(VideoAITemplate, VideoAITemplate.id == VideoTask.template_id)
+            .outerjoin(
+                VideoClassification,
+                VideoClassification.video_source_id == VideoAITemplate.video_source_id,
+            )
             .where(VideoPublication.status.in_(["completed", "partial"]))
             .order_by(
                 VideoPublication.completed_at.asc().nullslast(),
@@ -1271,10 +1295,12 @@ class VideoPublicationService:
             stmt = stmt.where(
                 VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
             )
+        if query.category_indices:
+            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
 
         rows = (await self.db.execute(stmt)).all()
         bindings_by_account = await self._load_social_bindings_by_account([
-            account.id for _, _, _, account in rows if account is not None
+            account.id for _, _, _, account, _ in rows if account is not None
         ])
         items = [
             self._build_stats_item(
@@ -1283,8 +1309,9 @@ class VideoPublicationService:
                 task,
                 account,
                 bindings_by_account.get(account.id, []) if account is not None else [],
+                classification=classification,
             )
-            for publication, sub_task, task, account in rows
+            for publication, sub_task, task, account, classification in rows
         ]
 
         platform = (query.platform or "").strip().lower()
@@ -1304,6 +1331,8 @@ class VideoPublicationService:
         task: Any,
         account: Account | None,
         social_bindings: list[dict],
+        *,
+        classification: VideoClassification | None = None,
     ) -> VideoPublicationStatsListItem:
         request_payload = publication.request_payload or {}
         metrics_snapshot = publication.metrics_snapshot if isinstance(publication.metrics_snapshot, dict) else None
@@ -1354,6 +1383,9 @@ class VideoPublicationService:
             total_comments=total_comments,
             total_shares=total_shares,
             avg_view_percentage=(sum(view_percentage_values) / len(view_percentage_values)) if view_percentage_values else None,
+            category_index=getattr(classification, "category_index", None),
+            category_label=_classification_label(classification),
+            major_category=getattr(classification, "major_category", None),
             created_at=publication.created_at,
             updated_at=publication.updated_at,
         )

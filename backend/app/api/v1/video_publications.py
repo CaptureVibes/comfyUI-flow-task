@@ -27,6 +27,18 @@ router = APIRouter()
 logger = __import__("logging").getLogger("app.video_publications")
 
 
+def _parse_category_indices(raw: str | None) -> list[int] | None:
+    if not raw:
+        return None
+    try:
+        return [int(x) for x in raw.split(",") if x.strip() != ""] or None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="category_indices 必须是逗号分隔的整数",
+        ) from exc
+
+
 @router.post("/video-publications", response_model=VideoPublicationRead)
 async def create_publication(
     data: VideoPublicationCreate,
@@ -77,6 +89,7 @@ async def get_publication_stats(
     date_from: date | None = Query(None, description="发布时间起始日期"),
     date_to: date | None = Query(None, description="发布时间结束日期"),
     keyword: str | None = Query(None, description="标题/账号/渠道/平台链接关键字"),
+    category_indices: str | None = Query(None, description="视频分类（0-13），逗号分隔"),
     sort_by: str = Query("published_at", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
     page: int = Query(1, ge=1),
@@ -85,12 +98,14 @@ async def get_publication_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """获取数据统计页已发布视频列表。"""
+    parsed_category_indices = _parse_category_indices(category_indices)
     query = VideoPublicationStatsQuery(
         platform=platform,
         account_id=account_id,
         date_from=date_from,
         date_to=date_to,
         keyword=keyword,
+        category_indices=parsed_category_indices,
         sort_by=sort_by,
         sort_order=sort_order,
         page=page,
@@ -109,16 +124,19 @@ async def export_publication_stats(
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     keyword: str | None = Query(None),
+    category_indices: str | None = Query(None),
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """导出数据统计 CSV，按博主×日期透视表格式。"""
+    parsed_category_indices = _parse_category_indices(category_indices)
     query = VideoPublicationStatsQuery(
         platform=platform,
         account_id=account_id,
         date_from=date_from,
         date_to=date_to,
         keyword=keyword,
+        category_indices=parsed_category_indices,
     )
     owner_id = None if current_user.is_admin else current_user.user_id
     service = VideoPublicationService(db)
