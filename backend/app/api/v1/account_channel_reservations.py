@@ -174,8 +174,14 @@ async def reserve_ai_accounts_for_channel_openapi(
             status_code=status.HTTP_409_CONFLICT,
             detail="部分账号已被其他请求占用，请稍后重试",
         )
+    response = ExternalReserveAIAccountsResponse(
+        items=items,
+        requested_count=body.count,
+        returned_count=len(items),
+        confirmed_count=confirmed_count,
+    )
     logger.info(
-        "reserve_ai_accounts response: owner_id=%s platform=%s requested=%s returned=%s confirmed=%s account_ids=%s",
+        "reserve_ai_accounts response summary: owner_id=%s platform=%s requested=%s returned=%s confirmed=%s account_ids=%s",
         owner_id,
         platform,
         body.count,
@@ -183,12 +189,11 @@ async def reserve_ai_accounts_for_channel_openapi(
         confirmed_count,
         [str(it.account_id) for it in items],
     )
-    return ExternalReserveAIAccountsResponse(
-        items=items,
-        requested_count=body.count,
-        returned_count=len(items),
-        confirmed_count=confirmed_count,
+    logger.info(
+        "reserve_ai_accounts response body: %s",
+        response.model_dump(mode="json"),
     )
+    return response
 
 
 @router.post("/channel-reservations/confirm", response_model=ExternalConfirmChannelReservationResponse)
