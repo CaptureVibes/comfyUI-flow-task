@@ -368,9 +368,19 @@ async def list_accounts_endpoint(
     product_code_mode: str | None = Query(None),
     platform_binding_status: str | None = Query(None),
     classification_type: str | None = Query(None),
+    category_indices: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
+    parsed_category_indices: list[int] | None = None
+    if category_indices:
+        try:
+            parsed_category_indices = [int(x) for x in category_indices.split(",") if x.strip() != ""]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="category_indices 必须是逗号分隔的整数",
+            ) from exc
     items, total = await list_accounts(
         session,
         page=page,
@@ -386,6 +396,7 @@ async def list_accounts_endpoint(
         product_code_mode=product_code_mode or None,
         platform_binding_status=platform_binding_status or None,
         classification_type=classification_type or None,
+        category_indices=parsed_category_indices or None,
     )
     # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]

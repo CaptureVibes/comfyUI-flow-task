@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import Float, delete, func, nullslast, select, text
+from sqlalchemy import Float, Integer, cast, delete, func, literal_column, nullslast, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
@@ -66,6 +66,7 @@ async def list_accounts(
     product_code_mode: str | None = None,
     platform_binding_status: str | None = None,
     classification_type: str | None = None,
+    category_indices: list[int] | None = None,
 ) -> tuple[list[Account], int]:
     # ── Determine sort order ──────────────────────────────────────────────────
     order_desc = (sort_order or "desc").lower() == "desc"
@@ -136,6 +137,18 @@ async def list_accounts(
         else:
             stmt = stmt.where(Account.classification_type == classification_type)
             total_stmt = total_stmt.where(Account.classification_type == classification_type)
+
+    if category_indices and classification_type in ("single", "dual"):
+        primary_idx = cast(literal_column("classification_summary->>'primary_index'"), Integer)
+        secondary_idx = cast(literal_column("classification_summary->>'secondary_index'"), Integer)
+        if classification_type == "single":
+            stmt = stmt.where(primary_idx.in_(category_indices))
+            total_stmt = total_stmt.where(primary_idx.in_(category_indices))
+        else:  # dual: each selected index must match primary or secondary
+            for idx in category_indices:
+                cond = or_(primary_idx == idx, secondary_idx == idx)
+                stmt = stmt.where(cond)
+                total_stmt = total_stmt.where(cond)
 
     rows = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(total_stmt) or 0)

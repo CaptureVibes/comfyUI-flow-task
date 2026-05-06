@@ -845,7 +845,7 @@
           <option value="confirmed">已确认</option>
           <option value="unbound">未绑定</option>
         </select>
-        <select class="al-col-filter-select" v-model="filterClassificationType" @change="onFilterChange">
+        <select class="al-col-filter-select" v-model="filterClassificationType" @change="onClassificationTypeChange">
           <option value="">分类 · 全部</option>
           <option value="single">单核心</option>
           <option value="dual">双核心</option>
@@ -857,6 +857,27 @@
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           清除筛选
         </button>
+      </div>
+
+      <!-- 分类细类二级筛选：单核心选 1，双核心选 2 -->
+      <div v-if="filterClassificationType === 'single' || filterClassificationType === 'dual'" class="al-cat-filter">
+        <span class="al-cat-filter-label">
+          {{ filterClassificationType === 'single' ? '选择 1 个分类' : '选择 2 个分类' }}
+          <span class="al-cat-filter-hint">（已选 {{ filterCategoryIndices.length }}/{{ filterClassificationType === 'single' ? 1 : 2 }}）</span>
+        </span>
+        <div class="al-cat-filter-pills">
+          <button
+            v-for="cat in CATEGORY_OPTIONS"
+            :key="cat.index"
+            type="button"
+            class="al-cat-pill"
+            :class="[
+              `is-${cat.major}`,
+              { active: filterCategoryIndices.includes(cat.index) },
+            ]"
+            @click.prevent="toggleCategoryFilter(cat.index)"
+          >{{ cat.index }}. {{ cat.label }}</button>
+        </div>
       </div>
 
       <!-- 多选批量操作栏 -->
@@ -1422,14 +1443,52 @@ const filterFaceMode = ref('')
 const filterProductCodeMode = ref('')
 const filterPlatformBindingStatus = ref('')
 const filterClassificationType = ref('')
+const filterCategoryIndices = ref([])
+
+// 14 个细分类（与后端 video_classification_service.CATEGORY_LABELS 保持一致）
+const CATEGORY_OPTIONS = [
+  { index: 0, label: '单套衣服展示美', major: 'display' },
+  { index: 1, label: '换装展示美', major: 'display' },
+  { index: 2, label: '镜头感或表演型展示美', major: 'display' },
+  { index: 3, label: '生活场景中的展示美', major: 'display' },
+  { index: 4, label: '单品语言讲解', major: 'knowledge' },
+  { index: 5, label: '造型选择或对比', major: 'knowledge' },
+  { index: 6, label: '搭配教程或方法论', major: 'knowledge' },
+  { index: 7, label: '单品展示无人讲解', major: 'knowledge' },
+  { index: 8, label: '单品展示字幕讲解', major: 'knowledge' },
+  { index: 9, label: '人生故事', major: 'persona' },
+  { index: 10, label: '人生阶段', major: 'persona' },
+  { index: 11, label: '个人态度表达', major: 'persona' },
+  { index: 12, label: '热门梗段子反转梗流行文案', major: 'trending' },
+  { index: 13, label: '明星影视综艺节日社会话题相关穿搭', major: 'trending' },
+]
 
 const hasActiveColFilters = computed(() =>
-  filterGender.value || filterAccountType.value || filterFaceMode.value || filterProductCodeMode.value || filterPlatformBindingStatus.value || filterClassificationType.value
+  filterGender.value || filterAccountType.value || filterFaceMode.value || filterProductCodeMode.value || filterPlatformBindingStatus.value || filterClassificationType.value || filterCategoryIndices.value.length > 0
 )
 
 function onFilterChange() {
   page.value = 1
   loadData()
+}
+
+function onClassificationTypeChange() {
+  filterCategoryIndices.value = []
+  onFilterChange()
+}
+
+function toggleCategoryFilter(idx) {
+  const max = filterClassificationType.value === 'dual' ? 2 : 1
+  const list = filterCategoryIndices.value
+  const pos = list.indexOf(idx)
+  if (pos >= 0) {
+    list.splice(pos, 1)
+  } else {
+    if (list.length >= max) list.shift()
+    list.push(idx)
+  }
+  page.value = 1
+  loadData({ silent: true })
 }
 
 function clearColFilters() {
@@ -1439,6 +1498,7 @@ function clearColFilters() {
   filterProductCodeMode.value = ''
   filterPlatformBindingStatus.value = ''
   filterClassificationType.value = ''
+  filterCategoryIndices.value = []
   page.value = 1
   loadData()
 }
@@ -2188,8 +2248,8 @@ function goToDetail(item) {
   router.push(`/dashboard/accounts/${item.id}`)
 }
 
-async function loadData() {
-  loading.value = true
+async function loadData({ silent = false } = {}) {
+  if (!silent) loading.value = true
   try {
     const params = { page: page.value, page_size: pageSize.value }
     if (filterFlagId.value) params.flag_id = filterFlagId.value
@@ -2201,6 +2261,7 @@ async function loadData() {
     if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
     if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
     if (filterClassificationType.value) params.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
@@ -2208,7 +2269,7 @@ async function loadData() {
     if (isDuplicateRequestError(err)) return
     ElMessage.error(err?.response?.data?.detail || '加载失败')
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -2373,6 +2434,7 @@ async function startBulkVideoGenerate() {
       if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
       if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
       if (filterClassificationType.value) params.classification_type = filterClassificationType.value
+      if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
       const data = await fetchAccounts(params)
       accountIds = (data.items || []).map(a => a.id)
     }
@@ -3438,6 +3500,59 @@ onMounted(() => {
 .al-col-filter-clear:hover {
   background: #fee2e2;
 }
+
+.al-cat-filter {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0 2px;
+  flex-wrap: wrap;
+}
+.al-cat-filter-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #475569;
+  line-height: 26px;
+  font-weight: 500;
+}
+.al-cat-filter-hint {
+  color: #94a3b8;
+  font-weight: normal;
+  margin-left: 4px;
+}
+.al-cat-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.al-cat-pill {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 13px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.al-cat-pill:hover {
+  border-color: #a5b4fc;
+  color: #4338ca;
+}
+.al-cat-pill.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+  font-weight: 500;
+}
+.al-cat-pill.is-display.active { background: #ec4899; border-color: #ec4899; }
+.al-cat-pill.is-knowledge.active { background: #3b82f6; border-color: #3b82f6; }
+.al-cat-pill.is-persona.active { background: #f59e0b; border-color: #f59e0b; }
+.al-cat-pill.is-trending.active { background: #10b981; border-color: #10b981; }
 
 .al-tr {
   cursor: pointer;
