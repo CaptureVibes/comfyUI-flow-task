@@ -138,7 +138,9 @@ _JSON_SUFFIX = """
 Output strictly as JSON (no markdown, no explanation):
 {"title": "...", "desc": "...", "hashtag": ["tag1", "tag2"]}"""
 
-_PRODUCT_CODE_TITLE_SUFFIX = "Get my exact look here 👀 👇"
+_PRODUCT_CODE_TITLE_PREFIX = "👇 👀 Get my exact look here 👀 👇"
+# 旧版本曾以下面这个文案作为后缀拼接，保留常量供清洗脚本识别历史数据
+_PRODUCT_CODE_TITLE_LEGACY_SUFFIX = "Get my exact look here 👀 👇"
 
 
 def _format_price_number(value: Any) -> str:
@@ -213,14 +215,17 @@ def _build_product_code_description(
 
 def _build_product_code_title(base_title: str) -> str:
     title = (base_title or "").strip()
+    # 兼容历史脏数据：去掉旧版后缀，避免再次拼接造成重复
+    if title.endswith(_PRODUCT_CODE_TITLE_LEGACY_SUFFIX):
+        title = title[: -len(_PRODUCT_CODE_TITLE_LEGACY_SUFFIX)].rstrip()
     if not title:
-        return _PRODUCT_CODE_TITLE_SUFFIX[:100]
-    if _PRODUCT_CODE_TITLE_SUFFIX in title:
+        return _PRODUCT_CODE_TITLE_PREFIX[:100]
+    if title.startswith(_PRODUCT_CODE_TITLE_PREFIX):
         return title[:100]
     separator = " "
-    max_base_length = max(0, 100 - len(separator) - len(_PRODUCT_CODE_TITLE_SUFFIX))
-    title_prefix = title[:max_base_length].rstrip()
-    return f"{title_prefix}{separator}{_PRODUCT_CODE_TITLE_SUFFIX}".strip()[:100]
+    max_base_length = max(0, 100 - len(separator) - len(_PRODUCT_CODE_TITLE_PREFIX))
+    title_tail = title[:max_base_length].strip()
+    return f"{_PRODUCT_CODE_TITLE_PREFIX}{separator}{title_tail}".strip()[:100]
 
 
 async def generate_publish_metadata(
