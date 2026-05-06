@@ -10,9 +10,9 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from app.core.config import settings
 from app.models.account import Account
@@ -1193,73 +1193,65 @@ class VideoPublicationService:
         query: VideoPublicationStatsQuery,
         owner_id: uuid.UUID | None = None,
     ) -> tuple[list[VideoPublicationStatsListItem], int]:
-        """获取数据统计页所需的已发布视频列表。"""
+        """获取数据统计页所需的已发布视频列表。
+
+        快速路径：当没有 platform / keyword 过滤且排序字段可下推 SQL 时，使用 SQL
+        分页 + COUNT，仅加载当页数据；否则走回退路径（与历史一致：捞全量后在
+        Python 里过滤+排序+切片）。
+        """
         from app.models.video_task import VideoSubTask, VideoTask
 
-        stmt = (
-            select(VideoPublication, VideoSubTask, VideoTask, Account, VideoClassification)
-            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
-            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
-            .outerjoin(Account, Account.id == VideoTask.account_id)
-            .outerjoin(VideoAITemplate, VideoAITemplate.id == VideoTask.template_id)
-            .outerjoin(
-                VideoClassification,
-                VideoClassification.video_source_id == VideoAITemplate.video_source_id,
+        platform = (query.platform or "").strip().lower()
+        keyword = (query.keyword or "").strip().lower()
+        sql_sort_clauses = self._stats_sql_order_clauses(query.sort_by, query.sort_order)
+        can_use_fast_path = not platform and not keyword and sql_sort_clauses is not None
+
+        base_stmt = self._stats_base_select().where(
+            VideoPublication.status.in_(["completed", "partial"])
+        )
+        base_stmt = self._apply_stats_sql_filters(base_stmt, query, owner_id)
+
+        if can_use_fast_path:
+            count_stmt = (
+                select(func.count(VideoPublication.id.distinct()))
+                .select_from(VideoPublication)
+                .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+                .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+                .outerjoin(Account, Account.id == VideoTask.account_id)
+                .outerjoin(VideoAITemplate, VideoAITemplate.id == VideoTask.template_id)
+                .outerjoin(
+                    VideoClassification,
+                    VideoClassification.video_source_id == VideoAITemplate.video_source_id,
+                )
+                .where(VideoPublication.status.in_(["completed", "partial"]))
             )
-            .where(VideoPublication.status.in_(["completed", "partial"]))
-            .order_by(
+            count_stmt = self._apply_stats_sql_filters(count_stmt, query, owner_id)
+            total = int(await self.db.scalar(count_stmt) or 0)
+
+            page_stmt = (
+                base_stmt.order_by(*sql_sort_clauses)
+                .offset(max(0, (query.page - 1) * query.page_size))
+                .limit(query.page_size)
+            )
+            rows = (await self.db.execute(page_stmt)).all()
+            items = await self._stats_rows_to_items(rows)
+            return items, total
+
+        # 回退路径：post-filter（platform / keyword / 复杂排序）
+        rows = (await self.db.execute(
+            base_stmt.order_by(
                 VideoPublication.completed_at.desc().nullslast(),
                 VideoPublication.created_at.desc(),
             )
-        )
+        )).all()
+        items = await self._stats_rows_to_items(rows)
 
-        if owner_id is not None:
-            stmt = stmt.where(VideoTask.owner_id == owner_id)
-        if query.account_id is not None:
-            stmt = stmt.where(VideoTask.account_id == query.account_id)
-        if query.date_from is not None:
-            stmt = stmt.where(VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc))
-        if query.date_to is not None:
-            next_day = query.date_to.toordinal() + 1
-            date_to_exclusive = date.fromordinal(next_day)
-            stmt = stmt.where(
-                VideoPublication.completed_at < datetime.combine(date_to_exclusive, datetime.min.time(), tzinfo=timezone.utc)
-            )
-        if query.unclassified:
-            stmt = stmt.where(VideoClassification.id.is_(None))
-        elif query.category_indices:
-            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
-        if query.promotion_code_filter == "with":
-            stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
-        elif query.promotion_code_filter == "without":
-            stmt = stmt.where(VideoPublication.promotion_code.is_(None))
-
-        rows = (await self.db.execute(stmt)).all()
-        bindings_by_account = await self._load_social_bindings_by_account([
-            account.id for _, _, _, account, _ in rows if account is not None
-        ])
-        items = [
-            self._build_stats_item(
-                publication,
-                sub_task,
-                task,
-                account,
-                bindings_by_account.get(account.id, []) if account is not None else [],
-                classification=classification,
-            )
-            for publication, sub_task, task, account, classification in rows
-        ]
-
-        platform = (query.platform or "").strip().lower()
         if platform:
             items = [item for item in items if self._matches_platform(item, platform)]
-
-        keyword = (query.keyword or "").strip().lower()
         if keyword:
             items = [item for item in items if self._matches_keyword(item, keyword)]
 
         items = self._sort_stats_items(items, query.sort_by, query.sort_order)
-
         total = len(items)
         start = (query.page - 1) * query.page_size
         end = start + query.page_size
@@ -1271,60 +1263,18 @@ class VideoPublicationService:
         owner_id: uuid.UUID | None = None,
     ) -> list[VideoPublicationStatsListItem]:
         """返回全量数据（不分页），用于导出。"""
-        from app.models.video_task import VideoSubTask, VideoTask
-
         stmt = (
-            select(VideoPublication, VideoSubTask, VideoTask, Account, VideoClassification)
-            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
-            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
-            .outerjoin(Account, Account.id == VideoTask.account_id)
-            .outerjoin(VideoAITemplate, VideoAITemplate.id == VideoTask.template_id)
-            .outerjoin(
-                VideoClassification,
-                VideoClassification.video_source_id == VideoAITemplate.video_source_id,
-            )
+            self._stats_base_select()
             .where(VideoPublication.status.in_(["completed", "partial"]))
             .order_by(
                 VideoPublication.completed_at.asc().nullslast(),
                 VideoPublication.created_at.asc(),
             )
         )
-
-        if owner_id is not None:
-            stmt = stmt.where(VideoTask.owner_id == owner_id)
-        if query.account_id is not None:
-            stmt = stmt.where(VideoTask.account_id == query.account_id)
-        if query.date_from is not None:
-            stmt = stmt.where(VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc))
-        if query.date_to is not None:
-            next_day = date.fromordinal(query.date_to.toordinal() + 1)
-            stmt = stmt.where(
-                VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
-            )
-        if query.unclassified:
-            stmt = stmt.where(VideoClassification.id.is_(None))
-        elif query.category_indices:
-            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
-        if query.promotion_code_filter == "with":
-            stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
-        elif query.promotion_code_filter == "without":
-            stmt = stmt.where(VideoPublication.promotion_code.is_(None))
+        stmt = self._apply_stats_sql_filters(stmt, query, owner_id)
 
         rows = (await self.db.execute(stmt)).all()
-        bindings_by_account = await self._load_social_bindings_by_account([
-            account.id for _, _, _, account, _ in rows if account is not None
-        ])
-        items = [
-            self._build_stats_item(
-                publication,
-                sub_task,
-                task,
-                account,
-                bindings_by_account.get(account.id, []) if account is not None else [],
-                classification=classification,
-            )
-            for publication, sub_task, task, account, classification in rows
-        ]
+        items = await self._stats_rows_to_items(rows)
 
         platform = (query.platform or "").strip().lower()
         if platform:
@@ -1335,6 +1285,91 @@ class VideoPublicationService:
             items = [item for item in items if self._matches_keyword(item, keyword)]
 
         return items
+
+    @staticmethod
+    def _stats_base_select():
+        """基础 select 语句：返回 (publication, sub_task, task, account, classification)。
+
+        VideoAITemplate 仅参与 JOIN（不在 select 中），它的大 JSON 列不会被加载。
+        VideoPublication.response_data 通过 defer 跳过加载（仅 list 视图不需要）。
+        """
+        from app.models.video_task import VideoSubTask, VideoTask
+
+        return (
+            select(VideoPublication, VideoSubTask, VideoTask, Account, VideoClassification)
+            .options(defer(VideoPublication.response_data))
+            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+            .outerjoin(Account, Account.id == VideoTask.account_id)
+            .outerjoin(VideoAITemplate, VideoAITemplate.id == VideoTask.template_id)
+            .outerjoin(
+                VideoClassification,
+                VideoClassification.video_source_id == VideoAITemplate.video_source_id,
+            )
+        )
+
+    @staticmethod
+    def _apply_stats_sql_filters(stmt, query: VideoPublicationStatsQuery, owner_id):
+        from app.models.video_task import VideoTask
+
+        if owner_id is not None:
+            stmt = stmt.where(VideoTask.owner_id == owner_id)
+        if query.account_id is not None:
+            stmt = stmt.where(VideoTask.account_id == query.account_id)
+        if query.date_from is not None:
+            stmt = stmt.where(
+                VideoPublication.completed_at
+                >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc)
+            )
+        if query.date_to is not None:
+            next_day = date.fromordinal(query.date_to.toordinal() + 1)
+            stmt = stmt.where(
+                VideoPublication.completed_at
+                < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
+            )
+        if query.unclassified:
+            stmt = stmt.where(VideoClassification.id.is_(None))
+        elif query.category_indices:
+            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
+        if query.promotion_code_filter == "with":
+            stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
+        elif query.promotion_code_filter == "without":
+            stmt = stmt.where(VideoPublication.promotion_code.is_(None))
+        return stmt
+
+    @staticmethod
+    def _stats_sql_order_clauses(sort_by: str | None, sort_order: str | None):
+        """返回可下推 SQL 的 ORDER BY 子句；不可下推则返回 None。"""
+        desc = str(sort_order or "desc").lower() != "asc"
+        key = (sort_by or "published_at").lower()
+        if key in ("", "published_at"):
+            primary = VideoPublication.completed_at
+            secondary = VideoPublication.created_at
+            return (
+                primary.desc().nullslast() if desc else primary.asc().nullslast(),
+                secondary.desc() if desc else secondary.asc(),
+            )
+        if key == "account_name":
+            col = Account.account_name
+            return (col.desc().nullslast() if desc else col.asc().nullslast(),)
+        # title 在 request_payload JSON 中、metric 类排序需聚合 metrics_snapshot；都不下推
+        return None
+
+    async def _stats_rows_to_items(self, rows) -> list[VideoPublicationStatsListItem]:
+        bindings_by_account = await self._load_social_bindings_by_account([
+            account.id for _, _, _, account, _ in rows if account is not None
+        ])
+        return [
+            self._build_stats_item(
+                publication,
+                sub_task,
+                task,
+                account,
+                bindings_by_account.get(account.id, []) if account is not None else [],
+                classification=classification,
+            )
+            for publication, sub_task, task, account, classification in rows
+        ]
 
     def _build_stats_item(
         self,
