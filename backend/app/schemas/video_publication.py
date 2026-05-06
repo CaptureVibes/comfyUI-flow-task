@@ -155,6 +155,8 @@ class VideoPublicationStatsQuery(BaseModel):
     date_to: date | None = None
     keyword: str | None = None
     category_indices: list[int] | None = None
+    unclassified: bool = False
+    promotion_code_filter: str | None = None  # 'with' | 'without' | None
     sort_by: str = "published_at"
     sort_order: str = "desc"
     page: int = 1

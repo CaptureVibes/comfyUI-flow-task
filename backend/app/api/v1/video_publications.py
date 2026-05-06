@@ -90,6 +90,8 @@ async def get_publication_stats(
     date_to: date | None = Query(None, description="发布时间结束日期"),
     keyword: str | None = Query(None, description="标题/账号/渠道/平台链接关键字"),
     category_indices: str | None = Query(None, description="视频分类（0-13），逗号分隔"),
+    unclassified: bool = Query(False, description="只显示未分类视频"),
+    promotion_code_filter: str | None = Query(None, description="商品码筛选: with/without"),
     sort_by: str = Query("published_at", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
     page: int = Query(1, ge=1),
@@ -106,6 +108,8 @@ async def get_publication_stats(
         date_to=date_to,
         keyword=keyword,
         category_indices=parsed_category_indices,
+        unclassified=unclassified,
+        promotion_code_filter=promotion_code_filter or None,
         sort_by=sort_by,
         sort_order=sort_order,
         page=page,
@@ -125,6 +129,8 @@ async def export_publication_stats(
     date_to: date | None = Query(None),
     keyword: str | None = Query(None),
     category_indices: str | None = Query(None),
+    unclassified: bool = Query(False),
+    promotion_code_filter: str | None = Query(None),
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -137,6 +143,8 @@ async def export_publication_stats(
         date_to=date_to,
         keyword=keyword,
         category_indices=parsed_category_indices,
+        unclassified=unclassified,
+        promotion_code_filter=promotion_code_filter or None,
     )
     owner_id = None if current_user.is_admin else current_user.user_id
     service = VideoPublicationService(db)

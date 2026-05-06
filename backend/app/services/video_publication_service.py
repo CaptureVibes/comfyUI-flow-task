@@ -1225,8 +1225,14 @@ class VideoPublicationService:
             stmt = stmt.where(
                 VideoPublication.completed_at < datetime.combine(date_to_exclusive, datetime.min.time(), tzinfo=timezone.utc)
             )
-        if query.category_indices:
+        if query.unclassified:
+            stmt = stmt.where(VideoClassification.id.is_(None))
+        elif query.category_indices:
             stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
+        if query.promotion_code_filter == "with":
+            stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
+        elif query.promotion_code_filter == "without":
+            stmt = stmt.where(VideoPublication.promotion_code.is_(None))
 
         rows = (await self.db.execute(stmt)).all()
         bindings_by_account = await self._load_social_bindings_by_account([
@@ -1295,8 +1301,14 @@ class VideoPublicationService:
             stmt = stmt.where(
                 VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
             )
-        if query.category_indices:
+        if query.unclassified:
+            stmt = stmt.where(VideoClassification.id.is_(None))
+        elif query.category_indices:
             stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
+        if query.promotion_code_filter == "with":
+            stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
+        elif query.promotion_code_filter == "without":
+            stmt = stmt.where(VideoPublication.promotion_code.is_(None))
 
         rows = (await self.db.execute(stmt)).all()
         bindings_by_account = await self._load_social_bindings_by_account([

@@ -61,22 +61,9 @@
           :value="account.id"
         />
       </el-select>
-      <el-select
-        v-model="filters.category_indices"
-        multiple
-        collapse-tags
-        collapse-tags-tooltip
-        clearable
-        placeholder="视频分类"
-        size="small"
-        style="width:200px"
-      >
-        <el-option
-          v-for="cat in CATEGORY_OPTIONS"
-          :key="cat.index"
-          :label="`${cat.index}. ${cat.label}`"
-          :value="cat.index"
-        />
+      <el-select v-model="filters.promotion_code_filter" clearable placeholder="商品码：全部" size="small" style="width:140px" @change="applyFilters">
+        <el-option label="有商品码" value="with" />
+        <el-option label="无商品码" value="without" />
       </el-select>
       <el-input
         v-model.trim="filters.keyword"
@@ -89,6 +76,46 @@
       <button class="ps-btn ps-btn-primary" @click="applyFilters">筛选</button>
       <button class="ps-btn ps-btn-secondary" @click="resetFilters">重置</button>
       <span class="ps-count-badge">共 {{ total }} 条</span>
+    </div>
+
+    <!-- 视频分类筛选面板 -->
+    <div class="ps-cat-panel">
+      <div class="ps-cat-panel-header">
+        <span class="ps-cat-panel-title">视频分类</span>
+        <span class="ps-cat-panel-hint">视频仅可选择 1 个子类</span>
+        <span v-if="categoryFilterLabel" class="ps-cat-panel-selected">
+          已选分类：
+          <span class="ps-cat-chip">
+            {{ categoryFilterLabel }}
+            <button class="ps-cat-chip-close" @click="clearCategoryFilter">×</button>
+          </span>
+          <button class="ps-cat-clear-text" @click="clearCategoryFilter">清除</button>
+        </span>
+      </div>
+      <div class="ps-cat-panel-rows">
+        <div class="ps-cat-row">
+          <button
+            type="button"
+            class="ps-cat-pill is-unclassified"
+            :class="{ active: filters.unclassified }"
+            @click="selectCategoryFilter({ unclassified: true })"
+          >未分类</button>
+        </div>
+        <div v-for="major in MAJOR_GROUPS" :key="major.key" class="ps-cat-row">
+          <span class="ps-cat-row-label" :class="`is-${major.key}`">
+            <span class="ps-cat-row-major">{{ major.key }}</span>
+            <span class="ps-cat-row-cn">{{ major.label }}</span>
+          </span>
+          <button
+            v-for="cat in CATEGORY_OPTIONS.filter(c => c.major === major.key)"
+            :key="cat.index"
+            type="button"
+            class="ps-cat-pill"
+            :class="[`is-${cat.major}`, { active: filters.category_indices[0] === cat.index }]"
+            @click="selectCategoryFilter({ index: cat.index })"
+          >{{ cat.label }}</button>
+        </div>
+      </div>
     </div>
 
     <!-- Table -->
@@ -106,6 +133,7 @@
             </th>
             <th class="ps-th">平台</th>
             <th class="ps-th">视频分类</th>
+            <th class="ps-th">商品码</th>
             <th class="ps-th">
               <button class="ps-sort-btn" @click="toggleSort('published_at')">发布时间{{ sortMark('published_at') }}</button>
             </th>
@@ -158,6 +186,10 @@
                 class="ps-cat-tag"
                 :class="`is-${item.major_category || 'unknown'}`"
               >{{ item.category_label }}</span>
+              <span v-else class="ps-dash">-</span>
+            </td>
+            <td class="ps-td ps-td-promo">
+              <span v-if="item.promotion_code" class="ps-promo-code">{{ item.promotion_code }}</span>
               <span v-else class="ps-dash">-</span>
             </td>
             <td class="ps-td ps-td-date">{{ formatDateTime(item.published_at || item.created_at) }}</td>
@@ -330,6 +362,8 @@ async function handleExport() {
       date_to: filters.date_to || undefined,
       keyword: filters.keyword || undefined,
       category_indices: filters.category_indices.length ? filters.category_indices.join(',') : undefined,
+      unclassified: filters.unclassified ? true : undefined,
+      promotion_code_filter: filters.promotion_code_filter || undefined,
     })
     const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -377,6 +411,13 @@ const CATEGORY_OPTIONS = [
   { index: 13, label: '明星影视综艺节日社会话题相关穿搭', major: 'trending' },
 ]
 
+const MAJOR_GROUPS = [
+  { key: 'display', label: '展示美学' },
+  { key: 'knowledge', label: '穿搭知识' },
+  { key: 'persona', label: '个人表达' },
+  { key: 'trending', label: '热点趋势' },
+]
+
 const filters = reactive({
   platform: '',
   account_id: '',
@@ -387,11 +428,47 @@ const filters = reactive({
   date_to: '',
   keyword: '',
   category_indices: [],
+  unclassified: false,
+  promotion_code_filter: '',
   sort_by: 'published_at',
   sort_order: 'desc',
   page: 1,
   page_size: 20,
 })
+
+const categoryFilterLabel = computed(() => {
+  if (filters.unclassified) return '未分类'
+  const idx = filters.category_indices[0]
+  if (idx == null) return ''
+  return CATEGORY_OPTIONS.find(c => c.index === idx)?.label || ''
+})
+
+function selectCategoryFilter({ index = null, unclassified = false }) {
+  if (unclassified) {
+    if (filters.unclassified) {
+      filters.unclassified = false
+    } else {
+      filters.unclassified = true
+      filters.category_indices = []
+    }
+  } else {
+    filters.unclassified = false
+    if (filters.category_indices[0] === index) {
+      filters.category_indices = []
+    } else {
+      filters.category_indices = [index]
+    }
+  }
+  filters.page = 1
+  load()
+}
+
+function clearCategoryFilter() {
+  filters.unclassified = false
+  filters.category_indices = []
+  filters.page = 1
+  load()
+}
 
 const loading = ref(false)
 const items = ref([])
@@ -548,6 +625,8 @@ async function load() {
       date_to: filters.date_to || undefined,
       keyword: filters.keyword || undefined,
       category_indices: filters.category_indices.length ? filters.category_indices.join(',') : undefined,
+      unclassified: filters.unclassified ? true : undefined,
+      promotion_code_filter: filters.promotion_code_filter || undefined,
       sort_by: filters.sort_by,
       sort_order: filters.sort_order,
       page: filters.page,
@@ -577,6 +656,8 @@ function resetFilters() {
   filters.date_range = []
   filters.keyword = ''
   filters.category_indices = []
+  filters.unclassified = false
+  filters.promotion_code_filter = ''
   filters.sort_by = 'published_at'
   filters.sort_order = 'desc'
   filters.page = 1
@@ -930,6 +1011,137 @@ video:-moz-full-screen {
 .ps-cat-tag.is-knowledge { background: #dbeafe; color: #1d4ed8; }
 .ps-cat-tag.is-persona { background: #fef3c7; color: #b45309; }
 .ps-cat-tag.is-trending { background: #d1fae5; color: #047857; }
+
+.ps-promo-code {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  letter-spacing: 0.5px;
+}
+
+/* 视频分类筛选面板 */
+.ps-cat-panel {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+.ps-cat-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.ps-cat-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.ps-cat-panel-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.ps-cat-panel-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+  margin-left: auto;
+}
+.ps-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-weight: 500;
+}
+.ps-cat-chip-close {
+  border: none;
+  background: transparent;
+  color: #6366f1;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.ps-cat-chip-close:hover { color: #4338ca; }
+.ps-cat-clear-text {
+  border: none;
+  background: transparent;
+  color: #6366f1;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.ps-cat-clear-text:hover { text-decoration: underline; }
+.ps-cat-panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ps-cat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ps-cat-row-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 130px;
+  font-size: 12px;
+}
+.ps-cat-row-major {
+  font-weight: 700;
+  font-family: 'SFMono-Regular', Menlo, monospace;
+}
+.ps-cat-row-cn {
+  color: #64748b;
+}
+.ps-cat-row-label.is-display .ps-cat-row-major { color: #be185d; }
+.ps-cat-row-label.is-knowledge .ps-cat-row-major { color: #1d4ed8; }
+.ps-cat-row-label.is-persona .ps-cat-row-major { color: #b45309; }
+.ps-cat-row-label.is-trending .ps-cat-row-major { color: #047857; }
+.ps-cat-pill {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.ps-cat-pill:hover {
+  border-color: #a5b4fc;
+  color: #4338ca;
+}
+.ps-cat-pill.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+  font-weight: 500;
+}
+.ps-cat-pill.is-display.active { background: #ec4899; border-color: #ec4899; }
+.ps-cat-pill.is-knowledge.active { background: #3b82f6; border-color: #3b82f6; }
+.ps-cat-pill.is-persona.active { background: #f59e0b; border-color: #f59e0b; }
+.ps-cat-pill.is-trending.active { background: #10b981; border-color: #10b981; }
+.ps-cat-pill.is-unclassified.active { background: #64748b; border-color: #64748b; }
 
 /* Footer pagination */
 .ps-footer {
