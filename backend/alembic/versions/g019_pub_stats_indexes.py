@@ -1,6 +1,6 @@
 """add indexes on video_publications.completed_at and template_id chain
 
-Revision ID: g019_add_video_publication_indexes
+Revision ID: g019_pub_stats_indexes
 Revises: g018_add_intent_classify
 Create Date: 2026-05-06
 
@@ -14,7 +14,7 @@ from alembic import op
 from sqlalchemy import inspect
 
 
-revision = "g019_add_video_publication_indexes"
+revision = "g019_pub_stats_indexes"
 down_revision = "g018_add_intent_classify"
 branch_labels = None
 depends_on = None
