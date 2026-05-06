@@ -118,12 +118,74 @@
       </div>
     </div>
 
+    <!-- 已勾选视频聚合统计 -->
+    <div v-if="selectedMap.size > 0" class="ps-selection-stats">
+      <div class="ps-selection-stats-header">
+        <input
+          type="checkbox"
+          class="ps-checkbox"
+          checked
+          @change="clearSelection"
+        />
+        <span class="ps-selection-stats-title">已选择 {{ selectedMap.size }} 条视频</span>
+        <span class="ps-selection-stats-hint">（未达到数据的视频未计入统计）</span>
+        <button class="ps-selection-stats-clear" @click="clearSelection">清空选择</button>
+      </div>
+      <div class="ps-selection-stats-grid">
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均播放量</div>
+          <div class="ps-stat-card-value">{{ compactNumber(selectionStats.avgViews) }}</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均点赞数</div>
+          <div class="ps-stat-card-value">{{ compactNumber(selectionStats.avgLikes) }}</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均评论数</div>
+          <div class="ps-stat-card-value">{{ compactNumber(selectionStats.avgComments) }}</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均分享数</div>
+          <div class="ps-stat-card-value">{{ compactNumber(selectionStats.avgShares) }}</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均点赞率</div>
+          <div class="ps-stat-card-value">{{ formatPercent(selectionStats.avgLikeRate) }}</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">转化数（搜索次数）</div>
+          <div class="ps-stat-card-value ps-stat-card-empty">-</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">转化率</div>
+          <div class="ps-stat-card-value ps-stat-card-empty">-</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均转化数</div>
+          <div class="ps-stat-card-value ps-stat-card-empty">-</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-card-label">平均转化率</div>
+          <div class="ps-stat-card-value ps-stat-card-empty">-</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Table -->
     <div v-loading="loading" class="ps-table-wrap">
       <div v-if="!loading && items.length === 0" class="ps-empty">暂无符合条件的数据</div>
       <table v-else class="ps-table">
         <thead>
           <tr>
+            <th class="ps-th ps-th-check">
+              <input
+                type="checkbox"
+                class="ps-checkbox"
+                :checked="allSelected"
+                :indeterminate.prop="someSelected"
+                @change="e => toggleSelectAll(e.target.checked)"
+              />
+            </th>
             <th class="ps-th ps-th-video">视频</th>
             <th class="ps-th ps-th-title">
               <button class="ps-sort-btn" @click="toggleSort('title')">标题{{ sortMark('title') }}</button>
@@ -155,7 +217,21 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in items" :key="item.id" class="ps-tr" @click="openDetail(item)">
+          <tr
+            v-for="item in items"
+            :key="item.id"
+            class="ps-tr"
+            :class="{ 'is-selected': selectedMap.has(item.id) }"
+            @click="openDetail(item)"
+          >
+            <td class="ps-td ps-td-check" @click.stop>
+              <input
+                type="checkbox"
+                class="ps-checkbox"
+                :checked="selectedMap.has(item.id)"
+                @change="() => toggleSelectItem(item)"
+              />
+            </td>
             <td class="ps-td ps-td-video">
               <video v-if="item.video_url" :src="item.video_url" class="ps-video" controls preload="metadata" />
               <div v-else class="ps-video ps-video-empty">暂无视频</div>
@@ -474,6 +550,73 @@ const loading = ref(false)
 const items = ref([])
 const total = ref(0)
 const accountOptions = ref([])
+
+// ── 行勾选 ──────────────────────────────────────────────────────────────────
+const selectedMap = ref(new Map())
+
+const allSelected = computed(() =>
+  items.value.length > 0 && items.value.every(item => selectedMap.value.has(item.id))
+)
+const someSelected = computed(() => {
+  if (items.value.length === 0) return false
+  const hits = items.value.filter(item => selectedMap.value.has(item.id)).length
+  return hits > 0 && hits < items.value.length
+})
+
+function toggleSelectItem(item) {
+  const next = new Map(selectedMap.value)
+  if (next.has(item.id)) next.delete(item.id)
+  else next.set(item.id, item)
+  selectedMap.value = next
+}
+
+function toggleSelectAll(checked) {
+  const next = new Map(selectedMap.value)
+  if (checked) {
+    for (const item of items.value) next.set(item.id, item)
+  } else {
+    for (const item of items.value) next.delete(item.id)
+  }
+  selectedMap.value = next
+}
+
+function clearSelection() {
+  selectedMap.value = new Map()
+}
+
+// 已勾选聚合：缺失/0 值不参与对应指标的平均
+const selectionStats = computed(() => {
+  const list = [...selectedMap.value.values()]
+  const avg = (key) => {
+    let sum = 0
+    let count = 0
+    for (const it of list) {
+      const n = Number(it?.[key])
+      if (!Number.isFinite(n) || n <= 0) continue
+      sum += n
+      count += 1
+    }
+    return count > 0 ? sum / count : null
+  }
+  // 点赞率：每条视频 likes/views 的平均（仅在 views > 0 时计入）
+  let rateSum = 0
+  let rateCount = 0
+  for (const it of list) {
+    const v = Number(it?.total_views)
+    const l = Number(it?.total_likes)
+    if (!Number.isFinite(v) || v <= 0) continue
+    if (!Number.isFinite(l) || l < 0) continue
+    rateSum += (l / v) * 100
+    rateCount += 1
+  }
+  return {
+    avgViews: avg('total_views'),
+    avgLikes: avg('total_likes'),
+    avgComments: avg('total_comments'),
+    avgShares: avg('total_shares'),
+    avgLikeRate: rateCount > 0 ? rateSum / rateCount : null,
+  }
+})
 
 // 抽屉
 const drawerVisible = ref(false)
@@ -878,9 +1021,21 @@ onMounted(async () => {
 .ps-th:first-child { border-top-left-radius: 14px; }
 .ps-th:last-child  { border-top-right-radius: 14px; }
 
+.ps-th-check  { width: 36px; padding-left: 12px; padding-right: 4px; }
 .ps-th-video  { width: 110px; }
 .ps-th-title  { min-width: 220px; }
 .ps-th-num    { text-align: right; }
+
+.ps-td-check { width: 36px; padding-left: 12px; padding-right: 4px; }
+.ps-tr.is-selected { background: #eef2ff; }
+.ps-tr.is-selected:hover { background: #e0e7ff; }
+
+.ps-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
 
 .ps-sort-btn {
   border: none;
@@ -1142,6 +1297,69 @@ video:-moz-full-screen {
 .ps-cat-pill.is-persona.active { background: #f59e0b; border-color: #f59e0b; }
 .ps-cat-pill.is-trending.active { background: #10b981; border-color: #10b981; }
 .ps-cat-pill.is-unclassified.active { background: #64748b; border-color: #64748b; }
+
+/* 已勾选视频聚合统计 */
+.ps-selection-stats {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+.ps-selection-stats-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.ps-selection-stats-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.ps-selection-stats-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.ps-selection-stats-clear {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: #6366f1;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.ps-selection-stats-clear:hover { text-decoration: underline; }
+.ps-selection-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 14px;
+}
+.ps-stat-card {
+  min-width: 0;
+}
+.ps-stat-card-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps-stat-card-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.2;
+}
+.ps-stat-card-empty { color: #cbd5e1; font-weight: 500; }
+@media (max-width: 1400px) {
+  .ps-selection-stats-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .ps-selection-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 /* Footer pagination */
 .ps-footer {
