@@ -901,6 +901,53 @@
       </transition>
     </div>
 
+    <!-- 已勾选 AI 博主统计 -->
+    <div v-if="selectedMap.size > 0" class="al-selection-stats">
+      <div class="al-selection-stats-header">
+        <span class="al-selection-stats-title">已勾选 AI 博主统计</span>
+        <span class="al-selection-stats-desc">数据随勾选博主动态更新，缺失/0 值不参与统计</span>
+        <span class="al-selection-stats-count">已勾选 {{ selectedMap.size }} 个</span>
+      </div>
+      <div class="al-selection-stats-cards">
+        <div class="al-stat-card is-followers">
+          <div class="al-stat-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="al-stat-card-body">
+            <div class="al-stat-card-label">平均粉丝数</div>
+            <div class="al-stat-card-value">{{ formatCount(selectionStats.avgFollowers) }}</div>
+          </div>
+        </div>
+        <div class="al-stat-card is-views">
+          <div class="al-stat-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <div class="al-stat-card-body">
+            <div class="al-stat-card-label">平均 Views</div>
+            <div class="al-stat-card-value">{{ formatCount(selectionStats.avgViews) }}</div>
+          </div>
+        </div>
+        <div class="al-stat-card is-like">
+          <div class="al-stat-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+          </div>
+          <div class="al-stat-card-body">
+            <div class="al-stat-card-label">平均点赞率</div>
+            <div class="al-stat-card-value">{{ formatPercent(selectionStats.avgLikeRate) }}</div>
+          </div>
+        </div>
+        <div class="al-stat-card is-conversion">
+          <div class="al-stat-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          </div>
+          <div class="al-stat-card-body">
+            <div class="al-stat-card-label">平均 AI 博主转化率</div>
+            <div class="al-stat-card-value al-stat-card-value-empty">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Table list -->
     <div v-loading="loading" class="al-table-wrap">
       <div class="al-table-scroll">
@@ -1592,6 +1639,28 @@ const pageSize = ref(20)
 // Map<id, account对象> 跨页保留完整 account 信息
 const selectedMap = ref(new Map())
 const selectedIds = computed(() => new Set(selectedMap.value.keys()))
+
+// 已勾选 AI 博主聚合统计：缺失/0 值不参与平均
+const selectionStats = computed(() => {
+  const accounts = [...selectedMap.value.values()]
+  const avg = (key) => {
+    let sum = 0
+    let count = 0
+    for (const a of accounts) {
+      const raw = a?.performance_snapshot?.[key]
+      const n = Number(raw)
+      if (!Number.isFinite(n) || n <= 0) continue
+      sum += n
+      count += 1
+    }
+    return count > 0 ? sum / count : null
+  }
+  return {
+    avgFollowers: avg('followers_count'),
+    avgViews: avg('avg_views'),
+    avgLikeRate: avg('avg_like_rate'),
+  }
+})
 
 // ── Flag 相关 ─────────────────────────────────────────────────────────────────
 const allFlags = ref([])
@@ -3553,6 +3622,82 @@ onMounted(() => {
 .al-cat-pill.is-knowledge.active { background: #3b82f6; border-color: #3b82f6; }
 .al-cat-pill.is-persona.active { background: #f59e0b; border-color: #f59e0b; }
 .al-cat-pill.is-trending.active { background: #10b981; border-color: #10b981; }
+
+/* 已勾选 AI 博主统计 */
+.al-selection-stats {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+.al-selection-stats-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.al-selection-stats-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.al-selection-stats-desc {
+  font-size: 12px;
+  color: #94a3b8;
+  flex: 1;
+}
+.al-selection-stats-count {
+  font-size: 12px;
+  color: #4338ca;
+  background: #eef2ff;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.al-selection-stats-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.al-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+}
+.al-stat-card-icon {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.al-stat-card.is-followers .al-stat-card-icon { background: #ede9fe; color: #7c3aed; }
+.al-stat-card.is-views .al-stat-card-icon { background: #dbeafe; color: #2563eb; }
+.al-stat-card.is-like .al-stat-card-icon { background: #dcfce7; color: #16a34a; }
+.al-stat-card.is-conversion .al-stat-card-icon { background: #ffedd5; color: #ea580c; }
+.al-stat-card-body { min-width: 0; flex: 1; }
+.al-stat-card-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.al-stat-card-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.2;
+}
+.al-stat-card-value-empty { color: #cbd5e1; font-weight: 500; }
+@media (max-width: 1100px) {
+  .al-selection-stats-cards { grid-template-columns: repeat(2, 1fr); }
+}
 
 .al-tr {
   cursor: pointer;
