@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -27,6 +28,15 @@ from app.schemas.account import (
 )
 
 router = APIRouter(prefix="/open-api/accounts", tags=["open-api-account-channels"])
+logger = logging.getLogger("app.account_channel_reservations")
+
+
+def _mask_api_key(value: str | None) -> str:
+    if not value:
+        return ""
+    if len(value) <= 6:
+        return "***"
+    return f"{value[:4]}***{value[-2:]}"
 
 
 def _resolve_owner_id(body_owner_id: uuid.UUID | None) -> uuid.UUID:
@@ -95,6 +105,17 @@ async def reserve_ai_accounts_for_channel_openapi(
     session: AsyncSession = Depends(get_db),
 ) -> ExternalReserveAIAccountsResponse:
     """外部团队按 owner、性别、平台查询可用 AI 博主，并立即 confirm 占用，避免并发重复领取。"""
+    logger.info(
+        "reserve_ai_accounts request: owner_id=%s gender=%s platform=%s count=%s source=%s "
+        "api_key_header=%s api_key_body=%s",
+        body.owner_id,
+        body.gender,
+        body.platform,
+        body.count,
+        body.source,
+        _mask_api_key(x_api_key),
+        _mask_api_key(body.api_key),
+    )
     _verify_api_key(body.api_key, x_api_key)
     owner_id = _resolve_owner_id(body.owner_id)
 
@@ -153,6 +174,15 @@ async def reserve_ai_accounts_for_channel_openapi(
             status_code=status.HTTP_409_CONFLICT,
             detail="部分账号已被其他请求占用，请稍后重试",
         )
+    logger.info(
+        "reserve_ai_accounts response: owner_id=%s platform=%s requested=%s returned=%s confirmed=%s account_ids=%s",
+        owner_id,
+        platform,
+        body.count,
+        len(items),
+        confirmed_count,
+        [str(it.account_id) for it in items],
+    )
     return ExternalReserveAIAccountsResponse(
         items=items,
         requested_count=body.count,
