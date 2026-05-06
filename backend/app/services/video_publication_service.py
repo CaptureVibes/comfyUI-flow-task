@@ -521,7 +521,7 @@ class PublishAdapter(ABC):
         self,
         data: "VideoPublicationCreate",
         channels: list[dict],
-        promotion_code: str,
+        promotion_code: str | None,
         ext_products: list[dict],
     ) -> tuple[str | None, list[dict]]:
         """提交发布，返回 (task_id_or_none, channel_status_list)。
@@ -560,7 +560,7 @@ class OpenAPIAdapter(PublishAdapter):
         self,
         data: "VideoPublicationCreate",
         channels: list[dict],
-        promotion_code: str,
+        promotion_code: str | None,
         ext_products: list[dict],
     ) -> tuple[str | None, list[dict]]:
         callback_url = data.callback_url or settings.open_api_callback_url or None
@@ -699,7 +699,7 @@ class ExtPubAdapter(PublishAdapter):
         self,
         data: "VideoPublicationCreate",
         channels: list[dict],
-        promotion_code: str,
+        promotion_code: str | None,
         ext_products: list[dict],
     ) -> tuple[str | None, list[dict]]:
         api_payload: dict = {
@@ -826,7 +826,12 @@ class VideoPublicationService:
         )
         sub_task = result.scalar_one_or_none()
         if sub_task is None or sub_task.task is None:
-            return {"ext_products": [], "promotion_code": None}
+            return {"ext_products": [], "promotion_code": None, "product_code_mode": None}
+        product_code_mode: str | None = None
+        if sub_task.task.account_id:
+            product_code_mode = await self.db.scalar(
+                select(Account.product_code_mode).where(Account.id == sub_task.task.account_id)
+            )
         publish_meta = sub_task.publish_meta if isinstance(sub_task.publish_meta, dict) else {}
         promotion_code = publish_meta.get("promotion_code")
         if not (
@@ -838,6 +843,7 @@ class VideoPublicationService:
         return {
             "ext_products": build_ext_products_from_shots(sub_task.task.shots),
             "promotion_code": promotion_code,
+            "product_code_mode": product_code_mode,
         }
 
     async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
@@ -858,16 +864,28 @@ class VideoPublicationService:
 
         publication_context = await self._load_publication_context_for_sub_task(data.sub_task_id)
         ext_products = publication_context["ext_products"]
+        product_code_mode = (publication_context.get("product_code_mode") or "without_code")
         logger.info(
-            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s ext_products=%d pre_generated_promotion_code=%s",
+            "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s ext_products=%d pre_generated_promotion_code=%s product_code_mode=%s",
             data.sub_task_id,
             openapi_channels,
             ext_channels,
             len(ext_products),
             bool(publication_context["promotion_code"]),
+            product_code_mode,
         )
-        promotion_code = publication_context["promotion_code"] or await promotion_code_distributor.acquire()
-        promotion_code_acquired_for_publication = not publication_context["promotion_code"]
+        # 仅当账号配置为「有商品码」时使用 / 分配 promotion_code；
+        # 「无商品码」账号即使 publish_meta 残留 code 也不再使用，避免历史脏数据传染。
+        if product_code_mode == "with_code":
+            if publication_context["promotion_code"]:
+                promotion_code: str | None = publication_context["promotion_code"]
+                promotion_code_acquired_for_publication = False
+            else:
+                promotion_code = await promotion_code_distributor.acquire()
+                promotion_code_acquired_for_publication = True
+        else:
+            promotion_code = None
+            promotion_code_acquired_for_publication = False
         publication_committed = False
 
         # 记录原始请求（用于 audit / 重试）
@@ -1053,7 +1071,7 @@ class VideoPublicationService:
             and len(payload_promotion_code) == 8
             and payload_promotion_code.isdigit()
         ):
-            promotion_code = payload_promotion_code
+            promotion_code: str | None = payload_promotion_code
         else:
             promotion_code = pub.promotion_code
         if not (
@@ -1061,7 +1079,8 @@ class VideoPublicationService:
             and len(promotion_code) == 8
             and promotion_code.isdigit()
         ):
-            raise HTTPException(status_code=422, detail="发布记录缺少商品口令，无法重试")
+            # 「无商品码」账号原本就没有 promotion_code，重试时也保持 None
+            promotion_code = None
 
         request_payload = dict(payload)
         request_payload.update({
