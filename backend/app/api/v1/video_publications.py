@@ -150,7 +150,7 @@ async def export_publication_stats(
     service = VideoPublicationService(db)
     items = await service.get_publication_stats_all(query, owner_id=owner_id)
 
-    # 加载 account 详情 + 关联 flags，过滤仅保留拥有 <xxx> 形式 flag 的博主
+    # 加载 account 详情 + 关联 flags（关联Flag 列只展示形如 <xxx> 的 flag，其它博主留空）
     from sqlalchemy import select as _select
     from app.models.account import Account
     from app.models.flag import AccountFlag, Flag
@@ -173,11 +173,6 @@ async def export_publication_stats(
             flag_names_by_account.setdefault(aid, []).append(name or "")
 
     _bracket_re = re.compile(r"^<[^<>]+>$")
-    allowed_account_ids: set[uuid.UUID] = {
-        aid for aid, names in flag_names_by_account.items()
-        if any(_bracket_re.match(n) for n in names)
-    }
-    items = [item for item in items if item.account_id in allowed_account_ids]
 
     # 收集所有出现的日期（列），升序
     date_set: set[str] = set()
