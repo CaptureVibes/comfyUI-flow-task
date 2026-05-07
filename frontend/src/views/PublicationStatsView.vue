@@ -441,13 +441,13 @@ async function handleExport() {
       unclassified: filters.unclassified ? true : undefined,
       promotion_code_filter: filters.promotion_code_filter || undefined,
     })
-    const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     // 优先用后端 Content-Disposition 里的文件名，fallback 用日期
     const cd = response.headers?.['content-disposition'] || ''
     const match = cd.match(/filename\*?=(?:UTF-8'')?([^;]+)/i)
-    const filename = match ? decodeURIComponent(match[1].trim()) : `数据统计_${filters.date_from || formatYmd(new Date())}.csv`
+    const filename = match ? decodeURIComponent(match[1].trim()) : `数据统计_${filters.date_from || formatYmd(new Date())}.xlsx`
     a.href = url
     a.download = filename
     a.click()

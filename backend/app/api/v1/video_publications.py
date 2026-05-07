@@ -1,4 +1,3 @@
-import csv
 import io
 import re
 import uuid
@@ -194,17 +193,15 @@ async def export_publication_stats(
         "tiktok": "https://www.tiktok.com/",
         "instagram": "https://www.instagram.com/",
     }
-    account_platforms: dict[uuid.UUID | None, str] = {}
-    account_channel_names: dict[uuid.UUID | None, str] = {}
+    account_bindings: dict[uuid.UUID | None, list[tuple[str, str]]] = {}
     seen_ids: set[uuid.UUID | None] = set()
     for item in items:
         aid = item.account_id
         if aid in seen_ids:
             continue
         seen_ids.add(aid)
-        # 优先从 account.social_bindings 提取，生成完整 URL 和 channel_name
-        url_parts: list[str] = []
-        channel_name_parts: list[str] = []
+        # 优先从 account.social_bindings 提取，生成 (URL, 频道名称) 对
+        pairs: list[tuple[str, str]] = []
         for binding in item.social_bindings or []:
             if not isinstance(binding, dict):
                 continue
@@ -215,13 +212,14 @@ async def export_publication_stats(
                 continue
             base = _platform_base.get(p)
             if base and username:
-                url_parts.append(f"{base}{username}")
+                url = f"{base}{username}"
             elif base:
-                url_parts.append(base.rstrip("/"))
-            if channel_name:
-                channel_name_parts.append(channel_name)
-        # 兜底：从 metrics_channels 和 channels_status 补充平台名
-        if not url_parts:
+                url = base.rstrip("/")
+            else:
+                url = ""
+            pairs.append((url, channel_name))
+        # 兜底：从 metrics_channels 和 channels_status 补充平台名（无频道名）
+        if not pairs:
             platforms_set: set[str] = set()
             for ch in item.metrics_channels:
                 p = str(ch.platform or "").lower()
@@ -231,9 +229,8 @@ async def export_publication_stats(
                 p = str(ch.platform or "").lower()
                 if p:
                     platforms_set.add(p)
-            url_parts = [_platform_base.get(p, p).rstrip("/") for p in sorted(platforms_set)]
-        account_platforms[aid] = "\n".join(url_parts)
-        account_channel_names[aid] = "\n".join(channel_name_parts)
+            pairs = [(_platform_base.get(p, p).rstrip("/"), "") for p in sorted(platforms_set)]
+        account_bindings[aid] = pairs
 
     # 按账号名分组：{ name -> { account_type, platforms, date -> [(views, likes)] } }
     _gender_map = {"male": "男", "female": "女", "unisex": "男女皆有"}
@@ -246,8 +243,7 @@ async def export_publication_stats(
         name = item.account_name or "未知账号"
         if name not in blogger_map:
             account_type = _type_map.get(item.account_type or "", "共享号")
-            platforms = account_platforms.get(item.account_id, "")
-            channel_names = account_channel_names.get(item.account_id, "")
+            bindings = account_bindings.get(item.account_id, [])
 
             acc = account_details.get(item.account_id) if item.account_id else None
             gender = _gender_map.get(getattr(acc, "gender", "") or "", "")
@@ -276,8 +272,7 @@ async def export_publication_stats(
 
             blogger_map[name] = {
                 "account_type": account_type,
-                "platforms": platforms,
-                "channel_names": channel_names,
+                "bindings": bindings,
                 "gender": gender,
                 "face": face,
                 "product_code": product_code,
@@ -294,36 +289,79 @@ async def export_publication_stats(
             (item.total_views or 0, item.total_likes or 0)
         )
 
-    # 构建 CSV（UTF-8 BOM，Excel 直接识别中文）
-    buf = io.StringIO()
-    buf.write("\ufeff")  # BOM
-    writer = csv.writer(buf)
-    writer.writerow([
+    # 构建 XLSX：每个博主一行，绑定多频道时按频道展开多行，其他列合并单元格
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "数据统计"
+
+    headers = [
         "博主名称", "账号类型", "绑定平台", "频道名称",
         "博主性别", "是否控脸", "商品码类型", "核心类型", "具体核心类别", "关联Flag",
         *dates,
-    ])
+    ]
+    ws.append(headers)
+
+    wrap_align = Alignment(wrap_text=True, vertical="center")
+    per_channel_cols = {3, 4}  # 「绑定平台」「频道名称」按频道展开
+    total_cols = len(headers)
+
+    current_row = 2  # 表头是第 1 行
     for name, info in blogger_map.items():
-        row = [
-            name, info["account_type"], info["platforms"], info["channel_names"],
-            info["gender"], info["face"], info["product_code"],
-            info["core_type"], info["core_detail"], info["flags"],
+        bindings: list[tuple[str, str]] = info["bindings"]
+        row_count = max(1, len(bindings))
+
+        date_cells = [
+            "\n".join(f"▶{v} ♥{l}" for v, l in info["dates"].get(day, []))
+            for day in dates
         ]
-        for day in dates:
-            entries = info["dates"].get(day, [])
-            row.append("\n".join(f"▶{v} ♥{l}" for v, l in entries))
-        writer.writerow(row)
+
+        for i in range(row_count):
+            url, ch_name = bindings[i] if i < len(bindings) else ("", "")
+            ws.append([
+                name, info["account_type"], url, ch_name,
+                info["gender"], info["face"], info["product_code"],
+                info["core_type"], info["core_detail"], info["flags"],
+                *date_cells,
+            ])
+
+        # 多频道时合并非频道列
+        if row_count > 1:
+            end_row = current_row + row_count - 1
+            for col in range(1, total_cols + 1):
+                if col in per_channel_cols:
+                    continue
+                ws.merge_cells(
+                    start_row=current_row, end_row=end_row,
+                    start_column=col, end_column=col,
+                )
+
+        # 单元格对齐 + 换行
+        for r in range(current_row, current_row + row_count):
+            for col in range(1, total_cols + 1):
+                ws.cell(row=r, column=col).alignment = wrap_align
+
+        current_row += row_count
+
+    for col in range(1, total_cols + 1):
+        ws.cell(row=1, column=col).alignment = Alignment(vertical="center")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
 
     filename = "数据统计"
     if date_from:
         filename += f"_{date_from}"
     if date_to and date_to != date_from:
         filename += f"_{date_to}"
-    filename += ".csv"
+    filename += ".xlsx"
 
     return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv; charset=utf-8",
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
