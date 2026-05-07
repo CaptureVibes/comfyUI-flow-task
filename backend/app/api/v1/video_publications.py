@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 import uuid
 from datetime import date
 from urllib.parse import quote
@@ -150,6 +151,35 @@ async def export_publication_stats(
     service = VideoPublicationService(db)
     items = await service.get_publication_stats_all(query, owner_id=owner_id)
 
+    # 加载 account 详情 + 关联 flags，过滤仅保留拥有 <xxx> 形式 flag 的博主
+    from sqlalchemy import select as _select
+    from app.models.account import Account
+    from app.models.flag import AccountFlag, Flag
+
+    account_ids: set[uuid.UUID] = {item.account_id for item in items if item.account_id is not None}
+
+    account_details: dict[uuid.UUID, Account] = {}
+    flag_names_by_account: dict[uuid.UUID, list[str]] = {}
+    if account_ids:
+        acc_rows = (await db.execute(_select(Account).where(Account.id.in_(account_ids)))).scalars().all()
+        account_details = {a.id: a for a in acc_rows}
+
+        flag_rows = (await db.execute(
+            _select(AccountFlag.account_id, Flag.name)
+            .join(Flag, AccountFlag.flag_id == Flag.id)
+            .where(AccountFlag.account_id.in_(account_ids))
+            .order_by(AccountFlag.created_at.asc())
+        )).all()
+        for aid, name in flag_rows:
+            flag_names_by_account.setdefault(aid, []).append(name or "")
+
+    _bracket_re = re.compile(r"^<[^<>]+>$")
+    allowed_account_ids: set[uuid.UUID] = {
+        aid for aid, names in flag_names_by_account.items()
+        if any(_bracket_re.match(n) for n in names)
+    }
+    items = [item for item in items if item.account_id in allowed_account_ids]
+
     # 收集所有出现的日期（列），升序
     date_set: set[str] = set()
     for item in items:
@@ -206,15 +236,56 @@ async def export_publication_stats(
         account_channel_names[aid] = "\n".join(channel_name_parts)
 
     # 按账号名分组：{ name -> { account_type, platforms, date -> [(views, likes)] } }
+    _gender_map = {"male": "男", "female": "女", "unisex": "男女皆有"}
+    _face_map = {"face": "控脸", "no_face": "不控脸"}
+    _pc_map = {"with_code": "带码", "without_code": "不带码"}
+    _type_map = {"persona": "人设号", "shared": "共享号", "exclusive": "独享号"}
+
     blogger_map: dict[str, dict] = {}
     for item in items:
         name = item.account_name or "未知账号"
         if name not in blogger_map:
-            _type_map = {"persona": "人设号", "shared": "共享号", "exclusive": "独享号"}
             account_type = _type_map.get(item.account_type or "", "共享号")
             platforms = account_platforms.get(item.account_id, "")
             channel_names = account_channel_names.get(item.account_id, "")
-            blogger_map[name] = {"account_type": account_type, "platforms": platforms, "channel_names": channel_names, "dates": {}}
+
+            acc = account_details.get(item.account_id) if item.account_id else None
+            gender = _gender_map.get(getattr(acc, "gender", "") or "", "")
+            face = _face_map.get(getattr(acc, "face_mode", "") or "", "")
+            product_code = _pc_map.get(getattr(acc, "product_code_mode", "") or "", "")
+
+            cls_type = getattr(acc, "classification_type", None) if acc else None
+            summary = (getattr(acc, "classification_summary", None) or {}) if acc else {}
+            if cls_type == "single":
+                core_type = "单核心"
+                core_detail = summary.get("primary") or ""
+            elif cls_type == "dual":
+                core_type = "双核心"
+                primary = summary.get("primary") or ""
+                secondary = summary.get("secondary") or ""
+                core_detail = f"{primary}+{secondary}" if (primary or secondary) else ""
+            else:
+                core_type = ""
+                core_detail = ""
+
+            matched_flag_names = [
+                n for n in flag_names_by_account.get(item.account_id, [])
+                if _bracket_re.match(n)
+            ]
+            flags_text = "\n".join(matched_flag_names)
+
+            blogger_map[name] = {
+                "account_type": account_type,
+                "platforms": platforms,
+                "channel_names": channel_names,
+                "gender": gender,
+                "face": face,
+                "product_code": product_code,
+                "core_type": core_type,
+                "core_detail": core_detail,
+                "flags": flags_text,
+                "dates": {},
+            }
         dt = item.published_at or item.created_at
         if not dt:
             continue
@@ -227,9 +298,17 @@ async def export_publication_stats(
     buf = io.StringIO()
     buf.write("\ufeff")  # BOM
     writer = csv.writer(buf)
-    writer.writerow(["博主名称", "账号类型", "绑定平台", "频道名称", *dates])
+    writer.writerow([
+        "博主名称", "账号类型", "绑定平台", "频道名称",
+        "博主性别", "是否控脸", "商品码类型", "核心类型", "具体核心类别", "关联Flag",
+        *dates,
+    ])
     for name, info in blogger_map.items():
-        row = [name, info["account_type"], info["platforms"], info["channel_names"]]
+        row = [
+            name, info["account_type"], info["platforms"], info["channel_names"],
+            info["gender"], info["face"], info["product_code"],
+            info["core_type"], info["core_detail"], info["flags"],
+        ]
         for day in dates:
             entries = info["dates"].get(day, [])
             row.append("\n".join(f"▶{v} ♥{l}" for v, l in entries))
