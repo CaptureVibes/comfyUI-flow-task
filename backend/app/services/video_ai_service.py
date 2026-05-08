@@ -437,11 +437,47 @@ async def _run_imagegen_stage_inner(
         raise ValueError("视频抽帧失败，未获取到任何帧图片")
 
     # 2. 并发上传所有帧到 CDN（受 _FRAME_UPLOAD_CONCURRENCY 限流）
-    logger.info("[%s] Uploading %d frames to CDN", template_id, len(frame_data_urls))
-    upload_results = await asyncio.gather(
-        *[_upload_frame_to_cdn(du) for du in frame_data_urls],
-        return_exceptions=True,
-    )
+    total = len(frame_data_urls)
+    logger.info("[%s] Uploading %d frames to CDN", template_id, total)
+
+    # 进度心跳：每 10s 打一次「已完成 X/N」，避免上传过程中长时间静默看不到进度
+    progress = {"done": 0, "failed": 0}
+
+    async def _wrapped_upload(idx: int, du: str):
+        try:
+            return await _upload_frame_to_cdn(du)
+        except Exception as exc:
+            progress["failed"] += 1
+            return exc
+        finally:
+            progress["done"] += 1
+
+    async def _heartbeat() -> None:
+        import time
+        start = time.monotonic()
+        try:
+            while True:
+                await asyncio.sleep(10)
+                done = progress["done"]
+                logger.info(
+                    "[%s] uploading frames: %d/%d done (%d failed), elapsed=%.0fs",
+                    template_id, done, total, progress["failed"], time.monotonic() - start,
+                )
+        except asyncio.CancelledError:
+            pass
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+    try:
+        upload_results = await asyncio.gather(
+            *[_wrapped_upload(i, du) for i, du in enumerate(frame_data_urls)],
+            return_exceptions=False,  # 异常已被 _wrapped_upload 捕获并返回
+        )
+    finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
     frame_shots = []
     for i, r in enumerate(upload_results):
         if isinstance(r, Exception):

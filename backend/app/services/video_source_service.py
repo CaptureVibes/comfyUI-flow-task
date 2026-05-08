@@ -537,13 +537,15 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
     # 避免多个 libx264 压缩并发把 4 vCPU 机器 CPU 撑爆
     from app.services.video_ai_service import _get_ffmpeg_semaphore
 
+    # 每个 ffmpeg 进程允许 2 线程，配合 _FFMPEG_CONCURRENCY=2 = 4 核打满，
+    # 4 vCPU 机器恰好够用；preset 用 veryfast 比 fast 再快 ~1.5x，输出体积只大 5~10%。
     cmd = [
-        "ffmpeg", "-y", "-threads", "1",
+        "ffmpeg", "-y", "-threads", "2",
         "-i", file_path,
         "-vcodec", "libx264",
-        "-x264-params", "threads=1",  # libx264 自带线程池，必须单独关
+        "-x264-params", "threads=2",
         "-crf", "28",          # 画质：18=高质量 28=适中 35=较低，可调
-        "-preset", "fast",
+        "-preset", "veryfast",
         "-vf", "scale='min(1280,iw)':-2",  # 最大 1280px 宽，保持比例
         "-acodec", "aac",
         "-b:a", "128k",
@@ -555,11 +557,11 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         try:
-            _, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=300.0)
+            _, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=600.0)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            raise RuntimeError(f"ffmpeg 压缩超时 5min，已 kill: {file_path}")
+            raise RuntimeError(f"ffmpeg 压缩超时 10min，已 kill: {file_path}")
         if proc.returncode != 0:
             raise RuntimeError(
                 f"ffmpeg 压缩失败 rc={proc.returncode}: "
