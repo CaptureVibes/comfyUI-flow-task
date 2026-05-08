@@ -839,6 +839,12 @@
           <option value="with_code">带商品码</option>
           <option value="without_code">非商品码</option>
         </select>
+        <select class="al-col-filter-select" v-model="filterAccountTier" @change="onFilterChange">
+          <option value="">账号等级 · 全部</option>
+          <option value="test">实验号</option>
+          <option value="dev">常规号</option>
+          <option value="prod">正式号</option>
+        </select>
         <select class="al-col-filter-select" v-model="filterPlatformBindingStatus" @change="onFilterChange">
           <option value="">平台绑定 · 全部</option>
           <option value="bound">已绑定</option>
@@ -1060,6 +1066,9 @@
                   :class="item.product_code_mode === 'with_code' ? 'ac-product-code-yes' : 'ac-product-code-no'"
                 >
                   {{ item.product_code_mode === 'with_code' ? '带商品码' : '非商品码' }}
+                </span>
+                <span class="ac-type-badge" :class="`ac-tier-${item.account_tier || 'test'}`">
+                  {{ { test: '实验号', dev: '常规号', prod: '正式号' }[item.account_tier || 'test'] }}
                 </span>
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
@@ -1488,6 +1497,7 @@ const filterGender = ref('')
 const filterAccountType = ref('')
 const filterFaceMode = ref('')
 const filterProductCodeMode = ref('')
+const filterAccountTier = ref('')
 const filterPlatformBindingStatus = ref('')
 const filterClassificationType = ref('')
 const filterCategoryIndices = ref([])
@@ -1511,7 +1521,7 @@ const CATEGORY_OPTIONS = [
 ]
 
 const hasActiveColFilters = computed(() =>
-  filterGender.value || filterAccountType.value || filterFaceMode.value || filterProductCodeMode.value || filterPlatformBindingStatus.value || filterClassificationType.value || filterCategoryIndices.value.length > 0
+  filterGender.value || filterAccountType.value || filterFaceMode.value || filterProductCodeMode.value || filterAccountTier.value || filterPlatformBindingStatus.value || filterClassificationType.value || filterCategoryIndices.value.length > 0
 )
 
 function onFilterChange() {
@@ -1543,6 +1553,7 @@ function clearColFilters() {
   filterAccountType.value = ''
   filterFaceMode.value = ''
   filterProductCodeMode.value = ''
+  filterAccountTier.value = ''
   filterPlatformBindingStatus.value = ''
   filterClassificationType.value = ''
   filterCategoryIndices.value = []
@@ -2342,6 +2353,7 @@ async function loadData({ silent = false } = {}) {
     if (filterAccountType.value) params.account_type = filterAccountType.value
     if (filterFaceMode.value) params.face_mode = filterFaceMode.value
     if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) params.account_tier = filterAccountTier.value
     if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
     if (filterClassificationType.value) params.classification_type = filterClassificationType.value
     if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
@@ -2515,6 +2527,7 @@ async function startBulkVideoGenerate() {
       if (filterAccountType.value) params.account_type = filterAccountType.value
       if (filterFaceMode.value) params.face_mode = filterFaceMode.value
       if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
+      if (filterAccountTier.value) params.account_tier = filterAccountTier.value
       if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
       if (filterClassificationType.value) params.classification_type = filterClassificationType.value
       if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
@@ -4144,6 +4157,21 @@ onMounted(() => {
 .ac-product-code-no {
   background: #f1f5f9;
   color: #64748b;
+}
+
+.ac-tier-test {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.ac-tier-dev {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.ac-tier-prod {
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .ac-ai-status {

@@ -65,6 +65,7 @@ async def list_accounts(
     account_type: str | None = None,
     face_mode: str | None = None,
     product_code_mode: str | None = None,
+    account_tier: str | None = None,
     platform_binding_status: str | None = None,
     classification_type: str | None = None,
     category_indices: list[int] | None = None,
@@ -116,6 +117,9 @@ async def list_accounts(
     if product_code_mode:
         stmt = stmt.where(Account.product_code_mode == product_code_mode)
         total_stmt = total_stmt.where(Account.product_code_mode == product_code_mode)
+    if account_tier:
+        stmt = stmt.where(Account.account_tier == account_tier)
+        total_stmt = total_stmt.where(Account.account_tier == account_tier)
     if platform_binding_status:
         # "bound" = has at least one reservation with status='bound'
         # "confirmed" = has at least one reservation with status='confirmed'
