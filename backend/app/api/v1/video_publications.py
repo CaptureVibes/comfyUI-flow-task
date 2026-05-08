@@ -188,15 +188,15 @@ async def export_publication_stats(
         "tiktok": "https://www.tiktok.com/",
         "instagram": "https://www.instagram.com/",
     }
-    account_bindings: dict[uuid.UUID | None, list[tuple[str, str]]] = {}
+    account_bindings: dict[uuid.UUID | None, list[tuple[str, str, str]]] = {}
     seen_ids: set[uuid.UUID | None] = set()
     for item in items:
         aid = item.account_id
         if aid in seen_ids:
             continue
         seen_ids.add(aid)
-        # 优先从 account.social_bindings 提取，生成 (URL, 频道名称) 对
-        pairs: list[tuple[str, str]] = []
+        # 优先从 account.social_bindings 提取，生成 (URL, 频道名称, 平台) 三元组
+        pairs: list[tuple[str, str, str]] = []
         for binding in item.social_bindings or []:
             if not isinstance(binding, dict):
                 continue
@@ -212,7 +212,7 @@ async def export_publication_stats(
                 url = base.rstrip("/")
             else:
                 url = ""
-            pairs.append((url, channel_name))
+            pairs.append((url, channel_name, p))
         # 兜底：从 metrics_channels 和 channels_status 补充平台名（无频道名）
         if not pairs:
             platforms_set: set[str] = set()
@@ -224,10 +224,10 @@ async def export_publication_stats(
                 p = str(ch.platform or "").lower()
                 if p:
                     platforms_set.add(p)
-            pairs = [(_platform_base.get(p, p).rstrip("/"), "") for p in sorted(platforms_set)]
+            pairs = [(_platform_base.get(p, p).rstrip("/"), "", p) for p in sorted(platforms_set)]
         account_bindings[aid] = pairs
 
-    # 按账号名分组：{ name -> { account_type, platforms, date -> [(views, likes)] } }
+    # 按账号名分组：{ name -> { account_type, ..., date -> { platform -> [(views, likes), ...] } } }
     _gender_map = {"male": "男", "female": "女", "unisex": "男女皆有"}
     _face_map = {"face": "控脸", "no_face": "不控脸"}
     _pc_map = {"with_code": "带码", "without_code": "不带码"}
@@ -274,15 +274,31 @@ async def export_publication_stats(
                 "core_type": core_type,
                 "core_detail": core_detail,
                 "flags": flags_text,
+                # dates[day][platform] = [(views, likes), ...]，按视频逐条记录
                 "dates": {},
             }
         dt = item.published_at or item.created_at
         if not dt:
             continue
         day = dt.strftime("%Y-%m-%d")
-        blogger_map[name]["dates"].setdefault(day, []).append(
-            (item.total_views or 0, item.total_likes or 0)
-        )
+        per_platform = blogger_map[name]["dates"].setdefault(day, {})
+
+        def _stat(stats, *keys):
+            if stats is None:
+                return None
+            for k in keys:
+                v = getattr(stats, k, None) if not isinstance(stats, dict) else stats.get(k)
+                if v is not None:
+                    return v
+            return None
+
+        for ch in item.metrics_channels or []:
+            p = str(ch.platform or "").lower()
+            if not p:
+                continue
+            views = _stat(ch.stats, "views", "view_count") or 0
+            likes = _stat(ch.stats, "likes", "like_count") or 0
+            per_platform.setdefault(p, []).append((int(views), int(likes)))
 
     # 构建 XLSX：每个博主一行，绑定多频道时按频道展开多行，其他列合并单元格
     from openpyxl import Workbook
@@ -300,29 +316,34 @@ async def export_publication_stats(
     ws.append(headers)
 
     wrap_align = Alignment(wrap_text=True, vertical="center")
-    per_channel_cols = {3, 4}  # 「绑定平台」「频道名称」按频道展开
+    date_col_start = 11  # 第 11 列起为日期列
+    date_col_end = date_col_start + len(dates) - 1
+    # 「绑定平台」「频道名称」+ 日期列均按频道展开，不参与合并
+    per_channel_cols = {3, 4} | set(range(date_col_start, date_col_end + 1)) if dates else {3, 4}
     total_cols = len(headers)
 
     current_row = 2  # 表头是第 1 行
     for name, info in blogger_map.items():
-        bindings: list[tuple[str, str]] = info["bindings"]
+        bindings: list[tuple[str, str, str]] = info["bindings"]
         row_count = max(1, len(bindings))
 
-        date_cells = [
-            "\n".join(f"▶{v} ♥{l}" for v, l in info["dates"].get(day, []))
-            for day in dates
-        ]
-
         for i in range(row_count):
-            url, ch_name = bindings[i] if i < len(bindings) else ("", "")
+            url, ch_name, platform = bindings[i] if i < len(bindings) else ("", "", "")
+            row_date_cells = [
+                "\n".join(
+                    f"▶{v} ♥{l}"
+                    for v, l in info["dates"].get(day, {}).get(platform, [])
+                )
+                for day in dates
+            ]
             ws.append([
                 name, info["account_type"], url, ch_name,
                 info["gender"], info["face"], info["product_code"],
                 info["core_type"], info["core_detail"], info["flags"],
-                *date_cells,
+                *row_date_cells,
             ])
 
-        # 多频道时合并非频道列
+        # 多频道时合并非频道列（日期列保持每行独立）
         if row_count > 1:
             end_row = current_row + row_count - 1
             for col in range(1, total_cols + 1):
