@@ -48,9 +48,13 @@ _shutting_down: bool = False
 
 # 并发数：同时处理的最大 pipeline 数（pipeline 大头是 Gemini/外部 API，I/O 密集，可较高）
 _CONCURRENCY = 10
-# 抽帧/拼接等 ffmpeg 子进程是 CPU 密集，单独用更小的信号量限流，避免 4 vCPU 机器 load 爆掉
+# 抽帧 / 拼接 / ffprobe 等"轻量"ffmpeg 子进程（秒级）：用一个稍宽的 semaphore
 _FFMPEG_CONCURRENCY = 2
 _ffmpeg_semaphore: asyncio.Semaphore | None = None
+# 重量级 libx264 压缩单独一个 semaphore，避免长时间压缩把抽帧锁死
+# （单条压缩可达 5~10 分钟，跟秒级抽帧共用 Semaphore(2) 会让 AI 模板永久排队）
+_FFMPEG_HEAVY_CONCURRENCY = 1
+_ffmpeg_heavy_semaphore: asyncio.Semaphore | None = None
 
 # 抽帧后并发上传 CDN 的上限：抽帧通常 30+ 帧，全部同时打 CDN 容易触发限流→全员重试
 _FRAME_UPLOAD_CONCURRENCY = 8
@@ -69,10 +73,19 @@ _video_download_semaphore: asyncio.Semaphore | None = None
 
 
 def _get_ffmpeg_semaphore() -> asyncio.Semaphore:
+    """轻量 ffmpeg/ffprobe 任务（秒级）的并发信号量。"""
     global _ffmpeg_semaphore
     if _ffmpeg_semaphore is None:
         _ffmpeg_semaphore = asyncio.Semaphore(_FFMPEG_CONCURRENCY)
     return _ffmpeg_semaphore
+
+
+def _get_ffmpeg_heavy_semaphore() -> asyncio.Semaphore:
+    """重量级 libx264 压缩等长任务（分钟级）的独立信号量，不与轻量任务共用。"""
+    global _ffmpeg_heavy_semaphore
+    if _ffmpeg_heavy_semaphore is None:
+        _ffmpeg_heavy_semaphore = asyncio.Semaphore(_FFMPEG_HEAVY_CONCURRENCY)
+    return _ffmpeg_heavy_semaphore
 
 
 def _get_frame_upload_semaphore() -> asyncio.Semaphore:

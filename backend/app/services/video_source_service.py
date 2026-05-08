@@ -533,9 +533,9 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
 
     compressed_path = os.path.join(tmpdir, "compressed.mp4")
 
-    # 改用 asyncio.create_subprocess_exec + 全局 ffmpeg 信号量 + 5 分钟超时，
-    # 避免多个 libx264 压缩并发把 4 vCPU 机器 CPU 撑爆
-    from app.services.video_ai_service import _get_ffmpeg_semaphore
+    # 用独立的"重量级 ffmpeg"信号量限流，避免 5~10 分钟的 libx264 压缩把
+    # AI 模板的秒级 ffprobe/抽帧 永久排队（曾观察到 imagegen 静默卡死）
+    from app.services.video_ai_service import _get_ffmpeg_heavy_semaphore
 
     # 每个 ffmpeg 进程允许 2 线程，配合 _FFMPEG_CONCURRENCY=2 = 4 核打满，
     # 4 vCPU 机器恰好够用；preset 用 veryfast 比 fast 再快 ~1.5x，输出体积只大 5~10%。
@@ -552,7 +552,7 @@ async def _compress_video_if_needed(file_path: str, tmpdir: str) -> str:
         "-movflags", "+faststart",
         compressed_path,
     ]
-    async with _get_ffmpeg_semaphore():
+    async with _get_ffmpeg_heavy_semaphore():
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
