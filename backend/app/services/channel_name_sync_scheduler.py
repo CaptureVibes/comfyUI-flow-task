@@ -2,8 +2,9 @@
 Channel name sync scheduler
 ===========================
 每天北京时间 10:00 自动触发，对所有 channel_source=openapi、status=bound 的
-AccountChannelReservation 记录，通过 Open API 渠道列表接口同步最新 channel_name：
-  - 找到同 channel_id 的渠道 → 更新 channel_name
+AccountChannelReservation 记录，通过 Open API 渠道列表接口同步最新
+channel_name 与 username：
+  - 找到同 channel_id 的渠道 → 任一字段不一致即更新
   - 找不到 → 不修改
   - 请求失败 → 跳过，打印警告日志
 
@@ -136,15 +137,16 @@ async def _ensure_not_stopped(should_stop: DisconnectChecker | None) -> None:
         raise _SyncAborted
 
 
-async def _fetch_openapi_channel_name_map(
+async def _fetch_openapi_channel_info_map(
     client: OpenAPIClient,
     *,
     platform: str,
     should_stop: DisconnectChecker | None,
-) -> dict[str, str]:
+) -> dict[str, dict[str, str]]:
+    """返回 channel_id → {"channel_name": str, "username": str} 映射。"""
     page = 1
     total = 0
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, str]] = {}
     usage_types = settings.open_api_channel_usage_types_list or None
 
     while True:
@@ -166,7 +168,10 @@ async def _fetch_openapi_channel_name_map(
             channel_id = str(item.get("channel_id") or "").strip()
             if not channel_id:
                 continue
-            result[channel_id] = str(item.get("channel_name") or "").strip()
+            result[channel_id] = {
+                "channel_name": str(item.get("channel_name") or "").strip(),
+                "username": str(item.get("username") or "").strip(),
+            }
 
         if len(items) < _CHANNEL_PAGE_SIZE:
             break
@@ -224,7 +229,7 @@ async def _run_once(
         async with SessionLocal() as session:
             for platform, rows in grouped.items():
                 try:
-                    channel_name_map = await _fetch_openapi_channel_name_map(
+                    channel_info_map = await _fetch_openapi_channel_info_map(
                         client,
                         platform=platform,
                         should_stop=should_stop,
@@ -245,6 +250,8 @@ async def _run_once(
                             "channel_id": reservation.channel_id,
                             "previous_channel_name": reservation.channel_name,
                             "current_channel_name": reservation.channel_name,
+                            "previous_username": reservation.username,
+                            "current_username": reservation.username,
                             "result": "request_failed",
                             "message": f"{platform} 渠道列表拉取失败，无法同步频道名称",
                         })
@@ -258,16 +265,25 @@ async def _run_once(
                         break
 
                     previous_name = reservation.channel_name or ""
+                    previous_username = reservation.username or ""
                     current_name = previous_name
+                    current_username = previous_username
                     result_type = "not_found"
 
                     channel_id = str(reservation.channel_id or "").strip()
-                    if channel_id in channel_name_map:
-                        current_name = channel_name_map[channel_id]
-                        if current_name != previous_name:
+                    if channel_id in channel_info_map:
+                        info = channel_info_map[channel_id]
+                        current_name = info.get("channel_name") or ""
+                        current_username = info.get("username") or ""
+                        name_changed = current_name != previous_name
+                        username_changed = current_username != previous_username
+                        if name_changed or username_changed:
                             obj = await session.get(AccountChannelReservation, reservation.id)
                             if obj is not None:
-                                obj.channel_name = current_name or None
+                                if name_changed:
+                                    obj.channel_name = current_name or None
+                                if username_changed:
+                                    obj.username = current_username or None
                                 await session.commit()
                             updated += 1
                             result_type = "updated"
@@ -284,6 +300,8 @@ async def _run_once(
                         "channel_id": reservation.channel_id,
                         "previous_channel_name": previous_name,
                         "current_channel_name": current_name,
+                        "previous_username": previous_username,
+                        "current_username": current_username,
                         "result": result_type,
                         "message": "频道名称同步完成",
                     })

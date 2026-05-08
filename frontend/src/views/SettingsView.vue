@@ -89,7 +89,7 @@
           <div class="setting-label">
             <span class="setting-name">平台频道名称同步</span>
             <span class="setting-desc">
-              每天北京时间 10:00 自动同步内部频道名称，手动触发时会实时展示旧名字和新名字。
+              每天北京时间 10:00 自动同步内部频道名称与用户名，手动触发时会实时展示新旧值。
             </span>
           </div>
           <button
@@ -132,6 +132,16 @@
               </template>
               <span class="check-name-chip" :class="nameChipClass(item.type)">
                 {{ formatChannelDisplayName(item.currentChannelName) }}
+              </span>
+            </div>
+            <div v-if="item.previousUsername || item.currentUsername" class="check-log-name-line">
+              <span class="check-log-username-label">用户名</span>
+              <template v-if="item.previousUsername !== item.currentUsername">
+                <span class="check-name-chip is-ghost">{{ item.previousUsername || '空' }}</span>
+                <span class="check-log-arrow">→</span>
+              </template>
+              <span class="check-name-chip" :class="nameChipClass(item.type)">
+                {{ item.currentUsername || '空' }}
               </span>
             </div>
           </div>
@@ -253,15 +263,24 @@ function buildCheckSummary(data) {
 function buildChannelNameSyncSummary(data) {
   const previousName = formatChannelDisplayName(data?.previous_channel_name || '')
   const currentName = formatChannelDisplayName(data?.current_channel_name || '')
+  const previousUsername = data?.previous_username || ''
+  const currentUsername = data?.current_username || ''
+  const nameChanged = (data?.previous_channel_name || '') !== (data?.current_channel_name || '')
+  const usernameChanged = previousUsername !== currentUsername
 
   if (data?.result === 'updated') {
-    return `频道名称已从${previousName}同步为${currentName}。`
+    const parts = []
+    if (nameChanged) parts.push(`频道名称已从${previousName}同步为${currentName}`)
+    if (usernameChanged) {
+      parts.push(`用户名已从${previousUsername || '空'}同步为${currentUsername || '空'}`)
+    }
+    return (parts.join('；') || '已同步') + '。'
   }
   if (data?.result === 'unchanged') {
-    return `频道名称未变化，当前仍为${currentName}。`
+    return `频道名称与用户名均未变化，当前仍为${currentName}（${currentUsername || '无用户名'}）。`
   }
   if (data?.result === 'not_found') {
-    return '上游渠道列表中未找到这个频道，名称保持本地值不变。'
+    return '上游渠道列表中未找到这个频道，名称与用户名保持本地值不变。'
   }
   if (data?.result === 'request_failed') {
     return data?.message || '渠道列表请求失败，本地名称未被修改。'
@@ -436,6 +455,8 @@ async function handleSyncChannelNames() {
               platform: data?.platform || '',
               previousChannelName: data?.previous_channel_name || '',
               currentChannelName: data?.current_channel_name || '',
+              previousUsername: data?.previous_username || '',
+              currentUsername: data?.current_username || '',
               resultLabel: formatChannelNameResultLabel(data?.result),
               summary: buildChannelNameSyncSummary(data),
             }
@@ -724,6 +745,13 @@ onBeforeUnmount(() => {
   color: #94a3b8;
   font-size: 13px;
   font-weight: 700;
+}
+
+.check-log-username-label {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .check-status-chip {
