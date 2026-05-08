@@ -219,7 +219,11 @@ async def bind_openapi_channel_openapi(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
     session: AsyncSession = Depends(get_db),
 ) -> ExternalBindOpenAPIChannelResponse:
-    """外部团队绑定频道信息到 AI 博主。"""
+    """外部团队绑定频道信息到 AI 博主。
+
+    若该账号该平台已绑定（status='bound'），直接返回当前绑定信息，不修改任何字段、
+    不报错；调用方需要重绑请先调 release 释放。
+    """
     _verify_api_key(body.api_key, x_api_key)
     owner_id = _resolve_owner_id(body.owner_id)
 
@@ -248,15 +252,16 @@ async def bind_openapi_channel_openapi(
             confirmed_at=now,
         )
         session.add(reservation)
-    elif reservation.status == "bound":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"该账号 {platform} 平台已绑定，不可修改；请先调用 release 释放",
-        )
+        _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
+        await refresh_reservation_channel_status(reservation)
+        await session.commit()
+    elif reservation.status != "bound":
+        # 旧 reservation 但尚未 bound（reserved/confirmed），允许覆盖完成绑定
+        _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
+        await refresh_reservation_channel_status(reservation)
+        await session.commit()
+    # 已 bound：保持原值，直接返回当前数据
 
-    _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
-    await refresh_reservation_channel_status(reservation)
-    await session.commit()
     rows = (
         await session.execute(
             select(AccountChannelReservation)
