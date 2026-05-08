@@ -96,7 +96,7 @@ async def _list_targets(
         stmt = (
             select(VideoSource)
             .where(VideoSource.local_video_url.isnot(None))
-            .order_by(VideoSource.created_at.asc())
+            .order_by(VideoSource.created_at.desc())
         )
         if video_source_id is not None:
             stmt = stmt.where(VideoSource.id == video_source_id)
