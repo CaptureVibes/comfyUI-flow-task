@@ -52,12 +52,27 @@ _CONCURRENCY = 10
 _FFMPEG_CONCURRENCY = 2
 _ffmpeg_semaphore: asyncio.Semaphore | None = None
 
+# 抽帧后并发上传 CDN 的上限：抽帧通常 30+ 帧，全部同时打 CDN 容易触发限流→全员重试
+_FRAME_UPLOAD_CONCURRENCY = 8
+# 单帧上传整体预算（含内部重试），超过则放弃，避免 gather 被一帧拖死
+_FRAME_UPLOAD_BUDGET_SEC = 90.0
+# 整个 imagegen 阶段的兜底超时（抽帧 + 全部上传），到点抛错让模板进 failed
+_IMAGEGEN_STAGE_TIMEOUT_SEC = 600.0
+_frame_upload_semaphore: asyncio.Semaphore | None = None
+
 
 def _get_ffmpeg_semaphore() -> asyncio.Semaphore:
     global _ffmpeg_semaphore
     if _ffmpeg_semaphore is None:
         _ffmpeg_semaphore = asyncio.Semaphore(_FFMPEG_CONCURRENCY)
     return _ffmpeg_semaphore
+
+
+def _get_frame_upload_semaphore() -> asyncio.Semaphore:
+    global _frame_upload_semaphore
+    if _frame_upload_semaphore is None:
+        _frame_upload_semaphore = asyncio.Semaphore(_FRAME_UPLOAD_CONCURRENCY)
+    return _frame_upload_semaphore
 
 
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
@@ -375,13 +390,19 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
 async def _upload_frame_to_cdn(data_url: str) -> str:
     """
     将 base64 data URL 的帧图片上传到 CDN，返回公网 URL。
-    使用 upload_service 上传。
+
+    并发受 _FRAME_UPLOAD_CONCURRENCY 限制，单帧（含 upload_service 内重试）总预算
+    _FRAME_UPLOAD_BUDGET_SEC，超时即放弃，由上层 gather 标记为 Exception。
     """
     from app.services.upload_service import UpstreamImageUploadService
     header, b64data = data_url.split(",", 1)
     content = base64.b64decode(b64data)
     svc = UpstreamImageUploadService()
-    result = await svc.upload_image(content, "image/jpeg", "frame.jpg")
+    async with _get_frame_upload_semaphore():
+        result = await asyncio.wait_for(
+            svc.upload_image(content, "image/jpeg", "frame.jpg"),
+            timeout=_FRAME_UPLOAD_BUDGET_SEC,
+        )
     return result.url
 
 
@@ -396,13 +417,26 @@ async def _run_imagegen_stage(
     """
     第二阶段：1s抽一帧 → 并发上传 CDN。
     返回 frame_shots 列表，每项格式：{"image_url": str, "frame_index": int}
+
+    整个阶段有 _IMAGEGEN_STAGE_TIMEOUT_SEC 的兜底超时，避免 CDN 抖动把 pipeline 永远挂住。
     """
+    return await asyncio.wait_for(
+        _run_imagegen_stage_inner(template_id=template_id, video_url=video_url),
+        timeout=_IMAGEGEN_STAGE_TIMEOUT_SEC,
+    )
+
+
+async def _run_imagegen_stage_inner(
+    *,
+    template_id: str,
+    video_url: str,
+) -> list[dict]:
     # 1. 抽帧（1s 间隔）
     frame_data_urls = await _extract_frames_with_interval(video_url, template_id, interval=_FRAME_INTERVAL_NEW)
     if not frame_data_urls:
         raise ValueError("视频抽帧失败，未获取到任何帧图片")
 
-    # 2. 并发上传所有帧到 CDN
+    # 2. 并发上传所有帧到 CDN（受 _FRAME_UPLOAD_CONCURRENCY 限流）
     logger.info("[%s] Uploading %d frames to CDN", template_id, len(frame_data_urls))
     upload_results = await asyncio.gather(
         *[_upload_frame_to_cdn(du) for du in frame_data_urls],

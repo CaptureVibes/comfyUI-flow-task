@@ -99,11 +99,14 @@ class UpstreamImageUploadService:
         response = None
         attempt = 0
         last_exc: Exception | None = None
-        _MAX_ATTEMPTS = 15  # 之前是 while True 无限重试，CDN 抖动会把 pipeline 永远挂在 imagegen
+        # 调小重试预算：5 次 × (15s 超时 + 最多 4s sleep) ≈ 单调用最多 ~95s
+        # 上游 video_ai_service 还会再包一层 _FRAME_UPLOAD_BUDGET_SEC，双保险防止挂死
+        _MAX_ATTEMPTS = 5
+        _PER_ATTEMPT_TIMEOUT = 15.0
         while attempt < _MAX_ATTEMPTS:
             attempt += 1
             try:
-                async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+                async with httpx.AsyncClient(timeout=_PER_ATTEMPT_TIMEOUT, trust_env=False) as client:
                     response = await client.post(
                         settings.upload_api_url,
                         files={"file": (safe_name, content, content_type)},
@@ -117,7 +120,7 @@ class UpstreamImageUploadService:
                 raise
             except Exception as exc:
                 last_exc = exc
-                delay = min(attempt * 2, 10)
+                delay = min(attempt, 4)
                 import logging as _logging
                 _logging.getLogger("app.upload_service").warning(
                     "upload_image attempt %d/%d failed (%ds后重试): %s",
