@@ -1,6 +1,6 @@
 """TikTok 视频下载并上传 CDN
 
-优先级：tikwm → RapidAPI → Apify
+优先级：tikwm → Apify
 每个 provider 失败后自动 fallback，全部失败则抛出 RuntimeError。
 返回值：CDN 永久 URL（字符串）。
 """
@@ -18,8 +18,6 @@ from app.core.config import settings
 logger = logging.getLogger("app.tiktok_download")
 
 _TIKWM_BASE = "https://www.tikwm.com/api"
-_RAPIDAPI_HOST = "tiktok-api23.p.rapidapi.com"
-_RAPIDAPI_BASE = f"https://{_RAPIDAPI_HOST}"
 _APIFY_ACTOR_ID = "GdWCkxBtKWOsKjdch"  # clockworks/tiktok-scraper
 
 
@@ -42,33 +40,6 @@ async def _tikwm_get_direct_url(tiktok_url: str) -> str:
     if not url:
         raise RuntimeError("tikwm returned no video URL")
     logger.info("tikwm: got direct_url=%s", url[:100])
-    return url
-
-
-async def _rapidapi_get_direct_url(tiktok_url: str) -> str:
-    """RapidAPI /api/download/video 获取无水印直链。"""
-    if not settings.rapidapi_key:
-        raise RuntimeError("RAPIDAPI_KEY not configured")
-    logger.info("rapidapi: GET /api/download/video  url=%s", tiktok_url[:80])
-    headers = {
-        "X-RapidAPI-Key": settings.rapidapi_key,
-        "X-RapidAPI-Host": _RAPIDAPI_HOST,
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            f"{_RAPIDAPI_BASE}/api/download/video",
-            params={"url": tiktok_url},
-            headers=headers,
-        )
-        logger.info("rapidapi: status=%d", resp.status_code)
-        resp.raise_for_status()
-        body = resp.json()
-    data = body.get("data") or body
-    url = data.get("hdplay") or data.get("play") or data.get("wmplay") or data.get("video_url")
-    if not url:
-        raise RuntimeError(f"RapidAPI returned no video URL: {list(body.keys())}")
-    logger.info("rapidapi: got direct_url=%s", url[:100])
     return url
 
 
@@ -188,11 +159,10 @@ async def _upload_to_cdn(file_path: str, filename: str) -> str:
 async def download_to_file(tiktok_url: str, out_path: str) -> str:
     """下载 TikTok 视频到本地文件，返回实际写入路径（.mp4）。
 
-    fallback 顺序：tikwm → RapidAPI → Apify
+    fallback 顺序：tikwm → Apify
     """
     providers = [
         ("tikwm", _tikwm_get_direct_url),
-        ("rapidapi", _rapidapi_get_direct_url),
         ("apify", _apify_get_direct_url),
     ]
     errors: list[str] = []
@@ -217,7 +187,7 @@ async def download_to_file(tiktok_url: str, out_path: str) -> str:
 async def download_and_upload(tiktok_url: str, filename: str | None = None) -> str:
     """下载 TikTok 视频并上传到 CDN，返回 CDN 永久 URL。
 
-    fallback 顺序：tikwm → RapidAPI → Apify
+    fallback 顺序：tikwm → Apify
     """
     if not filename:
         safe = tiktok_url.rstrip("/").split("/")[-1][:40].replace("?", "_")
@@ -225,7 +195,6 @@ async def download_and_upload(tiktok_url: str, filename: str | None = None) -> s
 
     providers = [
         ("tikwm", _tikwm_get_direct_url),
-        ("rapidapi", _rapidapi_get_direct_url),
         ("apify", _apify_get_direct_url),
     ]
     errors: list[str] = []
