@@ -60,6 +60,13 @@ _FRAME_UPLOAD_BUDGET_SEC = 90.0
 _IMAGEGEN_STAGE_TIMEOUT_SEC = 600.0
 _frame_upload_semaphore: asyncio.Semaphore | None = None
 
+# 抽帧前下载视频的并发上限和整体超时：避免 10 个 pipeline 同时打 CDN，且
+# httpx 的 timeout 实际是 per-IO read timeout，慢吐字节可以挂无限久 → 用
+# asyncio.wait_for 强制总时长上限
+_VIDEO_DOWNLOAD_CONCURRENCY = 4
+_VIDEO_DOWNLOAD_TIMEOUT_SEC = 120.0
+_video_download_semaphore: asyncio.Semaphore | None = None
+
 
 def _get_ffmpeg_semaphore() -> asyncio.Semaphore:
     global _ffmpeg_semaphore
@@ -73,6 +80,13 @@ def _get_frame_upload_semaphore() -> asyncio.Semaphore:
     if _frame_upload_semaphore is None:
         _frame_upload_semaphore = asyncio.Semaphore(_FRAME_UPLOAD_CONCURRENCY)
     return _frame_upload_semaphore
+
+
+def _get_video_download_semaphore() -> asyncio.Semaphore:
+    global _video_download_semaphore
+    if _video_download_semaphore is None:
+        _video_download_semaphore = asyncio.Semaphore(_VIDEO_DOWNLOAD_CONCURRENCY)
+    return _video_download_semaphore
 
 
 # 持久化间隔：每 2 秒持久化一次脏数据到数据库
@@ -253,14 +267,42 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
     with disk_tempdir(prefix=f"vai_{template_id[:8]}_") as tmpdir:
         video_path = os.path.join(tmpdir, "video.mp4")
 
-        # 1. 下载视频（流式，限速以免 OOM）
+        # 1. 下载视频（流式）—— 受 _VIDEO_DOWNLOAD_CONCURRENCY 限流，外层 wait_for 兜底
+        # httpx 自身的 timeout 是 per-IO，慢吐字节可以挂无限久；asyncio.wait_for 强制总时长。
         logger.info("[%s] Downloading video for frame extraction: %s", template_id, video_url[:80])
-        async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
-            async with client.stream("GET", video_url) as resp:
-                resp.raise_for_status()
-                with open(video_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(65536):
-                        f.write(chunk)
+
+        async def _do_download() -> int:
+            bytes_written = 0
+            last_log_t = asyncio.get_running_loop().time()
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                async with client.stream("GET", video_url) as resp:
+                    resp.raise_for_status()
+                    with open(video_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(65536):
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+                            now = asyncio.get_running_loop().time()
+                            if now - last_log_t >= 10.0:
+                                logger.info(
+                                    "[%s] downloading: %.1f MB so far",
+                                    template_id, bytes_written / 1024 / 1024,
+                                )
+                                last_log_t = now
+            return bytes_written
+
+        async with _get_video_download_semaphore():
+            try:
+                downloaded_bytes = await asyncio.wait_for(
+                    _do_download(), timeout=_VIDEO_DOWNLOAD_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError(
+                    f"video download timeout after {_VIDEO_DOWNLOAD_TIMEOUT_SEC:.0f}s "
+                    f"for template {template_id}, url={video_url[:120]}"
+                ) from exc
+        logger.info(
+            "[%s] Downloaded %.1f MB", template_id, downloaded_bytes / 1024 / 1024,
+        )
 
         # 2. 用 ffprobe 获取视频时长（带大 probesize/analyzeduration，应对部分容器需要更多字节才能识别流）
         # -threads 1：单进程占 1 核；外加全局 ffmpeg 信号量，限制同时运行的 ffmpeg/ffprobe 数量
