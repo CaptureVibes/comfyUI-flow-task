@@ -145,6 +145,29 @@
                 </div>
               </el-form-item>
 
+              <el-form-item label="账号等级">
+                <div class="ac-type-toggle">
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.account_tier === 'test' }"
+                    @click="form.account_tier = 'test'"
+                  >实验号</button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.account_tier === 'dev' }"
+                    @click="form.account_tier = 'dev'"
+                  >常规号</button>
+                  <button
+                    type="button"
+                    class="ac-type-btn"
+                    :class="{ active: form.account_tier === 'prod' }"
+                    @click="form.account_tier = 'prod'"
+                  >正式号</button>
+                </div>
+              </el-form-item>
+
               <el-form-item label="Handle">
                 <el-input
                   v-model="form.account_handle"
@@ -677,6 +700,7 @@ const form = reactive({
   product_code_mode: 'without_code',
   face_mode: 'face',
   gender: 'female',
+  account_tier: 'test',
   style_description: '',
   model_appearance: '',
   avatar_url: '',
@@ -950,6 +974,7 @@ async function loadAccount() {
     form.product_code_mode = data.product_code_mode || 'without_code'
     form.face_mode = data.face_mode || 'face'
     form.gender = data.gender || 'female'
+    form.account_tier = data.account_tier || 'test'
     form.style_description = data.style_description || ''
     form.hashtags = data.hashtags ? [...data.hashtags] : []
     form.model_appearance = data.model_appearance || ''
@@ -1033,6 +1058,7 @@ async function handleSave() {
         product_code_mode: form.product_code_mode,
         face_mode: form.face_mode,
         gender: form.gender,
+        account_tier: form.account_tier,
         account_handle: form.account_handle || null,
         account_signature: form.account_signature || null,
         style_description: form.style_description || null,
@@ -1197,6 +1223,7 @@ async function startAIGeneration() {
         product_code_mode: form.product_code_mode,
         face_mode: form.face_mode,
         gender: form.gender,
+        account_tier: form.account_tier,
         account_handle: form.account_handle || null,
         account_signature: form.account_signature || null,
         style_description: form.style_description || null,

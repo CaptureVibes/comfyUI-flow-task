@@ -65,6 +65,9 @@
             >
               {{ account.product_code_mode === 'with_code' ? '带商品码' : '非商品码' }}
             </span>
+            <span class="ad-type-badge" :class="`ad-tier-${account.account_tier || 'test'}`">
+              {{ { test: '实验号', dev: '常规号', prod: '正式号' }[account.account_tier || 'test'] }}
+            </span>
           </div>
           <div v-if="account.account_handle || account.account_signature" class="ad-hero-handle-wrap">
             <span v-if="account.account_handle" class="ad-hero-handle">@{{ account.account_handle }}</span>
@@ -1674,6 +1677,22 @@ onUnmounted(() => {
   background: #f1f5f9;
   color: #64748b;
 }
+
+.ad-tier-test {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.ad-tier-dev {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.ad-tier-prod {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 .ad-tag-badge {
   display: inline-flex;
   align-items: center;
