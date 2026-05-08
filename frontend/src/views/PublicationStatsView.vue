@@ -246,14 +246,14 @@
             <td class="ps-td">
               <div class="ps-platforms">
                 <a
-                  v-for="channel in item.metrics_channels"
+                  v-for="channel in displayChannels(item)"
                   :key="`${item.id}-${channel.platform}-${channel.channel_id || 'na'}`"
                   :href="channel.platform_video_url || undefined"
                   :class="['ps-platform-tag', `ps-platform-${channel.platform}`]"
                   target="_blank"
                   rel="noreferrer"
                 >{{ PLATFORM_LABELS[channel.platform] || channel.platform }}</a>
-                <span v-if="!item.metrics_channels?.length" class="ps-dash">-</span>
+                <span v-if="!displayChannels(item).length" class="ps-dash">-</span>
               </div>
             </td>
             <td class="ps-td ps-td-category">
@@ -356,9 +356,9 @@
 
       <!-- 各平台数据 -->
       <div class="psd-section-title">各平台数据</div>
-      <div v-if="!activeItem.metrics_channels?.length" class="psd-no-channels">暂无平台数据</div>
+      <div v-if="!displayChannels(activeItem).length" class="psd-no-channels">暂无平台数据</div>
       <div
-        v-for="ch in activeItem.metrics_channels"
+        v-for="ch in displayChannels(activeItem)"
         :key="`${ch.platform}-${ch.channel_id}`"
         class="psd-channel-card"
       >
@@ -625,6 +625,23 @@ const activeItem = ref(null)
 function openDetail(item) {
   activeItem.value = item
   drawerVisible.value = true
+}
+
+// metrics 未同步时 fallback 到 channels_status，保证平台标签可点击跳转
+function displayChannels(item) {
+  if (!item) return []
+  const metrics = item.metrics_channels || []
+  if (metrics.length > 0) return metrics
+  const status = item.channels_status || []
+  return status.map(s => ({
+    platform: s.platform,
+    channel_id: s.channel_id,
+    channel_name: s.channel_name,
+    platform_video_id: s.platform_video_id,
+    platform_video_url: s.platform_video_url,
+    status: s.status,
+    stats: null,
+  }))
 }
 
 // stats 字段兼容 view_count/views, like_count/likes 等双名
