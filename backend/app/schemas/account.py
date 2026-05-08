@@ -43,6 +43,7 @@ class AccountCreate(BaseModel):
     product_code_mode: Literal["with_code", "without_code"] = "without_code"
     face_mode: Literal["face", "no_face"] = "face"
     gender: Literal["male", "female", "unisex"] = "female"
+    account_tier: Literal["test", "dev", "prod"] = "test"
     style_description: str | None = None
     model_appearance: str | None = None
     avatar_url: str | None = None
@@ -59,6 +60,7 @@ class AccountPatch(BaseModel):
     product_code_mode: Literal["with_code", "without_code"] | None = None
     face_mode: Literal["face", "no_face"] | None = None
     gender: Literal["male", "female", "unisex"] | None = None  # None 表示不修改
+    account_tier: Literal["test", "dev", "prod"] | None = None
     style_description: str | None = None
     model_appearance: str | None = None
     avatar_url: str | None = None
@@ -73,6 +75,7 @@ class BulkUpdateAccountAttributesBody(BaseModel):
     face_mode: Literal["face", "no_face"] | None = None
     gender: Literal["male", "female", "unisex"] | None = None
     product_code_mode: Literal["with_code", "without_code"] | None = None
+    account_tier: Literal["test", "dev", "prod"] | None = None
 
 
 class BulkUpdateAccountAttributesResponse(BaseModel):
@@ -375,6 +378,7 @@ class AccountRead(BaseModel):
     product_code_mode: str = "without_code"
     face_mode: str = "face"
     gender: str = "female"
+    account_tier: str = "test"
     style_description: str | None
     model_appearance: str | None
     avatar_url: str | None

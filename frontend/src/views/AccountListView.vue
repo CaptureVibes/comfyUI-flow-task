@@ -1938,6 +1938,12 @@ const BULK_ATTRIBUTE_OPTIONS = {
     { label: '带商品码', value: 'with_code' },
     { label: '非商品码', value: 'without_code' },
   ],
+  account_tier: [
+    { label: '不修改', value: '' },
+    { label: '实验号', value: 'test' },
+    { label: '常规号', value: 'dev' },
+    { label: '正式号', value: 'prod' },
+  ],
 }
 
 const BULK_ATTRIBUTE_FIELDS = [
@@ -1965,6 +1971,12 @@ const BULK_ATTRIBUTE_FIELDS = [
     tone: 'emerald',
     icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><path d="M7 7h.01"/></svg>',
   },
+  {
+    key: 'account_tier',
+    label: '账号等级',
+    tone: 'amber',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 15 8.5 22 9.5l-5 4.8 1.2 7L12 17.8 5.8 21.3 7 14.3 2 9.5l7-1Z"/></svg>',
+  },
 ]
 
 const showBulkAttributeDialog = ref(false)
@@ -1974,6 +1986,7 @@ const bulkAttributeForm = ref({
   face_mode: '',
   gender: '',
   product_code_mode: '',
+  account_tier: '',
 })
 
 function resetBulkAttributeForm() {
@@ -1982,11 +1995,12 @@ function resetBulkAttributeForm() {
     face_mode: '',
     gender: '',
     product_code_mode: '',
+    account_tier: '',
   }
 }
 
 const bulkAttributeChangedCount = computed(() =>
-  ['account_type', 'face_mode', 'gender', 'product_code_mode']
+  ['account_type', 'face_mode', 'gender', 'product_code_mode', 'account_tier']
     .filter(key => !!bulkAttributeForm.value[key]).length
 )
 
@@ -2005,7 +2019,7 @@ function openBulkAttributeDialog() {
 
 function buildBulkAttributePayload() {
   const payload = { account_ids: [...selectedIds.value] }
-  for (const key of ['account_type', 'face_mode', 'gender', 'product_code_mode']) {
+  for (const key of ['account_type', 'face_mode', 'gender', 'product_code_mode', 'account_tier']) {
     if (bulkAttributeForm.value[key]) {
       payload[key] = bulkAttributeForm.value[key]
     }
@@ -3301,6 +3315,11 @@ onMounted(() => {
   background: #f4fdf9;
 }
 
+.bae-field.is-amber.is-active {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
 .bae-field-head {
   display: flex;
   align-items: center;
@@ -3338,6 +3357,11 @@ onMounted(() => {
 .bae-field.is-emerald.is-active .bae-field-icon {
   color: #047857;
   background: #d1fae5;
+}
+
+.bae-field.is-amber.is-active .bae-field-icon {
+  color: #b45309;
+  background: #fef3c7;
 }
 
 .bae-field-title-wrap {

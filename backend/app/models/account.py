@@ -26,6 +26,7 @@ class Account(Base):
     product_code_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="without_code")  # "with_code" | "without_code"
     face_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="face")  # "face" | "no_face"
     gender: Mapped[str] = mapped_column(String(20), nullable=False, default="female")  # "male" | "female" | "unisex"
+    account_tier: Mapped[str] = mapped_column(String(20), nullable=False, default="test", index=True)  # "test"=实验号 | "dev"=常规号 | "prod"=正式号
     style_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_appearance: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -38,6 +38,7 @@ async def create_account(
         product_code_mode=payload.product_code_mode,
         face_mode=payload.face_mode,
         gender=payload.gender,
+        account_tier=payload.account_tier,
         style_description=payload.style_description,
         model_appearance=payload.model_appearance,
         avatar_url=payload.avatar_url,
@@ -187,6 +188,8 @@ async def patch_account(
         account.face_mode = payload.face_mode
     if payload.gender is not None:
         account.gender = payload.gender
+    if payload.account_tier is not None:
+        account.account_tier = payload.account_tier
     if payload.style_description is not None:
         account.style_description = payload.style_description
     if payload.model_appearance is not None:
