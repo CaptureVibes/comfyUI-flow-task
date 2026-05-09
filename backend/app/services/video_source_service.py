@@ -24,6 +24,19 @@ from app.services.tiktok_blogger_service import upsert_blogger_from_info
 
 logger = logging.getLogger("app.video_source")
 
+# 全局并发上限：限制同时跑 _do_download_and_upload 的协程数。
+# 启动恢复 / 用户批量触发 / cleanup 脚本可能瞬间产生几百个并发 task，
+# 不限流会把 Apify 限流、ffmpeg 排满、DB 连接池耗尽。
+_DOWNLOAD_CONCURRENCY = 4
+_download_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_download_semaphore() -> asyncio.Semaphore:
+    global _download_semaphore
+    if _download_semaphore is None:
+        _download_semaphore = asyncio.Semaphore(_DOWNLOAD_CONCURRENCY)
+    return _download_semaphore
+
 
 def _clean_url(url: str) -> str:
     """Remove query parameters and fragment from URL to get a clean URL for deduplication."""
@@ -656,37 +669,57 @@ async def _download_video(source_url: str, out_path: str) -> str:
 
 
 async def _do_download_and_upload(vs_id: UUID) -> None:
-    """Background coroutine: download + upload, then persist result. Retries up to 15 times."""
+    """Background coroutine: download + upload, then persist result. Retries up to 15 times.
+
+    全局 _DOWNLOAD_CONCURRENCY 限流：恢复重启 / cleanup 脚本可能瞬间堆几百
+    个 task，必须排队运行才不会打死 Apify / ffmpeg / DB 连接池。
+    长 IO 期间不持有 DB session（短读 → 长 IO → 短写）。
+    """
+    async with _get_download_semaphore():
+        await _do_download_and_upload_inner(vs_id)
+
+
+async def _do_download_and_upload_inner(vs_id: UUID) -> None:
     _MAX_ATTEMPTS = 15
     attempt = 0
     while attempt < _MAX_ATTEMPTS:
         attempt += 1
         try:
+            # —— 阶段 1：读 source_url（短连接） ——
+            async with SessionLocal() as session:
+                row = (await session.execute(
+                    select(VideoSource.source_url, VideoSource.video_title)
+                    .where(VideoSource.id == vs_id)
+                )).first()
+            if row is None:
+                return
+            source_url, video_title = row
+            safe_title = (video_title or str(vs_id))[:60].replace("/", "_").replace("\\", "_")
+            filename = f"{safe_title}.mp4"
+
+            # —— 阶段 2：长 IO（不持有 session） ——
+            from app.utils.tmp_storage import disk_tempdir, ensure_free_space
+            ensure_free_space(min_bytes=500 * 1024 * 1024, label="video_source_download")
+            with disk_tempdir(prefix="vsrc_dl_") as tmpdir:
+                out_template = os.path.join(tmpdir, "video")
+                actual_path = await _download_video(source_url, out_template)
+                if not os.path.exists(actual_path):
+                    alt = out_template + ".mp4"
+                    actual_path = alt if os.path.exists(alt) else actual_path
+
+                actual_path = await _compress_video_if_needed(actual_path, tmpdir)
+                permanent_url = await _upload_video_file(actual_path, filename)
+
+            # —— 阶段 3：写结果（短连接） ——
             async with SessionLocal() as session:
                 vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
-                if not vs:
+                if vs is None:
                     return
-
-                safe_title = (vs.video_title or str(vs_id))[:60].replace("/", "_").replace("\\", "_")
-                filename = f"{safe_title}.mp4"
-
-                from app.utils.tmp_storage import disk_tempdir, ensure_free_space
-                ensure_free_space(min_bytes=500 * 1024 * 1024, label="video_source_download")
-                with disk_tempdir(prefix="vsrc_dl_") as tmpdir:
-                    out_template = os.path.join(tmpdir, "video")
-                    actual_path = await _download_video(vs.source_url, out_template)
-                    if not os.path.exists(actual_path):
-                        alt = out_template + ".mp4"
-                        actual_path = alt if os.path.exists(alt) else actual_path
-
-                    actual_path = await _compress_video_if_needed(actual_path, tmpdir)
-                    permanent_url = await _upload_video_file(actual_path, filename)
-
                 vs.local_video_url = permanent_url
                 vs.download_status = "done"
                 await session.commit()
-                logger.info("Video %s downloaded and uploaded: %s", vs_id, permanent_url)
-                return
+            logger.info("Video %s downloaded and uploaded: %s", vs_id, permanent_url)
+            return
         except asyncio.CancelledError:
             raise
         except Exception as exc:
