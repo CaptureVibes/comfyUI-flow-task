@@ -16,7 +16,7 @@
 
     <!-- Topic list -->
     <div v-loading="loading" class="tp-grid">
-      <div v-for="topic in topics" :key="topic.id" class="tp-card" @click="$router.push(`/dashboard/topics/${topic.id}`)">
+      <div v-for="topic in topics" :key="topic.id" class="tp-card" @click="openInNewTab(`/dashboard/topics/${topic.id}`)">
         <div class="tp-card-body">
           <div class="tp-card-name">{{ topic.name }}</div>
           <div class="tp-card-stats">
@@ -98,6 +98,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchTopics, createTopic, patchTopic, deleteTopic, fetchKeywordGenConfig, updateKeywordGenConfig } from '../api/topics'
+import { openInNewTab } from '../utils/nav'
 
 const route = useRoute()
 const router = useRouter()

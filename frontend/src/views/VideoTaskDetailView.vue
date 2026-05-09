@@ -15,7 +15,7 @@
         <span
           class="vtd-info-item vtd-template"
           :class="{ 'vtd-template-link': task.template_id }"
-          @click="task.template_id && router.push(`/dashboard/video-ai-templates/${task.template_id}/edit`)"
+          @click="task.template_id && openInNewTab(`/dashboard/video-ai-templates/${task.template_id}/edit`)"
         >{{ templateTitle }}</span>
         <span class="vtd-sep">·</span>
         <span class="vtd-info-item">{{ task.target_date }}</span>
@@ -92,7 +92,7 @@
           <button
             v-if="task.original_video.id"
             class="vtd-original-link"
-            @click="router.push(`/dashboard/video-library/${task.original_video.id}`)"
+            @click="openInNewTab(`/dashboard/video-library/${task.original_video.id}`)"
           >
             查看视频详情
           </button>
@@ -400,6 +400,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchVideoTask,

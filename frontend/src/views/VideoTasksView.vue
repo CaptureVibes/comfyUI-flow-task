@@ -273,7 +273,7 @@
             <button
               v-if="task.status === 'queued' && task.account_id"
               class="vt-publish-btn"
-              @click="router.push(`/dashboard/accounts/${task.account_id}`)"
+              @click="openInNewTab(`/dashboard/accounts/${task.account_id}`)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               前往发布
@@ -436,6 +436,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed, batchDeletePendingGenerating, retryDailyTaskTemplates } from '../api/video_tasks.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
@@ -637,7 +638,7 @@ function taskProductCards(task) {
 
 function goToDetail(taskId) {
   syncUrl()
-  router.push({ name: 'video-task-detail', params: { id: taskId } })
+  openInNewTab({ name: 'video-task-detail', params: { id: taskId } })
 }
 
 function goToConfig() {

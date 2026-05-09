@@ -598,6 +598,7 @@
 <script setup>
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchVideoAITemplates,
@@ -1014,12 +1015,12 @@ function openPlayer(item) {
 
 function goToDetail(item) {
   syncUrl()
-  router.push(`/dashboard/video-ai-templates/${item.id}/edit`)
+  openInNewTab(`/dashboard/video-ai-templates/${item.id}/edit`)
 }
 
 function goToEdit(item) {
   syncUrl()
-  router.push(`/dashboard/video-ai-templates/${item.id}/edit`)
+  openInNewTab(`/dashboard/video-ai-templates/${item.id}/edit`)
 }
 
 async function handleStart(item) {

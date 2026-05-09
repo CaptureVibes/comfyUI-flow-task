@@ -102,7 +102,7 @@
                   type="primary"
                   link
                   style="float: right; font-weight: 500;"
-                  @click="$router.push(`/dashboard/video-library/${selectedVideoSource.id}`)"
+                  @click="openInNewTab(`/dashboard/video-library/${selectedVideoSource.id}`)"
                 >
                   查看视频详情
                 </el-button>
@@ -502,6 +502,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { openInNewTab } from '../utils/nav'
 import {
   createVideoAITemplate,
   fetchVideoAITemplate,

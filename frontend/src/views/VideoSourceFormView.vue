@@ -205,7 +205,7 @@
                     type="primary"
                     :underline="false"
                   >前往原始链接</el-link>
-                  <el-button v-if="item.existing_id" size="small" @click="$router.push(`/dashboard/video-library/${item.existing_id}`)">查看已存在视频</el-button>
+                  <el-button v-if="item.existing_id" size="small" @click="openInNewTab(`/dashboard/video-library/${item.existing_id}`)">查看已存在视频</el-button>
                 </div>
               </div>
             </div>
@@ -247,6 +247,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createVideoSource, downloadVideoSource, parseVideoUrl } from '../api/video_sources'
+import { openInNewTab } from '../utils/nav'
 import { createTag, fetchTags } from '../api/tags'
 
 const router = useRouter()

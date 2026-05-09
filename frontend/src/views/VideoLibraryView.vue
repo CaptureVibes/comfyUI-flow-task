@@ -219,7 +219,7 @@
               <button
                 v-if="templateMap[item.id]"
                 class="vc-btn vc-btn-tpl vc-btn-tpl-exists"
-                @click.stop="router.push(`/dashboard/video-ai-templates/${templateMap[item.id]}/edit`)"
+                @click.stop="openInNewTab(`/dashboard/video-ai-templates/${templateMap[item.id]}/edit`)"
               >跳转模板</button>
               <button
                 v-else-if="item.download_status === 'done'"
@@ -447,6 +447,7 @@
 <script setup>
 import { computed, onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
@@ -721,7 +722,7 @@ async function handleCreateTemplate(item) {
     })
     await startVideoAITemplate(tpl.id)
     templateMap.value = { ...templateMap.value, [item.id]: tpl.id }
-    router.push(`/dashboard/video-ai-templates/${tpl.id}/edit`)
+    openInNewTab(`/dashboard/video-ai-templates/${tpl.id}/edit`)
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '创建模板失败')
   } finally {
@@ -767,7 +768,7 @@ function openPlayer(item) {
 
 function goToDetail(item) {
   syncUrl()
-  router.push(`/dashboard/video-library/${item.id}`)
+  openInNewTab(`/dashboard/video-library/${item.id}`)
 }
 
 async function handleDownload(item) {

@@ -1280,7 +1280,7 @@
                 <button class="ac-btn ac-btn-stats" @click="$router.push({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
                 <button class="ac-btn ac-btn-sync" :class="{ loading: syncingId === item.id }" @click="handleSyncAccount(item)">{{ syncingId === item.id ? '同步中' : '同步' }}</button>
                 <button class="ac-btn ac-btn-classify" @click="openClassificationDialog(item)">分类</button>
-                <button class="ac-btn ac-btn-edit" @click="$router.push(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
+                <button class="ac-btn ac-btn-edit" @click="openInNewTab(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
                 <button class="ac-btn ac-btn-del" :class="{ loading: deleting === item.id }" @click="handleDelete(item)">删除</button>
               </div>
             </td>
@@ -1551,6 +1551,7 @@
 import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
+import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
@@ -2505,7 +2506,7 @@ function previewMedia(item, type) {
 }
 
 function goToDetail(item) {
-  router.push(`/dashboard/accounts/${item.id}`)
+  openInNewTab(`/dashboard/accounts/${item.id}`)
 }
 
 async function loadData({ silent = false } = {}) {
@@ -2663,12 +2664,12 @@ async function cycleGender(item) {
 const bulkVideoGenerating = ref(false)
 const bulkVideoGenProgress = ref({ current: 0, total: 0 })
 const showBulkGenDialog = ref(false)
-const bulkGenForm = ref({ mode: 'unused', fill_mode: 'count', limit: 5, subtaskCount: 3 })
+const bulkGenForm = ref({ mode: 'unused', fill_mode: 'count', limit: 5, subtaskCount: 1 })
 
 
 function handleBulkVideoGenerate() {
   if (bulkVideoGenerating.value) return
-  bulkGenForm.value = { mode: 'unused', fill_mode: 'count', limit: 5, subtaskCount: 3 }
+  bulkGenForm.value = { mode: 'unused', fill_mode: 'count', limit: 5, subtaskCount: 1 }
   showBulkGenDialog.value = true
 }
 

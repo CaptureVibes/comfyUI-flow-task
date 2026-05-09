@@ -222,7 +222,7 @@
           </div>
 
           <!-- Thumbnail / video -->
-          <div class="ad-card-thumb" @click="router.push(`/dashboard/video-tasks/${item.task.id}`)">
+          <div class="ad-card-thumb" @click="openInNewTab(`/dashboard/video-tasks/${item.task.id}`)">
             <video
               v-if="item.sub.result_video_url"
               :src="item.sub.result_video_url"
@@ -403,7 +403,7 @@
                 @click="handleRollback(item.task, item.sub)"
               >撤回</el-button>
 
-              <button class="ad-card-detail-btn" @click="router.push(`/dashboard/video-tasks/${item.task.id}`)">
+              <button class="ad-card-detail-btn" @click="openInNewTab(`/dashboard/video-tasks/${item.task.id}`)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
               </button>
             </div>
@@ -756,6 +756,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish, patchAccount } from '../api/accounts'
 import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask, regeneratePublishMeta } from '../api/video_tasks'
