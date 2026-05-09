@@ -419,7 +419,7 @@ const STATUS_LABELS = {
   reviewing: '待决策',
   stashed: '暂存',
   decision_rejected: '决策未通过',
-  queued: '排队中',
+  queued: '队列中',
   publishing: '发布中',
   publish_failed: '发布失败',
   published: '已发布',

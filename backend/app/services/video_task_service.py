@@ -1095,6 +1095,7 @@ class VideoTaskService:
                     continue
                 if st.id in queued_subs:
                     st.status = "queued"
+                    st.selected = True   # 进入候选池即视为人工选中，否则 publish 链路会判 selected=False 报错
                     st.publish_meta = {"status": "pending"}
                     if st.queue_order is None:
                         st.queue_order = next_order
