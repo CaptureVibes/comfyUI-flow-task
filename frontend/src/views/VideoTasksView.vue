@@ -249,6 +249,9 @@
             <span class="vt-face-badge" :class="task.has_face ? 'vt-face-yes' : 'vt-face-no'">
               {{ task.has_face ? '有人脸' : '无人脸' }}
             </span>
+            <span class="vt-cta-badge" :class="task.cta ? 'vt-cta-yes' : 'vt-cta-no'">
+              {{ task.cta ? '带商品码' : '不带商品码' }}
+            </span>
             <div class="vt-card-meta">
               <span class="vt-account-name">{{ task.account_name || '未知账号' }}</span>
               <span class="vt-sep">·</span>
@@ -1400,6 +1403,17 @@ onMounted(async () => {
 }
 .vt-face-yes { background: #fce7f3; color: #be185d; }
 .vt-face-no  { background: #f1f5f9; color: #64748b; }
+
+.vt-cta-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.vt-cta-yes { background: #fef3c7; color: #b45309; }
+.vt-cta-no  { background: #f1f5f9; color: #64748b; }
 
 .vt-publish-btn {
   display: flex;

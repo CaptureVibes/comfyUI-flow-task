@@ -47,6 +47,7 @@ class VideoTaskRead(BaseModel):
     duration: str
     shots: list | None = None
     has_face: bool = True
+    cta: bool = False  # 创建任务时按 account.product_code_mode 推算（with_code → True）
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
