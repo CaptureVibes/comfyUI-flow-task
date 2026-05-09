@@ -17,8 +17,13 @@ engine = create_async_engine(
     future=True,
     pool_pre_ping=True,
     json_serializer=_json_serializer,
-    pool_size=20,
-    max_overflow=20,
+    # 多个 scheduler + 10 个 video_ai pipeline + HTTP + 后台任务 + 偶发慢查询，
+    # 老配置 20+20=40 连接 30s 超时容易打满。pool_recycle 防止 PG 端 idle 超时
+    # 拿到死连接，pool_timeout 适度延长容忍突发。
+    pool_size=40,
+    max_overflow=40,
+    pool_timeout=60,
+    pool_recycle=1800,
 )
 SessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 

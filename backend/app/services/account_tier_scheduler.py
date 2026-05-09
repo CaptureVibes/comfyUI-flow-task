@@ -172,9 +172,8 @@ def _to_int(val) -> int:
         return 0
 
 
-def _publication_views(pub: VideoPublication) -> int:
+def _views_from_snapshot(snapshot) -> int:
     """从 metrics_snapshot.channels 累加该发布的总播放量。"""
-    snapshot = pub.metrics_snapshot
     if not isinstance(snapshot, dict):
         return 0
     channels = snapshot.get("channels") or []
@@ -191,51 +190,9 @@ def _publication_views(pub: VideoPublication) -> int:
     return total
 
 
-async def _account_meets_dev_criteria(
-    session: AsyncSession,
-    account: Account,
-    th: TierThresholds,
-) -> tuple[bool, dict]:
-    """判定一个账号是否满足『常规号』条件，并返回判定细节用于日志/预览。"""
-    detail = {
-        "video_count_in_sample": 0,
-        "avg_views": 0.0,
-        "recent_count": 0,
-    }
-
-    last_pubs = list((await session.execute(
-        select(VideoPublication)
-        .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
-        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
-        .where(VideoTask.account_id == account.id)
-        .where(VideoPublication.status.in_(["completed", "partial"]))
-        .where(VideoPublication.completed_at.isnot(None))
-        .order_by(VideoPublication.completed_at.desc())
-        .limit(th.video_sample_count)
-    )).scalars().all())
-    detail["video_count_in_sample"] = len(last_pubs)
-    if len(last_pubs) < th.video_sample_count:
-        return False, detail
-
-    avg_views = sum(_publication_views(p) for p in last_pubs) / th.video_sample_count
-    detail["avg_views"] = round(avg_views, 1)
-    if avg_views < th.avg_play_threshold:
-        return False, detail
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=th.activity_days)
-    recent_count = await session.scalar(
-        select(func.count(VideoPublication.id))
-        .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
-        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
-        .where(VideoTask.account_id == account.id)
-        .where(VideoPublication.status.in_(["completed", "partial"]))
-        .where(VideoPublication.completed_at >= cutoff)
-    ) or 0
-    detail["recent_count"] = int(recent_count)
-    if recent_count < th.min_video_count:
-        return False, detail
-
-    return True, detail
+def _publication_views(pub: VideoPublication) -> int:
+    """兼容旧调用：从 VideoPublication 对象取 metrics_snapshot 算视图数。"""
+    return _views_from_snapshot(pub.metrics_snapshot)
 
 
 # ── 公开接口（API/脚本/调度器都用） ────────────────────────────────────────────
@@ -245,6 +202,11 @@ async def compute_tier_changes(
     owner_id: uuid.UUID | None,
 ) -> list[dict]:
     """计算该 owner 下所有 test/dev 账号的目标 tier，返回需要变更的列表。
+
+    实现：3 次聚合查询完成全部账号判定，避免 N+1 把数据库连接锁住太久。
+      Q1: 拉所有 test/dev 账号
+      Q2: 用 ROW_NUMBER() 窗口函数按 account_id 取最近 N 条 publication 的 metrics_snapshot
+      Q3: 按 account_id 聚合最近 K 天 publication 数
 
     返回项格式：
       {
@@ -258,14 +220,76 @@ async def compute_tier_changes(
     """
     th = await _load_thresholds(session, owner_id)
 
-    stmt = select(Account).where(Account.account_tier.in_(("test", "dev")))
+    # Q1: 候选账号
+    acct_stmt = select(Account).where(Account.account_tier.in_(("test", "dev")))
     if owner_id is not None:
-        stmt = stmt.where(Account.owner_id == owner_id)
-    accounts = list((await session.execute(stmt)).scalars().all())
+        acct_stmt = acct_stmt.where(Account.owner_id == owner_id)
+    accounts = list((await session.execute(acct_stmt)).scalars().all())
+    if not accounts:
+        return []
+    account_ids = [a.id for a in accounts]
 
+    # Q2: 每个账号最近 N 条 publication 的 metrics_snapshot
+    rn = func.row_number().over(
+        partition_by=VideoTask.account_id,
+        order_by=VideoPublication.completed_at.desc(),
+    ).label("rn")
+    sample_subq = (
+        select(
+            VideoTask.account_id.label("aid"),
+            VideoPublication.metrics_snapshot.label("snap"),
+            rn,
+        )
+        .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+        .where(VideoTask.account_id.in_(account_ids))
+        .where(VideoPublication.status.in_(["completed", "partial"]))
+        .where(VideoPublication.completed_at.isnot(None))
+        .subquery()
+    )
+    samples_by_account: dict[uuid.UUID, list] = {}
+    rows = (await session.execute(
+        select(sample_subq.c.aid, sample_subq.c.snap)
+        .where(sample_subq.c.rn <= th.video_sample_count)
+    )).all()
+    for aid, snap in rows:
+        samples_by_account.setdefault(aid, []).append(snap)
+
+    # Q3: 每个账号最近 K 天 publication 数
+    cutoff = datetime.now(timezone.utc) - timedelta(days=th.activity_days)
+    recent_counts: dict[uuid.UUID, int] = {}
+    rows = (await session.execute(
+        select(VideoTask.account_id, func.count(VideoPublication.id))
+        .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+        .where(VideoTask.account_id.in_(account_ids))
+        .where(VideoPublication.status.in_(["completed", "partial"]))
+        .where(VideoPublication.completed_at >= cutoff)
+        .group_by(VideoTask.account_id)
+    )).all()
+    for aid, cnt in rows:
+        recent_counts[aid] = int(cnt or 0)
+
+    # Python 端聚合判定
+    threshold = {
+        "video_sample_count": th.video_sample_count,
+        "avg_play_threshold": th.avg_play_threshold,
+        "activity_days": th.activity_days,
+        "min_video_count": th.min_video_count,
+    }
     changes: list[dict] = []
     for account in accounts:
-        meets, detail = await _account_meets_dev_criteria(session, account, th)
+        snapshots = samples_by_account.get(account.id, [])
+        sample_count = len(snapshots)
+        recent_count = recent_counts.get(account.id, 0)
+        avg_views = 0.0
+        if sample_count >= th.video_sample_count:
+            avg_views = sum(_views_from_snapshot(s) for s in snapshots) / th.video_sample_count
+        meets = (
+            sample_count >= th.video_sample_count
+            and avg_views >= th.avg_play_threshold
+            and recent_count >= th.min_video_count
+        )
         target = "dev" if meets else "test"
         if target == account.account_tier:
             continue
@@ -275,13 +299,10 @@ async def compute_tier_changes(
             "current_tier": account.account_tier,
             "target_tier": target,
             "reason": {
-                **detail,
-                "threshold": {
-                    "video_sample_count": th.video_sample_count,
-                    "avg_play_threshold": th.avg_play_threshold,
-                    "activity_days": th.activity_days,
-                    "min_video_count": th.min_video_count,
-                },
+                "video_count_in_sample": sample_count,
+                "avg_views": round(avg_views, 1),
+                "recent_count": recent_count,
+                "threshold": threshold,
             },
         })
     return changes
