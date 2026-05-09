@@ -53,7 +53,18 @@
         <el-option label="YouTube" value="youtube" />
         <el-option label="Instagram" value="instagram" />
       </el-select>
-      <el-select v-model="filters.account_id" clearable placeholder="全部账号" filterable size="small" style="width:180px">
+      <el-select
+        v-model="filters.account_id"
+        clearable
+        placeholder="搜索账号名..."
+        filterable
+        remote
+        reserve-keyword
+        :remote-method="searchAccounts"
+        :loading="accountSearchLoading"
+        size="small"
+        style="width:220px"
+      >
         <el-option
           v-for="account in accountOptions"
           :key="account.id"
@@ -421,7 +432,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchAccounts } from '../api/accounts'
+import { fetchAccount, fetchAccounts } from '../api/accounts'
 import { exportPublicationStats, fetchPublicationStats, syncPublicationMetrics } from '../api/video_publications'
 
 const exporting = ref(false)
@@ -550,6 +561,7 @@ const loading = ref(false)
 const items = ref([])
 const total = ref(0)
 const accountOptions = ref([])
+const accountSearchLoading = ref(false)
 
 // ── 行勾选 ──────────────────────────────────────────────────────────────────
 const selectedMap = ref(new Map())
@@ -765,10 +777,41 @@ function formatPercent(value) {
   return `${Number(value).toFixed(1)}%`
 }
 
-async function loadAccounts() {
+async function searchAccounts(query) {
+  // 远程模糊搜索：调后端 /accounts 的 search 参数，前端不做大列表缓存
+  accountSearchLoading.value = true
   try {
-    const response = await fetchAccounts({ page: 1, page_size: 200 })
-    accountOptions.value = response?.items || []
+    const response = await fetchAccounts({
+      page: 1,
+      page_size: 50,
+      search: (query || '').trim() || undefined,
+    })
+    const items = response?.items || []
+    // 保留当前选中的账号，避免它不在搜索结果里时下拉里看不到
+    if (filters.account_id) {
+      const hit = items.find(a => a.id === filters.account_id)
+      if (!hit) {
+        const prev = accountOptions.value.find(a => a.id === filters.account_id)
+        if (prev) items.unshift(prev)
+      }
+    }
+    accountOptions.value = items
+  } catch (e) {
+    console.error(e)
+  } finally {
+    accountSearchLoading.value = false
+  }
+}
+
+async function ensureSelectedAccountInOptions(accountId) {
+  // 从 URL query 跳过来时，保证下拉里能看到选中账号的名称
+  if (!accountId) return
+  if (accountOptions.value.find(a => a.id === accountId)) return
+  try {
+    const acc = await fetchAccount(accountId)
+    if (acc && acc.id) {
+      accountOptions.value = [acc, ...accountOptions.value]
+    }
   } catch (e) {
     console.error(e)
   }
@@ -863,7 +906,12 @@ onMounted(async () => {
     filters.account_id = route.query.account_id
   }
   syncDateFiltersFromMode()
-  await Promise.all([loadAccounts(), load()])
+  // 初始拉一批账号供下拉默认展示，并补上 URL query 中预选的账号
+  await Promise.all([
+    searchAccounts(''),
+    ensureSelectedAccountInOptions(filters.account_id),
+    load(),
+  ])
 })
 </script>
 
