@@ -1277,7 +1277,7 @@
             <!-- 操作 -->
             <td class="al-td al-td-actions" @click.stop>
               <div class="al-row-actions">
-                <button class="ac-btn ac-btn-stats" @click="$router.push({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
+                <button class="ac-btn ac-btn-stats" @click="openInNewTab({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
                 <button class="ac-btn ac-btn-sync" :class="{ loading: syncingId === item.id }" @click="handleSyncAccount(item)">{{ syncingId === item.id ? '同步中' : '同步' }}</button>
                 <button class="ac-btn ac-btn-classify" @click="openClassificationDialog(item)">分类</button>
                 <button class="ac-btn ac-btn-edit" @click="openInNewTab(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
