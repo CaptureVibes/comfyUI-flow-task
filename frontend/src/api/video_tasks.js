@@ -155,9 +155,15 @@ export async function batchRouteStashed(targetDate) {
   return data
 }
 
-export async function retryDailyTaskTemplates(targetDate) {
+export async function retryDailyTaskTemplates(targetDate, status = null) {
   // daily-tasks 「一键重试」专用：会按 video_task.cta 注入到模板流水线 enqueue
-  const { data } = await http.post(`/video-tasks/daily/${targetDate}/retry-templates`)
+  // status 可选 'pending' / 'generating'，传则只重试该状态下的任务
+  const params = status ? { status } : {}
+  const { data } = await http.post(
+    `/video-tasks/daily/${targetDate}/retry-templates`,
+    null,
+    { params },
+  )
   return data
 }
 

@@ -70,12 +70,12 @@
         <button
           class="vt-btn vt-btn-secondary"
           :class="{ 'is-loading': batchReanalyzing }"
-          :disabled="batchReanalyzing"
+          :disabled="batchReanalyzing || (retryFilterStatus && taskStats[retryFilterStatus] === 0)"
           @click="handleBatchReanalyze"
         >
           <svg v-if="!batchReanalyzing" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
           <svg v-else class="vt-spinner" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-          一键重试
+          一键重试{{ retryFilterStatus ? `（${STATUS_LABELS[retryFilterStatus]} ${taskStats[retryFilterStatus] || 0}）` : '' }}
         </button>
         <button
           class="vt-btn vt-btn-warning"
@@ -762,18 +762,30 @@ async function handleRouteStashed() {
   }
 }
 
+// 一键重试只允许按 待处理 / 生成中 状态过滤；其他状态时按全部重试
+const retryFilterStatus = computed(() => {
+  return (activeFilter.value === 'pending' || activeFilter.value === 'generating')
+    ? activeFilter.value
+    : null
+})
+
 async function handleBatchReanalyze() {
   if (!targetDate.value) return
+  const status = retryFilterStatus.value
+  const count = status ? (taskStats.value[status] || 0) : null
+  const tip = status
+    ? `确定对 ${targetDate.value} 当天「${STATUS_LABELS[status]}」状态的 ${count} 个任务关联的模板从头重跑？现有中间产物会被清空。`
+    : `确定对 ${targetDate.value} 当天所有任务关联的模板从头重跑整条 AI 流水线（抽帧 → 穿搭识别 → 单品理解 → 视频理解 → 生图 → 造型重生）？现有 prompt_description / 单品图 / 造型图等中间产物会被清空。`
   try {
     await ElMessageBox.confirm(
-      `确定对 ${targetDate.value} 当天所有任务关联的模板从头重跑整条 AI 流水线（抽帧 → 穿搭识别 → 单品理解 → 视频理解 → 生图 → 造型重生）？现有 prompt_description / 单品图 / 造型图等中间产物会被清空。`,
+      tip,
       '一键重试',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
   batchReanalyzing.value = true
   try {
-    await retryDailyTaskTemplates(targetDate.value)
+    await retryDailyTaskTemplates(targetDate.value, status)
     ElMessage.success('已触发当天模板从头重跑，后台入队中')
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '触发失败')

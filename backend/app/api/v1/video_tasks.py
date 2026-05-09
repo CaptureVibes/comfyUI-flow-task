@@ -415,13 +415,14 @@ async def batch_route_stashed(
 @router.post("/daily/{target_date}/retry-templates", status_code=status.HTTP_202_ACCEPTED)
 async def retry_daily_task_templates(
     target_date: date,
+    task_status: str | None = Query(default=None, alias="status"),
     owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """daily-tasks 页「一键重试」专用端点。
 
     本端点是 task 层 → 模板层的单向注入：
-      1) 查 video_tasks 当天关联的所有模板
+      1) 查 video_tasks 当天关联的所有模板（可选按 status 过滤，仅 pending / generating）
       2) 构造 abandon_map（模板失败 → 关联 task 标 abandoned）
       3) 构造 cta_map（任一关联 task 是 cta=True 即视为 True）
       4) 调 batch_restart_templates 把这两个 map 注入流水线 enqueue
@@ -431,10 +432,18 @@ async def retry_daily_task_templates(
     from app.models.video_task import VideoTask
     from app.services.video_ai_service import batch_restart_templates
 
+    if task_status is not None and task_status not in ("pending", "generating"):
+        raise HTTPException(
+            status_code=400,
+            detail="status 仅支持 pending / generating，或不传以重试全部",
+        )
+
     stmt = select(VideoTask.id, VideoTask.template_id, VideoTask.cta).where(
         VideoTask.target_date == target_date,
         VideoTask.template_id.is_not(None),
     )
+    if task_status:
+        stmt = stmt.where(VideoTask.status == task_status)
     if owner_id is not None:
         stmt = stmt.where(VideoTask.owner_id == owner_id)
     rows = (await session.execute(stmt)).all()
