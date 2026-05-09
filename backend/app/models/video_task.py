@@ -28,6 +28,8 @@ class VideoTask(Base):
     duration: Mapped[str] = mapped_column(String(50), nullable=False)
     shots: Mapped[list | None] = mapped_column(JSON, nullable=True)
     has_face: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 是否走「有CTA」一套提示词（创建任务时按 account.product_code_mode 计算：with_code=True）
+    cta: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

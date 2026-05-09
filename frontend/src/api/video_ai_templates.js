@@ -82,9 +82,9 @@ export async function batchRetryTemplates() {
   return data
 }
 
-export async function batchRestartTemplates(targetDate) {
-  const body = targetDate ? { target_date: targetDate } : {}
-  const { data } = await http.post('/video-ai-templates/batch-restart', body)
+export async function batchRestartTemplates() {
+  // owner-wide 重启所有模板（默认非CTA）。daily-tasks「一键重试」请用 retryDailyTaskTemplates
+  const { data } = await http.post('/video-ai-templates/batch-restart')
   return data
 }
 

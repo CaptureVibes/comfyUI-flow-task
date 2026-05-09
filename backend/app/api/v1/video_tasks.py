@@ -412,6 +412,52 @@ async def batch_route_stashed(
     return {"status": "accepted"}
 
 
+@router.post("/daily/{target_date}/retry-templates", status_code=status.HTTP_202_ACCEPTED)
+async def retry_daily_task_templates(
+    target_date: date,
+    owner_id: uuid.UUID | None = Depends(_get_query_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """daily-tasks 页「一键重试」专用端点。
+
+    本端点是 task 层 → 模板层的单向注入：
+      1) 查 video_tasks 当天关联的所有模板
+      2) 构造 abandon_map（模板失败 → 关联 task 标 abandoned）
+      3) 构造 cta_map（任一关联 task 是 cta=True 即视为 True）
+      4) 调 batch_restart_templates 把这两个 map 注入流水线 enqueue
+
+    AI 模板侧不会反查 task；cta / abandon 信息由本端点显式传入。
+    """
+    from app.models.video_task import VideoTask
+    from app.services.video_ai_service import batch_restart_templates
+
+    stmt = select(VideoTask.id, VideoTask.template_id, VideoTask.cta).where(
+        VideoTask.target_date == target_date,
+        VideoTask.template_id.is_not(None),
+    )
+    if owner_id is not None:
+        stmt = stmt.where(VideoTask.owner_id == owner_id)
+    rows = (await session.execute(stmt)).all()
+
+    abandon_map: dict[str, list[str]] = {}
+    cta_map: dict[str, bool] = {}
+    for task_id, tpl_id, task_cta in rows:
+        tpl_str = str(tpl_id)
+        abandon_map.setdefault(tpl_str, []).append(str(task_id))
+        if task_cta:
+            cta_map[tpl_str] = True
+        else:
+            cta_map.setdefault(tpl_str, False)
+
+    asyncio.create_task(batch_restart_templates(
+        owner_id=str(owner_id) if owner_id else None,
+        template_ids=list(abandon_map.keys()) or None,
+        abandon_task_ids_on_fail=abandon_map or None,
+        cta_map=cta_map or None,
+    ))
+    return {"status": "accepted"}
+
+
 @router.get("/operator-stats", response_model=list[OperatorStatItem])
 async def get_operator_stats(
     target_date: date | None = Query(default=None),

@@ -166,6 +166,8 @@ class VideoTaskService:
         normalized_shots = enrich_shots_with_ext_products(normalized_shots)
 
         has_face = (account.face_mode != "no_face") if account else True
+        # 商品码账号 → 走「有CTA」一套提示词；无商品码 → 走「无CTA」（默认）
+        cta = bool(account and account.product_code_mode == "with_code")
 
         composed_prompt = build_prompt_with_image_refs(final_prompt, len(normalized_shots), has_face)
 
@@ -179,6 +181,7 @@ class VideoTaskService:
             duration=duration,
             shots=normalized_shots,
             has_face=has_face,
+            cta=cta,
         )
         self.db.add(task)
         await self.db.flush()  # get task.id before creating sub-tasks

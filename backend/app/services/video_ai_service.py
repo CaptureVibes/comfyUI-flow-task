@@ -1444,37 +1444,46 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                 logger.info("[%s] loading pipeline_settings for owner_id=%s", template_id, tpl.owner_id)
                 if tpl.owner_id is not None:
                     pipeline_cfg = await get_or_create_pipeline_settings(session, owner_id=tpl.owner_id)
+                    # 是否走「有CTA」一套提示词；为空则回落到对应的非 CTA 提示词
+                    cta_flag = bool((video_ai_states.get(template_id) or {}).get("cta"))
+
+                    def _pick(non_cta_value: str, cta_value: str) -> str:
+                        if cta_flag and (cta_value or "").strip():
+                            return cta_value
+                        return non_cta_value or ""
+
                     # 视频理解（在 outfit_detailing 之后，按 content_intent 分支）
                     understand_model = pipeline_cfg.understand_model or "gemini-3.1-pro-preview"
                     understand_temperature = pipeline_cfg.understand_temperature
                     understand_prompts_by_intent = {
-                        "beauty_show": pipeline_cfg.understand_prompt_beauty_show or "",
-                        "knowledge": pipeline_cfg.understand_prompt_knowledge or "",
-                        "persona_story": pipeline_cfg.understand_prompt_persona_story or "",
-                        "trend_meme": pipeline_cfg.understand_prompt_trend_meme or "",
+                        "beauty_show": _pick(pipeline_cfg.understand_prompt_beauty_show, pipeline_cfg.understand_prompt_beauty_show_cta),
+                        "knowledge": _pick(pipeline_cfg.understand_prompt_knowledge, pipeline_cfg.understand_prompt_knowledge_cta),
+                        "persona_story": _pick(pipeline_cfg.understand_prompt_persona_story, pipeline_cfg.understand_prompt_persona_story_cta),
+                        "trend_meme": _pick(pipeline_cfg.understand_prompt_trend_meme, pipeline_cfg.understand_prompt_trend_meme_cta),
                     }
                     # 意图识别
                     intent_classify_model = pipeline_cfg.intent_classify_model or "gemini-3.1-pro-preview"
-                    intent_classify_prompt = pipeline_cfg.intent_classify_prompt or ""
+                    intent_classify_prompt = _pick(pipeline_cfg.intent_classify_prompt, pipeline_cfg.intent_classify_prompt_cta)
                     intent_classify_temperature = pipeline_cfg.intent_classify_temperature
                     # 穿搭识别
                     outfit_select_model = pipeline_cfg.outfit_select_model or "gemini-3.1-pro-preview"
-                    outfit_select_prompt = pipeline_cfg.outfit_select_prompt or ""
+                    outfit_select_prompt = _pick(pipeline_cfg.outfit_select_prompt, pipeline_cfg.outfit_select_prompt_cta)
                     outfit_select_temperature = pipeline_cfg.outfit_select_temperature
                     # 穿搭单品理解
                     outfit_detail_model = pipeline_cfg.outfit_detail_model or "gemini-3.1-pro-preview"
-                    outfit_detail_prompt = pipeline_cfg.outfit_detail_prompt or ""
+                    outfit_detail_prompt = _pick(pipeline_cfg.outfit_detail_prompt, pipeline_cfg.outfit_detail_prompt_cta)
                     outfit_detail_temperature = pipeline_cfg.outfit_detail_temperature
                     # 单品图生成
                     product_imagegen_model = pipeline_cfg.product_imagegen_model or "gemini-3.1-flash-image-preview"
-                    product_imagegen_prompt = pipeline_cfg.product_imagegen_prompt or ""
+                    product_imagegen_prompt = _pick(pipeline_cfg.product_imagegen_prompt, pipeline_cfg.product_imagegen_prompt_cta)
                     product_imagegen_size = pipeline_cfg.product_imagegen_size or "1:1"
                     product_imagegen_quality = pipeline_cfg.product_imagegen_quality or "2K"
                     # 新造型图生成
                     outfit_regen_model = pipeline_cfg.outfit_regen_model or "gemini-3.1-flash-image-preview"
-                    outfit_regen_prompt = pipeline_cfg.outfit_regen_prompt or ""
+                    outfit_regen_prompt = _pick(pipeline_cfg.outfit_regen_prompt, pipeline_cfg.outfit_regen_prompt_cta)
                     outfit_regen_size = pipeline_cfg.outfit_regen_size or "9:16"
                     outfit_regen_quality = pipeline_cfg.outfit_regen_quality or "2K"
+                    logger.info("[%s] cta=%s, prompts loaded.", template_id, cta_flag)
 
                     # 调试：打印从 pipeline_settings 读到的 prompt 文案（空 = 走代码默认）
                     logger.info(
@@ -1943,13 +1952,21 @@ async def _queue_processor_loop() -> None:
 # =============================================================================
 
 
-async def enqueue_template(template_id: str, *, clear_stages: bool = False) -> None:
+async def enqueue_template(
+    template_id: str,
+    *,
+    clear_stages: bool = False,
+    cta: bool | None = None,
+) -> None:
     """
     将模板加入队列并标记为等待中。
 
     Args:
         template_id: 模板 ID
         clear_stages: 为 True 时清空 completed_stages，从头重跑；默认 False（断点续跑）
+        cta: True=走「有CTA」一套提示词，False=「无CTA」。
+             None=保留 state 中已存的值（断点续跑场景必须如此，否则会被默认值覆盖）；
+             首次入队 + state 中没有 cta 时按 False 处理。
     """
     # 如果内存中没有状态（如服务重启），先从 DB 的 process_state 字段恢复
     if template_id not in video_ai_states:
@@ -1960,13 +1977,21 @@ async def enqueue_template(template_id: str, *, clear_stages: bool = False) -> N
                 if tpl and tpl.process_state:
                     saved = json.loads(tpl.process_state)
                     video_ai_states[template_id] = saved
-                    logger.info("[%s] restored state from DB: completed_stages=%s",
-                                template_id, saved.get("completed_stages", []))
+                    logger.info("[%s] restored state from DB: completed_stages=%s cta=%s",
+                                template_id, saved.get("completed_stages", []), saved.get("cta"))
         except Exception as exc:
             logger.warning("[%s] failed to restore state from DB: %s", template_id, exc)
 
     # 保留已有 state（保留 completed_stages 和已产出数据）
     state = video_ai_states.setdefault(template_id, _new_state(template_id, VideoAIProcessStatus.pending))
+
+    # cta 注入策略：
+    #   - clear_stages=True（restart_template / 一键重试）→ 始终用传入值（None 视作 False）
+    #   - clear_stages=False（resume / recover_stuck）→ None 表示保留已有值；显式 True/False 才覆盖
+    if clear_stages or cta is not None:
+        state["cta"] = bool(cta)
+    elif "cta" not in state:
+        state["cta"] = False
     if clear_stages:
         state["completed_stages"] = []
         state["prompt_description"] = ""
@@ -2038,28 +2063,30 @@ async def resume_template(template_id: str) -> None:
     await enqueue_template(template_id, clear_stages=False)
 
 
-async def restart_template(template_id: str) -> None:
+async def restart_template(template_id: str, *, cta: bool = False) -> None:
     """
     从头重跑：清空已完成阶段，重新执行所有步骤。
+    cta：True=走「有CTA」一套提示词。
     """
-    await enqueue_template(template_id, clear_stages=True)
+    await enqueue_template(template_id, clear_stages=True, cta=cta)
 
 
-async def restart_from_stage2(template_id: str) -> None:
+async def restart_from_stage2(template_id: str, *, cta: bool = False) -> None:
     """
     重新生图：清除全部已完成阶段与中间产物，从头开始整条流水线。
 
     新管道下视频理解依赖 outfit_detailing 输出，无法再独立保留，因此与
     `restart_template` 行为一致——保留入口名以兼容现有调用方/前端按钮。
     """
-    await enqueue_template(template_id, clear_stages=True)
-    logger.info("[%s] restart_from_stage2 (full reset) enqueued", template_id)
+    await enqueue_template(template_id, clear_stages=True, cta=cta)
+    logger.info("[%s] restart_from_stage2 (full reset) enqueued cta=%s", template_id, cta)
 
 
 async def batch_restart_templates(
     owner_id: str | None = None,
     template_ids: list[str] | None = None,
     abandon_task_ids_on_fail: dict[str, list[str]] | None = None,
+    cta_map: dict[str, bool] | None = None,
 ) -> dict:
     """
     批量全流程重跑：入队 → 等待每个 pipeline 完成 → 同步 shots 到关联 video_tasks。
@@ -2067,6 +2094,8 @@ async def batch_restart_templates(
     abandon_task_ids_on_fail：{template_id: [video_task_id, ...]}，仅 daily-tasks
     "一键重试" 使用——通过 _abandon_task_ids_on_fail 标记集传给
     `_sync_task_shots` 在管道结束时统一处理（成功不影响、失败则 abandoned）。
+    cta_map：{template_id: cta_bool}，daily-tasks 一键重试时按 video_task.cta
+    决定该模板这次走哪一套提示词；为空 / 找不到 → 默认 False（无CTA）。
     """
     from sqlalchemy import select as sa_select
     from uuid import UUID
@@ -2092,10 +2121,11 @@ async def batch_restart_templates(
     logger.info("batch_restart started: %d templates", len(tids))
     success_count = 0
     fail_count = 0
+    cta_map = cta_map or {}
     for tid in tids:
         try:
             _sync_shots_on_success.add(tid)
-            await restart_template(tid)
+            await restart_template(tid, cta=bool(cta_map.get(tid, False)))
             success_count += 1
         except Exception as exc:
             _sync_shots_on_success.discard(tid)

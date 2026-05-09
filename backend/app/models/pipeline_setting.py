@@ -142,6 +142,17 @@ class PipelineSetting(Base):
     tier_daily_formal_growth_min_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)   # 正式号每日新增比例下限
     tier_daily_formal_growth_max_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.06)  # 正式号每日新增比例上限
 
+    # 「有CTA」版本的 9 个 prompt（与同名无 _cta 字段对应；启用见 video_task.cta）
+    outfit_select_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    outfit_detail_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    intent_classify_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_beauty_show_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_knowledge_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_persona_story_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    understand_prompt_trend_meme_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    product_imagegen_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    outfit_regen_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

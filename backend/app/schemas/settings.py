@@ -145,6 +145,16 @@ class PipelineSettingsPayload(BaseModel):
     tier_min_video_count: int = 6
     tier_daily_formal_growth_min_rate: float = 0.0
     tier_daily_formal_growth_max_rate: float = 0.06
+    # 「有CTA」版本的 9 个 prompt
+    outfit_select_prompt_cta: str = ""
+    outfit_detail_prompt_cta: str = ""
+    intent_classify_prompt_cta: str = ""
+    understand_prompt_beauty_show_cta: str = ""
+    understand_prompt_knowledge_cta: str = ""
+    understand_prompt_persona_story_cta: str = ""
+    understand_prompt_trend_meme_cta: str = ""
+    product_imagegen_prompt_cta: str = ""
+    outfit_regen_prompt_cta: str = ""
 
 
 class CandidateBatchAIReviewRequest(BaseModel):

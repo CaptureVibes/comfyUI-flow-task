@@ -155,6 +155,12 @@ export async function batchRouteStashed(targetDate) {
   return data
 }
 
+export async function retryDailyTaskTemplates(targetDate) {
+  // daily-tasks 「一键重试」专用：会按 video_task.cta 注入到模板流水线 enqueue
+  const { data } = await http.post(`/video-tasks/daily/${targetDate}/retry-templates`)
+  return data
+}
+
 export async function fetchOperatorStats(targetDate = null) {
   const params = targetDate ? { target_date: targetDate } : {}
   const { data } = await http.get('/video-tasks/operator-stats', { params })

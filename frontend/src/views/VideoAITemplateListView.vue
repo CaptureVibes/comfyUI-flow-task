@@ -270,9 +270,25 @@
 
     <!-- Pipeline Config Dialog -->
     <div v-if="showConfig" class="vt-dialog-overlay" @click.self="showConfig = false">
-      <div class="vt-dialog-content" style="width: 760px;">
+      <div class="vt-dialog-content" :class="{ 'vt-cta-mode': configCtaMode }" style="width: 760px;">
         <div class="vt-dialog-header">
-          <h2 class="vt-dialog-title">AI 处理流程配置</h2>
+          <div class="vt-cfg-header-left">
+            <div class="vt-cta-toggle" :class="{ 'is-cta': configCtaMode }">
+              <button
+                type="button"
+                class="vt-cta-toggle-btn"
+                :class="{ active: !configCtaMode }"
+                @click="configCtaMode = false"
+              >无 CTA</button>
+              <button
+                type="button"
+                class="vt-cta-toggle-btn"
+                :class="{ active: configCtaMode }"
+                @click="configCtaMode = true"
+              >有 CTA</button>
+            </div>
+            <h2 class="vt-dialog-title">AI 处理流程配置</h2>
+          </div>
           <button class="vt-dialog-close" @click="showConfig = false">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
@@ -324,7 +340,7 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">识别提示词 (Prompt)</label>
-                  <textarea v-model="cfg.outfit_select_prompt" class="vt-textarea" rows="5" placeholder="以下是从视频中1秒一帧抽取的图片，请识别其中的独特穿搭（outfit）。不同镜头角度的同一套穿搭算同一个，只选出一张最能代表该穿搭的图。请以JSON格式输出 representative_frame_index（从0开始）和 frame_indices 列表。"></textarea>
+                  <textarea v-model="cfg[promptKey('outfit_select_prompt')]" class="vt-textarea" rows="5" placeholder="以下是从视频中1秒一帧抽取的图片，请识别其中的独特穿搭（outfit）。不同镜头角度的同一套穿搭算同一个，只选出一张最能代表该穿搭的图。请以JSON格式输出 representative_frame_index（从0开始）和 frame_indices 列表。"></textarea>
                   <div class="cfg-field-hint">留空使用内置默认提示词。输出必须为 JSON，系统已自动约束 json_schema。</div>
                 </div>
                 <div class="vt-form-item">
@@ -346,7 +362,7 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">理解提示词 (Prompt)</label>
-                  <textarea v-model="cfg.outfit_detail_prompt" class="vt-textarea" rows="5" placeholder="请分析这张穿搭图，输出整体造型风格描述和图中所有穿搭单品的名称及描述。以JSON格式返回，outfit_style为整体风格，solo_products为单品数组，每项含name和description。"></textarea>
+                  <textarea v-model="cfg[promptKey('outfit_detail_prompt')]" class="vt-textarea" rows="5" placeholder="请分析这张穿搭图，输出整体造型风格描述和图中所有穿搭单品的名称及描述。以JSON格式返回，outfit_style为整体风格，solo_products为单品数组，每项含name和description。"></textarea>
                   <div class="cfg-field-hint">留空使用内置默认提示词。输出 JSON 格式：{ outfit_style: string, solo_products: [{name, description}] }</div>
                 </div>
                 <div class="vt-form-item">
@@ -369,7 +385,7 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">意图识别提示词 (Prompt)</label>
-                  <textarea v-model="cfg.intent_classify_prompt" class="vt-textarea" rows="6" placeholder="请分析这段视频，判断视频的核心创作意图..."></textarea>
+                  <textarea v-model="cfg[promptKey('intent_classify_prompt')]" class="vt-textarea" rows="6" placeholder="请分析这段视频，判断视频的核心创作意图..."></textarea>
                   <div class="cfg-field-hint">留空使用内置默认提示词。content_intent 由 json_schema 强约束。</div>
                 </div>
                 <div class="vt-form-item">
@@ -395,19 +411,19 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">分支：beauty_show（穿搭/美感）</label>
-                  <textarea v-model="cfg.understand_prompt_beauty_show" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                  <textarea v-model="cfg[promptKey('understand_prompt_beauty_show')]" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">分支：knowledge（知识/讲解）</label>
-                  <textarea v-model="cfg.understand_prompt_knowledge" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                  <textarea v-model="cfg[promptKey('understand_prompt_knowledge')]" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">分支：persona_story（人物/故事）</label>
-                  <textarea v-model="cfg.understand_prompt_persona_story" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                  <textarea v-model="cfg[promptKey('understand_prompt_persona_story')]" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">分支：trend_meme（潮流/梗）</label>
-                  <textarea v-model="cfg.understand_prompt_trend_meme" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
+                  <textarea v-model="cfg[promptKey('understand_prompt_trend_meme')]" class="vt-textarea" rows="4" placeholder="留空使用内置默认。支持 {intent_json} 占位符。"></textarea>
                 </div>
                 <div class="cfg-field-hint">支持的占位符：<code>{intent_json}</code>（注入完整意图识别 JSON）。留空使用内置默认提示词。</div>
               </div>
@@ -425,7 +441,7 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">单品生图提示词 (Prompt)</label>
-                  <textarea v-model="cfg.product_imagegen_prompt" class="vt-textarea" rows="4" placeholder="根据这张穿搭参考图，生成图中【{name}】单品的独立展示图。描述：{description}。保持原图风格，白色或简洁背景，突出单品细节。"></textarea>
+                  <textarea v-model="cfg[promptKey('product_imagegen_prompt')]" class="vt-textarea" rows="4" placeholder="根据这张穿搭参考图，生成图中【{name}】单品的独立展示图。描述：{description}。保持原图风格，白色或简洁背景，突出单品细节。"></textarea>
                   <div class="cfg-field-hint">支持变量 {name} 和 {description}，留空使用内置默认提示词。</div>
                 </div>
                 <div class="vt-form-item">
@@ -467,7 +483,7 @@
                 </div>
                 <div class="vt-form-item">
                   <label class="vt-label">造型重生提示词 (Prompt)</label>
-                  <textarea v-model="cfg.outfit_regen_prompt" class="vt-textarea" rows="4" placeholder="根据以下单品图片，生成一张完整穿搭造型图。整体风格：{outfit_style}。保持服装风格一致，人物比例自然，背景简洁时尚。"></textarea>
+                  <textarea v-model="cfg[promptKey('outfit_regen_prompt')]" class="vt-textarea" rows="4" placeholder="根据以下单品图片，生成一张完整穿搭造型图。整体风格：{outfit_style}。保持服装风格一致，人物比例自然，背景简洁时尚。"></textarea>
                   <div class="cfg-field-hint">支持变量 {outfit_style}，留空使用内置默认提示词。所有单品图将作为参考图一起传入。</div>
                 </div>
                 <div class="vt-form-item">
@@ -627,6 +643,11 @@ const showConfig = ref(false)
 const configTab = ref('step_imagegen')
 const configLoading = ref(false)
 const configSaving = ref(false)
+// 「无CTA」/「有CTA」切换；textarea 根据该值动态绑定到 *_cta 或非 cta 字段
+const configCtaMode = ref(false)
+function promptKey(name) {
+  return configCtaMode.value ? `${name}_cta` : name
+}
 
 const cfg = reactive({
   // 阶段2：穿搭识别
@@ -658,6 +679,16 @@ const cfg = reactive({
   outfit_regen_prompt: '',
   outfit_regen_size: '9:16',
   outfit_regen_quality: '2K',
+  // 「有CTA」9 套提示词（与同名无 _cta 字段对应；textarea 通过 promptKey 动态绑定）
+  outfit_select_prompt_cta: '',
+  outfit_detail_prompt_cta: '',
+  intent_classify_prompt_cta: '',
+  understand_prompt_beauty_show_cta: '',
+  understand_prompt_knowledge_cta: '',
+  understand_prompt_persona_story_cta: '',
+  understand_prompt_trend_meme_cta: '',
+  product_imagegen_prompt_cta: '',
+  outfit_regen_prompt_cta: '',
 })
 
 const hasJsonError = computed(() => false)
@@ -692,7 +723,18 @@ async function openConfig() {
       outfit_regen_prompt: data.outfit_regen_prompt || '',
       outfit_regen_size: data.outfit_regen_size || '9:16',
       outfit_regen_quality: data.outfit_regen_quality || '2K',
+      // 「有CTA」9 套
+      outfit_select_prompt_cta: data.outfit_select_prompt_cta || '',
+      outfit_detail_prompt_cta: data.outfit_detail_prompt_cta || '',
+      intent_classify_prompt_cta: data.intent_classify_prompt_cta || '',
+      understand_prompt_beauty_show_cta: data.understand_prompt_beauty_show_cta || '',
+      understand_prompt_knowledge_cta: data.understand_prompt_knowledge_cta || '',
+      understand_prompt_persona_story_cta: data.understand_prompt_persona_story_cta || '',
+      understand_prompt_trend_meme_cta: data.understand_prompt_trend_meme_cta || '',
+      product_imagegen_prompt_cta: data.product_imagegen_prompt_cta || '',
+      outfit_regen_prompt_cta: data.outfit_regen_prompt_cta || '',
     })
+    configCtaMode.value = false   // 默认显示「无CTA」
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -731,6 +773,16 @@ async function saveConfig() {
       outfit_regen_prompt: cfg.outfit_regen_prompt,
       outfit_regen_size: cfg.outfit_regen_size,
       outfit_regen_quality: cfg.outfit_regen_quality,
+      // 「有CTA」9 套
+      outfit_select_prompt_cta: cfg.outfit_select_prompt_cta,
+      outfit_detail_prompt_cta: cfg.outfit_detail_prompt_cta,
+      intent_classify_prompt_cta: cfg.intent_classify_prompt_cta,
+      understand_prompt_beauty_show_cta: cfg.understand_prompt_beauty_show_cta,
+      understand_prompt_knowledge_cta: cfg.understand_prompt_knowledge_cta,
+      understand_prompt_persona_story_cta: cfg.understand_prompt_persona_story_cta,
+      understand_prompt_trend_meme_cta: cfg.understand_prompt_trend_meme_cta,
+      product_imagegen_prompt_cta: cfg.product_imagegen_prompt_cta,
+      outfit_regen_prompt_cta: cfg.outfit_regen_prompt_cta,
     })
     ElMessage.success('配置已保存')
     showConfig.value = false
@@ -1937,6 +1989,19 @@ onActivated(() => {
   max-height: 90vh;
   animation: dialogSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+
+/* 有CTA 模式：弹窗整体淡淡的 amber 色调，与无CTA（默认白）区分 */
+.vt-dialog-content.vt-cta-mode {
+  box-shadow: 0 20px 40px rgba(0,0,0,0.1), 0 0 0 2px #fcd34d;
+}
+.vt-dialog-content.vt-cta-mode .vt-dialog-header {
+  background: linear-gradient(180deg, #fffbeb 0%, #fff 100%);
+  border-bottom-color: #fde68a;
+}
+.vt-dialog-content.vt-cta-mode .vt-dialog-body {
+  background: #fffdf6;
 }
 
 .vt-dialog-header {
@@ -1945,6 +2010,47 @@ onActivated(() => {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #f1f5f9;
+}
+
+.vt-cfg-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.vt-cta-toggle {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.vt-cta-toggle.is-cta {
+  background: #fef3c7;
+}
+
+.vt-cta-toggle-btn {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 14px;
+  border-radius: 999px;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.vt-cta-toggle-btn.active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.vt-cta-toggle.is-cta .vt-cta-toggle-btn.active {
+  background: #b45309;
+  color: #fffbeb;
 }
 
 .vt-dialog-title {

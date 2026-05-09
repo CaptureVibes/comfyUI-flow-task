@@ -370,10 +370,6 @@ async def batch_create_and_start(
     return {"status": "accepted"}
 
 
-class BatchTargetDateBody(BaseModel):
-    target_date: str | None = None  # YYYY-MM-DD，有则只处理当天任务关联的模板
-
-
 @router.post("/batch-pause", status_code=status.HTTP_202_ACCEPTED)
 async def batch_pause(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
@@ -398,33 +394,16 @@ async def batch_retry(
 
 @router.post("/batch-restart", status_code=status.HTTP_202_ACCEPTED)
 async def batch_restart(
-    body: BatchTargetDateBody = BatchTargetDateBody(),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
-    session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """批量全流程重跑（从头到尾入队），传入 target_date 只处理当天任务关联的模板。
+    """批量全流程重跑：把当前 owner 名下的所有模板从头入队。
 
-    传入 target_date 时，模板若失败会把当天关联的视频任务标记为 abandoned。
+    默认走「无CTA」一套提示词。daily-tasks 页面的「一键重试」走另一个端点
+    （/video-tasks/daily/{target_date}/retry-templates），那里才会按 video_task.cta
+    决定每个模板这次走哪一套，避免 AI 模板层反查 task 字段。
     """
-    template_ids: list[str] | None = None
-    abandon_map: dict[str, list[str]] = {}
-    if body.target_date:
-        from datetime import date as _date
-        parsed_date = _date.fromisoformat(body.target_date)
-        stmt = select(VideoTask.id, VideoTask.template_id).where(
-            VideoTask.target_date == parsed_date,
-            VideoTask.template_id.is_not(None),
-        )
-        if owner_id is not None:
-            stmt = stmt.where(VideoTask.owner_id == owner_id)
-        rows = (await session.execute(stmt)).all()
-        for task_id, tpl_id in rows:
-            abandon_map.setdefault(str(tpl_id), []).append(str(task_id))
-        template_ids = list(abandon_map.keys())
     asyncio.create_task(batch_restart_templates(
         owner_id=str(owner_id) if owner_id else None,
-        template_ids=template_ids,
-        abandon_task_ids_on_fail=abandon_map or None,
     ))
     return {"status": "accepted"}
 

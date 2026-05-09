@@ -434,8 +434,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed, batchDeletePendingGenerating } from '../api/video_tasks.js'
-import { batchRestartTemplates } from '../api/video_ai_templates.js'
+import { fetchVideoTasks, uploadVideoTasks, fetchVideoTaskResults, fetchVideoTaskStats, deleteVideoTask, batchRouteStashed, batchDeletePendingGenerating, retryDailyTaskTemplates } from '../api/video_tasks.js'
 import { fetchBloggers } from '../api/tiktok_bloggers.js'
 import { isDuplicateRequestError } from '../api/http.js'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -771,7 +770,7 @@ async function handleBatchReanalyze() {
   } catch { return }
   batchReanalyzing.value = true
   try {
-    await batchRestartTemplates(targetDate.value)
+    await retryDailyTaskTemplates(targetDate.value)
     ElMessage.success('已触发当天模板从头重跑，后台入队中')
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '触发失败')
