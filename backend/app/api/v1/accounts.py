@@ -513,6 +513,77 @@ async def bulk_update_account_attributes_endpoint(
     )
 
 
+class TierEvaluationChange(BaseModel):
+    account_id: uuid.UUID
+    account_name: str
+    current_tier: str
+    target_tier: str
+    reason: dict
+
+
+class TierEvaluationPreviewResponse(BaseModel):
+    changes: list[TierEvaluationChange]
+    summary: dict  # {promote_to_dev, demote_to_test, total}
+
+
+class TierEvaluationApplyBody(BaseModel):
+    changes: list[TierEvaluationChange]
+
+
+class TierEvaluationApplyResponse(BaseModel):
+    promoted: int = 0   # test → dev
+    demoted: int = 0    # dev → test
+    skipped: int = 0
+
+
+@router.post("/tier-evaluation/preview", response_model=TierEvaluationPreviewResponse)
+async def preview_tier_evaluation(
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TierEvaluationPreviewResponse:
+    """根据当前 pipeline_settings 中的判定规则，预览会发生 tier 变更的 test/dev 账号列表。
+
+    不修改任何数据。仅评估当前用户名下账号（admin 会评估所有 owner_id IS NULL 的账号）。
+    prod 账号不参与，不会被列出。
+    """
+    from app.services.account_tier_scheduler import compute_tier_changes
+    raw = await compute_tier_changes(session, owner_id)
+    changes = [TierEvaluationChange(**c) for c in raw]
+    promote = sum(1 for c in changes if c.target_tier == "dev")
+    demote = sum(1 for c in changes if c.target_tier == "test")
+    return TierEvaluationPreviewResponse(
+        changes=changes,
+        summary={
+            "promote_to_dev": promote,
+            "demote_to_test": demote,
+            "total": len(changes),
+        },
+    )
+
+
+@router.post("/tier-evaluation/apply", response_model=TierEvaluationApplyResponse)
+async def apply_tier_evaluation(
+    body: TierEvaluationApplyBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TierEvaluationApplyResponse:
+    """按 preview 给出的列表实际应用 tier 变更。
+
+    安全校验：
+    - 只允许 target_tier ∈ {test, dev}（prod 永不被改）
+    - 账号 owner_id 必须等于当前用户（admin 不限）
+    - 账号当前 tier 必须仍等于 current_tier，否则跳过（避免覆盖其他人的修改）
+    """
+    from app.services.account_tier_scheduler import apply_tier_changes
+    changes_dict = [c.model_dump() for c in body.changes]
+    res = await apply_tier_changes(session, owner_id, changes_dict)
+    logger.info(
+        "tier_evaluation apply: owner=%s promoted=%d demoted=%d skipped=%d",
+        owner_id, res["promoted"], res["demoted"], res["skipped"],
+    )
+    return TierEvaluationApplyResponse(**res)
+
+
 @router.post("/channel-reservations", response_model=ReserveAIAccountsResponse, status_code=201)
 async def reserve_ai_accounts_for_channel(
     body: ReserveAIAccountsBody,

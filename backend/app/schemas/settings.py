@@ -138,6 +138,13 @@ class PipelineSettingsPayload(BaseModel):
     classify_dual_top1_lower: float = 0.35
     classify_dual_top1_upper: float = 0.5
     classify_dual_top2_threshold: float = 0.2
+    # 账号分级判定规则
+    tier_video_sample_count: int = 7
+    tier_avg_play_threshold: int = 700
+    tier_activity_days: int = 7
+    tier_min_video_count: int = 6
+    tier_daily_formal_growth_min_rate: float = 0.0
+    tier_daily_formal_growth_max_rate: float = 0.06
 
 
 class CandidateBatchAIReviewRequest(BaseModel):

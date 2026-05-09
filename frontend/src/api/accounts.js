@@ -217,3 +217,14 @@ export async function batchClassifyVideos(ids, force = false) {
   const { data } = await http.post('/accounts/batch-classify-videos', { ids, force })
   return data
 }
+
+// 账号分级评估（test ↔ dev）
+export async function previewTierEvaluation() {
+  const { data } = await http.post('/accounts/tier-evaluation/preview')
+  return data
+}
+
+export async function applyTierEvaluation(changes) {
+  const { data } = await http.post('/accounts/tier-evaluation/apply', { changes })
+  return data
+}

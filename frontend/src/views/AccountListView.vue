@@ -305,10 +305,110 @@
           </el-form-item>
         </div>
 
+        <!-- 账号分级判定规则 -->
+        <div class="ai-cfg-section">
+          <div class="ai-cfg-section-header">
+            <span class="ai-cfg-tag">账号分级判定规则</span>
+            <span class="ai-cfg-desc">
+              满足条件 → 常规号；不满足 → 实验号；正式号永远保持。每天北京时间 09:00 自动评估并按区间从常规号随机扩量正式号。
+            </span>
+          </div>
+          <el-form-item label="最近 N 条视频">
+            <el-input-number v-model="aiSettingsForm.tier_video_sample_count" :min="1" :max="50" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">取最近 N 条已发布视频用于均播计算</span>
+          </el-form-item>
+          <el-form-item label="平均播放量阈值">
+            <el-input-number v-model="aiSettingsForm.tier_avg_play_threshold" :min="0" :max="1000000" :step="50" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">N 条均播 ≥ 此值才能升常规号</span>
+          </el-form-item>
+          <el-form-item label="最近 N 天">
+            <el-input-number v-model="aiSettingsForm.tier_activity_days" :min="1" :max="60" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">活跃度时间窗（天）</span>
+          </el-form-item>
+          <el-form-item label="最少发视频数">
+            <el-input-number v-model="aiSettingsForm.tier_min_video_count" :min="1" :max="100" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">该窗口内已完成发布数 ≥ 此值才能升常规号</span>
+          </el-form-item>
+          <el-form-item label="正式号每日新增比例">
+            <div style="display:flex;align-items:center;gap:8px">
+              <el-input-number v-model="aiSettingsForm.tier_daily_formal_growth_min_rate" :min="0" :max="1" :step="0.01" :precision="4" style="width: 160px" />
+              <span style="color:#6b7280">~</span>
+              <el-input-number v-model="aiSettingsForm.tier_daily_formal_growth_max_rate" :min="0" :max="1" :step="0.01" :precision="4" style="width: 160px" />
+              <span style="color:#6b7280;font-size:13px">× 当前正式号数（每日扩量区间）</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="">
+            <el-button
+              type="warning"
+              plain
+              :loading="tierEvalPreviewLoading"
+              @click="openTierEvalPreview"
+            >
+              重新判定账号状态（实验号 ↔ 常规号）
+            </el-button>
+            <div style="margin-top:6px;color:#9ca3af;font-size:12px">
+              修改上方阈值后保存，再点击此按钮预览会变动的账号；二次确认后才落库。正式号永不被改动。
+            </div>
+          </el-form-item>
+        </div>
+
       </div>
       <template #footer>
         <el-button @click="showAISettingsDialog = false">取消</el-button>
         <el-button type="primary" :loading="aiSettingsSaving" @click="saveAISettings">保存配置</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 账号分级重判预览弹窗 -->
+    <el-dialog
+      v-model="showTierEvalPreviewDialog"
+      title="账号分级 · 重新判定预览"
+      width="780px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div v-loading="tierEvalPreviewLoading" class="tier-eval-body">
+        <div class="tier-eval-summary">
+          <span><b>{{ tierEvalChanges.length }}</b> 个账号将变动</span>
+          <span class="tier-eval-summary-sep"></span>
+          <span class="tier-eval-promote">实验号 → 常规号：{{ tierEvalSummary.promote_to_dev || 0 }}</span>
+          <span class="tier-eval-summary-sep"></span>
+          <span class="tier-eval-demote">常规号 → 实验号：{{ tierEvalSummary.demote_to_test || 0 }}</span>
+        </div>
+        <div v-if="tierEvalChanges.length === 0" class="tier-eval-empty">
+          按当前阈值评估后，没有账号需要变动。
+        </div>
+        <div v-else class="tier-eval-list">
+          <div
+            v-for="c in tierEvalChanges"
+            :key="c.account_id"
+            class="tier-eval-item"
+            :class="c.target_tier === 'dev' ? 'is-promote' : 'is-demote'"
+          >
+            <div class="tier-eval-name">{{ c.account_name }}</div>
+            <div class="tier-eval-tier-flow">
+              <span class="tier-chip" :class="`tier-chip-${c.current_tier}`">{{ tierLabel(c.current_tier) }}</span>
+              <span class="tier-eval-arrow">→</span>
+              <span class="tier-chip" :class="`tier-chip-${c.target_tier}`">{{ tierLabel(c.target_tier) }}</span>
+            </div>
+            <div class="tier-eval-reason">
+              样本 {{ c.reason?.video_count_in_sample ?? 0 }}/{{ c.reason?.threshold?.video_sample_count ?? 0 }}
+              · 均播 {{ c.reason?.avg_views ?? 0 }}（阈值 {{ c.reason?.threshold?.avg_play_threshold ?? 0 }}）
+              · 近 {{ c.reason?.threshold?.activity_days ?? 0 }} 天 {{ c.reason?.recent_count ?? 0 }} 条（最少 {{ c.reason?.threshold?.min_video_count ?? 0 }}）
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showTierEvalPreviewDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          :disabled="tierEvalChanges.length === 0"
+          :loading="tierEvalApplying"
+          @click="applyTierEvalChanges"
+        >
+          确认应用（{{ tierEvalChanges.length }}）
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1449,7 +1549,7 @@ import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, wa
 import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -2160,6 +2260,12 @@ const aiSettingsForm = ref({
   classify_dual_top1_lower: 0.35,
   classify_dual_top1_upper: 0.5,
   classify_dual_top2_threshold: 0.2,
+  tier_video_sample_count: 7,
+  tier_avg_play_threshold: 700,
+  tier_activity_days: 7,
+  tier_min_video_count: 6,
+  tier_daily_formal_growth_min_rate: 0.0,
+  tier_daily_formal_growth_max_rate: 0.06,
 })
 
 async function openAISettings() {
@@ -2192,6 +2298,12 @@ async function openAISettings() {
     aiSettingsForm.value.classify_dual_top1_lower = data.classify_dual_top1_lower ?? 0.35
     aiSettingsForm.value.classify_dual_top1_upper = data.classify_dual_top1_upper ?? 0.5
     aiSettingsForm.value.classify_dual_top2_threshold = data.classify_dual_top2_threshold ?? 0.2
+    aiSettingsForm.value.tier_video_sample_count = data.tier_video_sample_count ?? 7
+    aiSettingsForm.value.tier_avg_play_threshold = data.tier_avg_play_threshold ?? 700
+    aiSettingsForm.value.tier_activity_days = data.tier_activity_days ?? 7
+    aiSettingsForm.value.tier_min_video_count = data.tier_min_video_count ?? 6
+    aiSettingsForm.value.tier_daily_formal_growth_min_rate = data.tier_daily_formal_growth_min_rate ?? 0.0
+    aiSettingsForm.value.tier_daily_formal_growth_max_rate = data.tier_daily_formal_growth_max_rate ?? 0.06
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -2230,6 +2342,12 @@ async function saveAISettings() {
       classify_dual_top1_lower: aiSettingsForm.value.classify_dual_top1_lower,
       classify_dual_top1_upper: aiSettingsForm.value.classify_dual_top1_upper,
       classify_dual_top2_threshold: aiSettingsForm.value.classify_dual_top2_threshold,
+      tier_video_sample_count: aiSettingsForm.value.tier_video_sample_count,
+      tier_avg_play_threshold: aiSettingsForm.value.tier_avg_play_threshold,
+      tier_activity_days: aiSettingsForm.value.tier_activity_days,
+      tier_min_video_count: aiSettingsForm.value.tier_min_video_count,
+      tier_daily_formal_growth_min_rate: aiSettingsForm.value.tier_daily_formal_growth_min_rate,
+      tier_daily_formal_growth_max_rate: aiSettingsForm.value.tier_daily_formal_growth_max_rate,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')
@@ -2238,6 +2356,51 @@ async function saveAISettings() {
     ElMessage.error(err?.response?.data?.detail || '保存失败')
   } finally {
     aiSettingsSaving.value = false
+  }
+}
+
+// ── 账号分级重判预览 / 应用 ──────────────────────────────────────────────────
+const showTierEvalPreviewDialog = ref(false)
+const tierEvalPreviewLoading = ref(false)
+const tierEvalApplying = ref(false)
+const tierEvalChanges = ref([])
+const tierEvalSummary = ref({ promote_to_dev: 0, demote_to_test: 0, total: 0 })
+
+function tierLabel(tier) {
+  return { test: '实验号', dev: '常规号', prod: '正式号' }[tier] || tier
+}
+
+async function openTierEvalPreview() {
+  if (tierEvalPreviewLoading.value) return
+  tierEvalPreviewLoading.value = true
+  try {
+    const data = await previewTierEvaluation()
+    tierEvalChanges.value = data.changes || []
+    tierEvalSummary.value = data.summary || { promote_to_dev: 0, demote_to_test: 0, total: 0 }
+    showTierEvalPreviewDialog.value = true
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '预览失败')
+  } finally {
+    tierEvalPreviewLoading.value = false
+  }
+}
+
+async function applyTierEvalChanges() {
+  if (tierEvalApplying.value) return
+  if (tierEvalChanges.value.length === 0) {
+    showTierEvalPreviewDialog.value = false
+    return
+  }
+  tierEvalApplying.value = true
+  try {
+    const res = await applyTierEvaluation(tierEvalChanges.value)
+    ElMessage.success(`已应用：升 ${res.promoted} 降 ${res.demoted}（跳过 ${res.skipped}）`)
+    showTierEvalPreviewDialog.value = false
+    await loadData()  // 刷新列表展示新 tier
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '应用失败')
+  } finally {
+    tierEvalApplying.value = false
   }
 }
 
@@ -5052,6 +5215,85 @@ onMounted(() => {
   max-height: 260px;
   overflow-y: auto;
   width: 100%;
+}
+
+/* ── 账号分级重判预览弹窗 ─────────────────────────────────────────────── */
+.tier-eval-body { min-height: 120px; }
+.tier-eval-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #374151;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.tier-eval-summary-sep {
+  width: 1px;
+  height: 14px;
+  background: #cbd5e1;
+}
+.tier-eval-promote { color: #15803d; font-weight: 600; }
+.tier-eval-demote { color: #b45309; font-weight: 600; }
+.tier-eval-empty {
+  text-align: center;
+  color: #9ca3af;
+  padding: 32px 0;
+  font-size: 13px;
+}
+.tier-eval-list {
+  max-height: 480px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tier-eval-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto 1.4fr;
+  gap: 12px;
+  align-items: center;
+  background: #fff;
+}
+.tier-eval-item.is-promote { border-left: 3px solid #22c55e; }
+.tier-eval-item.is-demote { border-left: 3px solid #f59e0b; }
+.tier-eval-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  word-break: break-word;
+}
+.tier-eval-tier-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.tier-eval-arrow {
+  color: #94a3b8;
+  font-weight: 700;
+}
+.tier-chip {
+  display: inline-flex;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tier-chip-test { background: #f1f5f9; color: #64748b; }
+.tier-chip-dev { background: #fef3c7; color: #b45309; }
+.tier-chip-prod { background: #dcfce7; color: #15803d; }
+.tier-eval-reason {
+  font-size: 12px;
+  color: #64748b;
+  text-align: right;
+  word-break: break-word;
 }
 
 /* ── Flag 过滤栏 ──────────────────────────────────────────────────────────── */

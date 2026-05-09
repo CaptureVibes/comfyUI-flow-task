@@ -134,6 +134,14 @@ class PipelineSetting(Base):
     classify_dual_top1_upper: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     classify_dual_top2_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
 
+    # 账号分级判定规则（test=实验号 / dev=常规号 / prod=正式号）
+    tier_video_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=7)        # 最近 N 条视频
+    tier_avg_play_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=700)      # 均播阈值
+    tier_activity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)             # 最近 N 天
+    tier_min_video_count: Mapped[int] = mapped_column(Integer, nullable=False, default=6)           # 最近 N 天最少发视频数
+    tier_daily_formal_growth_min_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)   # 正式号每日新增比例下限
+    tier_daily_formal_growth_max_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.06)  # 正式号每日新增比例上限
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
