@@ -64,6 +64,8 @@
         :loading="accountSearchLoading"
         size="small"
         style="width:220px"
+        popper-class="ps-account-select-popper"
+        @visible-change="onAccountDropdownVisibleChange"
       >
         <el-option
           v-for="account in accountOptions"
@@ -71,6 +73,11 @@
           :label="account.account_name"
           :value="account.id"
         />
+        <template #empty>
+          <p style="text-align:center;color:#9ca3af;font-size:12px;padding:8px 0">
+            {{ accountSearchLoading ? '加载中…' : '没有匹配的账号' }}
+          </p>
+        </template>
       </el-select>
       <el-select v-model="filters.promotion_code_filter" clearable placeholder="商品码：全部" size="small" style="width:140px" @change="applyFilters">
         <el-option label="有商品码" value="with" />
@@ -429,7 +436,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAccount, fetchAccounts } from '../api/accounts'
@@ -562,6 +569,11 @@ const items = ref([])
 const total = ref(0)
 const accountOptions = ref([])
 const accountSearchLoading = ref(false)
+// 远程搜索 + 滚动分页
+const accountSearchKeyword = ref('')
+const accountSearchPage = ref(1)
+const accountSearchHasMore = ref(false)
+const _ACCOUNT_PAGE_SIZE = 50
 
 // ── 行勾选 ──────────────────────────────────────────────────────────────────
 const selectedMap = ref(new Map())
@@ -778,28 +790,86 @@ function formatPercent(value) {
 }
 
 async function searchAccounts(query) {
-  // 远程模糊搜索：调后端 /accounts 的 search 参数，前端不做大列表缓存
+  // 关键词变化 → 重置到第 1 页
+  accountSearchKeyword.value = (query || '').trim()
+  accountSearchPage.value = 1
+  accountSearchHasMore.value = false
+  await _fetchAccountPage({ append: false })
+}
+
+async function loadMoreAccounts() {
+  if (accountSearchLoading.value || !accountSearchHasMore.value) return
+  accountSearchPage.value += 1
+  await _fetchAccountPage({ append: true })
+}
+
+async function _fetchAccountPage({ append }) {
   accountSearchLoading.value = true
   try {
     const response = await fetchAccounts({
-      page: 1,
-      page_size: 50,
-      search: (query || '').trim() || undefined,
+      page: accountSearchPage.value,
+      page_size: _ACCOUNT_PAGE_SIZE,
+      search: accountSearchKeyword.value || undefined,
     })
     const items = response?.items || []
-    // 保留当前选中的账号，避免它不在搜索结果里时下拉里看不到
-    if (filters.account_id) {
-      const hit = items.find(a => a.id === filters.account_id)
-      if (!hit) {
-        const prev = accountOptions.value.find(a => a.id === filters.account_id)
-        if (prev) items.unshift(prev)
+    const total = response?.total ?? 0
+    accountSearchHasMore.value = accountSearchPage.value * _ACCOUNT_PAGE_SIZE < total
+
+    if (append) {
+      // 滚动加载更多：去重追加
+      const existing = new Set(accountOptions.value.map(a => a.id))
+      accountOptions.value = [
+        ...accountOptions.value,
+        ...items.filter(a => !existing.has(a.id)),
+      ]
+    } else {
+      // 替换：保留当前选中的账号防止从下拉里消失
+      const next = items.slice()
+      if (filters.account_id) {
+        const hit = next.find(a => a.id === filters.account_id)
+        if (!hit) {
+          const prev = accountOptions.value.find(a => a.id === filters.account_id)
+          if (prev) next.unshift(prev)
+        }
       }
+      accountOptions.value = next
     }
-    accountOptions.value = items
   } catch (e) {
     console.error(e)
   } finally {
     accountSearchLoading.value = false
+  }
+}
+
+let _accountScrollListenerTarget = null
+function _onAccountDropdownScroll(e) {
+  const el = e.target
+  if (!el) return
+  // 距底部不到 60px 时触发下一页
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) {
+    loadMoreAccounts()
+  }
+}
+
+function onAccountDropdownVisibleChange(visible) {
+  if (visible) {
+    // popper 打开后异步绑定 scroll 监听（DOM 此时才挂载）
+    setTimeout(() => {
+      const popper = document.querySelector('.ps-account-select-popper')
+      if (!popper) return
+      // el-select 的滚动容器是 popper 内部的 .el-select-dropdown__wrap 或 .el-scrollbar__wrap
+      const wrap = popper.querySelector('.el-select-dropdown__wrap, .el-scrollbar__wrap')
+      if (!wrap || _accountScrollListenerTarget === wrap) return
+      // 解绑老的（如果换了实例）
+      if (_accountScrollListenerTarget) {
+        _accountScrollListenerTarget.removeEventListener('scroll', _onAccountDropdownScroll)
+      }
+      wrap.addEventListener('scroll', _onAccountDropdownScroll, { passive: true })
+      _accountScrollListenerTarget = wrap
+    }, 0)
+  } else if (_accountScrollListenerTarget) {
+    _accountScrollListenerTarget.removeEventListener('scroll', _onAccountDropdownScroll)
+    _accountScrollListenerTarget = null
   }
 }
 
@@ -899,6 +969,13 @@ function handleSizeChange() {
   filters.page = 1
   load()
 }
+
+onBeforeUnmount(() => {
+  if (_accountScrollListenerTarget) {
+    _accountScrollListenerTarget.removeEventListener('scroll', _onAccountDropdownScroll)
+    _accountScrollListenerTarget = null
+  }
+})
 
 onMounted(async () => {
   // 读取 query 参数（从 AI博主页跳转过来时携带）
