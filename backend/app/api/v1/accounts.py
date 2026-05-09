@@ -307,6 +307,8 @@ def _account_read(
     pending_publish_count: int = 0,
     channel_reservations: list[AccountChannelReservationRead] | None = None,
     linked_video_count: int = 0,
+    unused_template_count: int = 0,
+    used_template_count: int = 0,
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
@@ -314,6 +316,8 @@ def _account_read(
     data.bound_flags = flags or []
     data.pending_publish_count = pending_publish_count
     data.linked_video_count = linked_video_count
+    data.unused_template_count = unused_template_count
+    data.used_template_count = used_template_count
     data.channel_reservations = channel_reservations or []
     data.social_bindings = None
     return data
@@ -467,6 +471,13 @@ async def list_accounts_endpoint(
             if aid is not None:
                 video_count_map[aid] = int(count or 0)
 
+    # 模板池：复用「一键生成」过滤逻辑，分别统计未使用/已使用
+    template_counts: dict[uuid.UUID, tuple[int, int]] = {}
+    for a in items:
+        template_counts[a.id] = await _count_account_templates(
+            session, account=a, owner_id=owner_id,
+        )
+
     rich_items = [
         _account_read(
             a,
@@ -476,6 +487,8 @@ async def list_accounts_endpoint(
             pending_publish_map[a.id],
             reservation_map[a.id],
             linked_video_count=video_count_map.get(a.id, 0),
+            unused_template_count=template_counts[a.id][0],
+            used_template_count=template_counts[a.id][1],
         )
         for a in items
     ]
@@ -1420,6 +1433,71 @@ async def _count_queued_tasks(session: AsyncSession, account_id: uuid.UUID) -> i
         .where(VideoTask.account_id == account_id)
         .where(VideoTask.status == "queued")
     ) or 0)
+
+
+async def _count_account_templates(
+    session: AsyncSession,
+    *,
+    account: Account,
+    owner_id: uuid.UUID | None,
+) -> tuple[int, int]:
+    """复用「一键生成」的过滤逻辑，返回 (unused_count, used_count)。
+    - unused：not is_used 或 repeatable
+    - used：is_used
+    都已排除 failed 模板与不在账号 single/dual 分类下的模板。
+    """
+    from app.models.video_ai_template import VideoAITemplate
+    from app.models.video_classification import VideoClassification
+    from app.models.enums import VideoAIProcessStatus
+
+    cls_type = account.classification_type
+    summary = account.classification_summary or {}
+    allowed_indices: list[int] | None = None
+    if cls_type == "single":
+        primary_idx = summary.get("primary_index")
+        if primary_idx is not None:
+            allowed_indices = [int(primary_idx)]
+    elif cls_type == "dual":
+        primary_idx = summary.get("primary_index")
+        secondary_idx = summary.get("secondary_index")
+        allowed_indices = [int(i) for i in [primary_idx, secondary_idx] if i is not None]
+
+    tag_ids = list((await session.execute(
+        select(AccountTag.tag_id).where(AccountTag.account_id == account.id)
+    )).scalars().all())
+    if not tag_ids:
+        return (0, 0)
+
+    tpl_stmt = (
+        select(VideoAITemplate)
+        .where(
+            exists().where(
+                VideoSourceTag.video_ai_template_id == VideoAITemplate.id,
+                VideoSourceTag.tag_id.in_(tag_ids),
+            )
+        )
+    )
+    if owner_id is not None:
+        tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
+    tpls = list((await session.execute(tpl_stmt)).scalars().all())
+    tpls = [t for t in tpls if t.process_status != VideoAIProcessStatus.fail]
+
+    if allowed_indices is not None:
+        vs_ids = list({t.video_source_id for t in tpls if t.video_source_id})
+        matched_vs_ids: set[uuid.UUID] = set()
+        if vs_ids:
+            rows = (await session.execute(
+                select(VideoClassification.video_source_id)
+                .where(VideoClassification.video_source_id.in_(vs_ids))
+                .where(VideoClassification.status == "success")
+                .where(VideoClassification.category_index.in_(allowed_indices))
+            )).scalars().all()
+            matched_vs_ids = set(rows)
+        tpls = [t for t in tpls if t.video_source_id in matched_vs_ids]
+
+    used_count = sum(1 for t in tpls if t.is_used)
+    unused_count = sum(1 for t in tpls if (not t.is_used) or t.repeatable)
+    return (unused_count, used_count)
 
 
 async def _load_vs_map(session: AsyncSession, vs_ids: list[uuid.UUID]) -> dict:

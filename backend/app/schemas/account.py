@@ -398,6 +398,8 @@ class AccountRead(BaseModel):
     ai_generation_error: str | None = None
     pending_publish_count: int = 0
     linked_video_count: int = 0
+    unused_template_count: int = 0
+    used_template_count: int = 0
     classification_status: str = "idle"
     classification_type: str | None = None
     classification_summary: dict | None = None

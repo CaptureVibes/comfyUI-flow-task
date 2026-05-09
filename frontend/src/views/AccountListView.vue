@@ -1188,6 +1188,9 @@
                   <span class="ac-classify-count">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}分类</span>
                 </template>
                 <span class="ac-classify-count">{{ item.linked_video_count ?? 0 }}个视频</span>
+                <span class="ac-classify-count" :title="`未使用 ${item.unused_template_count ?? 0} / 已使用 ${item.used_template_count ?? 0} 模板`">
+                  {{ item.unused_template_count ?? 0 }}/{{ item.used_template_count ?? 0 }}模板
+                </span>
               </div>
               <div v-if="item.style_description" class="al-style-desc">{{ item.style_description }}</div>
             </td>
