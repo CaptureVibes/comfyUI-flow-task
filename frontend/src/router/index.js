@@ -184,6 +184,12 @@ const routes = [
         component: () => import('../views/UserManageView.vue'),
         meta: { title: '用户管理' }
       },
+      {
+        path: 'formal-backfill',
+        name: 'formal-backfill',
+        component: () => import('../views/FormalBackfillView.vue'),
+        meta: { title: '正式号回填' }
+      },
     ]
   },
 

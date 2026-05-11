@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1 import account_channel_reservations, accounts, auth, candidates, face_library, flags, settings, tags, tiktok_bloggers, topics, uploads, video_ai_templates, video_sources, video_tasks, video_task_config, video_publications
+from app.api.v1 import account_channel_reservations, accounts, auth, candidates, face_library, flags, formal_backfill, settings, tags, tiktok_bloggers, topics, uploads, video_ai_templates, video_sources, video_tasks, video_task_config, video_publications
 from app.core.security import get_current_user
 
 api_router = APIRouter(prefix="/api/v1")
@@ -29,3 +29,4 @@ api_router.include_router(topics.router, dependencies=_auth_dep)
 api_router.include_router(candidates.router, dependencies=_auth_dep)
 api_router.include_router(face_library.router, dependencies=_auth_dep)
 api_router.include_router(uploads.router, dependencies=_auth_dep)
+api_router.include_router(formal_backfill.router)  # 内部接 admin 校验

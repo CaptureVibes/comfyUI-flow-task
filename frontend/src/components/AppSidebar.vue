@@ -235,7 +235,11 @@ const baseMenuItems = [
 ]
 
 const menuItems = isAdmin()
-  ? [...baseMenuItems, { path: '/dashboard/users', name: 'users', label: '用户管理', iconComponent: IconUsers }]
+  ? [
+      ...baseMenuItems,
+      { path: '/dashboard/users', name: 'users', label: '用户管理', iconComponent: IconUsers },
+      { path: '/dashboard/formal-backfill', name: 'formal-backfill', label: '正式号回填', iconComponent: IconUsers },
+    ]
   : baseMenuItems
 
 function isActive(name) {
