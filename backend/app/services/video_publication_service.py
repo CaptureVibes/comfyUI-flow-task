@@ -798,17 +798,27 @@ class ExtPubAdapter(PublishAdapter):
 def _merge_channel_statuses(
     existing: list[dict],
     updated: list[dict],
-    source: str,
+    source: str,  # 保留参数以兼容历史调用方，函数内部不再使用
 ) -> list[dict]:
-    """将 updated 中属于 source 侧的频道状态合并进 existing。
+    """合并 updated 频道状态到 existing：按 (platform, channel_id) 替换同名条目。
 
-    匹配键：platform + channel_id（_source 相同的条目才替换）。
-    existing 中属于其他 source 的条目保留不变。
-    updated 中有但 existing 中没有的条目追加进去。
+    历史实现是按 `_source` 整批替换——「openapi 侧 callback 视为完整覆盖」。
+    但单渠道重试会产生新的 openapi task_id，后续 callback / sync_status
+    只覆盖那个新 task 涉及的 channel，旧实现会把同 source 但其他 task
+    发布过的成功 channel 一并清掉，导致历史成功数据丢失。
+
+    新规则：existing 中未出现在 updated 里的条目原样保留；
+    出现在 updated 里的条目用 updated 的版本替换。
     """
-    # 先保留非本侧条目
-    result = [c for c in existing if c.get("_source") != source]
-    # 加入更新后的本侧条目
+    del source  # noqa: F841 — kept for backward compat
+    updated_keys = {
+        (str(c.get("platform", "")), str(c.get("channel_id", "")))
+        for c in updated
+    }
+    result = [
+        c for c in existing
+        if (str(c.get("platform", "")), str(c.get("channel_id", ""))) not in updated_keys
+    ]
     result.extend(updated)
     return result
 
@@ -1397,6 +1407,17 @@ class VideoPublicationService:
         merged.extend(new_statuses)
 
         overall_status = _compute_publication_status(merged)
+        # 单渠道重试场景特殊处理：若新提交的渠道处于非终态，但其他渠道里仍有
+        # 成功条目，则强制 publication.status 维持为 "partial"，避免被打回
+        # "processing"。否则 sub_task 会被 _apply_publication_status_to_sub_task
+        # 错误地切到 publishing，导致整条发布从「已发布」tab 里消失。
+        # 等回调（或下次 sync_status）把新渠道刷成终态时，再走正常的
+        # completed/partial/failed 计算。
+        if overall_status == "processing" and any(
+            c.get("status") in _SUCCESS_STATUSES for c in merged
+        ):
+            overall_status = "partial"
+
         error_message = "; ".join(errors) if errors else None
 
         # 同步 request_payload：保留全部原始 channels 信息以便后续再次重试
