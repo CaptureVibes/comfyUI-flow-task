@@ -1273,30 +1273,33 @@ class VideoPublicationService:
             )
 
         payload = pub.request_payload or {}
-        payload_channels = payload.get("channels") or []
-        # 按 (platform, channel_id) 索引原始 channels，用于获取 channel_source 等元信息
-        payload_index: dict[tuple[str, str], dict] = {
-            (str(c.get("platform", "")), str(c.get("channel_id", ""))): c
-            for c in payload_channels
-            if isinstance(c, dict)
-        }
 
-        retry_channels: list[dict] = []
-        for ch in failed_entries:
-            key = (str(ch.get("platform", "")), str(ch.get("channel_id", "")))
-            base = payload_index.get(key)
-            if base is not None:
-                retry_channels.append(dict(base))
-            else:
-                # 回退：用 channels_status 中的 _source 推断 channel_source
-                retry_channels.append({
-                    "platform": ch.get("platform", ""),
-                    "channel_id": ch.get("channel_id", ""),
-                    "channel_name": ch.get("channel_name", ""),
-                    "channel_source": (
-                        "ext_pub" if ch.get("_source") == _SOURCE_EXT_PUB else "openapi"
-                    ),
-                })
+        # 关键：重试用的 channel_id / channel_source / channel_name 不复用 request_payload
+        # 里的旧数据，而是从 account_channel_reservations 实时读取当前绑定。
+        # 原因：原发布失败后用户可能换绑了同一平台的另一个 channel，旧 channel_id 已失效。
+        account_id_for_retry = sub_task.task.account_id if sub_task.task else None
+        if account_id_for_retry is None:
+            raise HTTPException(status_code=422, detail="子任务关联的账号缺失，无法重发")
+
+        reservation = (await self.db.execute(
+            select(AccountChannelReservation)
+            .where(AccountChannelReservation.account_id == account_id_for_retry)
+            .where(AccountChannelReservation.platform == target_platform)
+            .where(AccountChannelReservation.status == "bound")
+        )).scalar_one_or_none()
+        if reservation is None or not reservation.channel_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"账号当前未绑定 {target_platform} 平台或绑定的 channel 缺失，无法重发",
+            )
+
+        retry_channel = {
+            "platform": target_platform,
+            "channel_id": reservation.channel_id,
+            "channel_name": reservation.channel_name or "",
+            "channel_source": reservation.channel_source or "openapi",
+        }
+        retry_channels: list[dict] = [retry_channel]
 
         ext_channels = [c for c in retry_channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in retry_channels if c.get("channel_source") != "ext_pub"]
@@ -1395,14 +1398,11 @@ class VideoPublicationService:
                     new_open_api_task_id = task_id
                 new_statuses.extend(channel_statuses)
 
-        # 合并：保留非失败的旧条目；用新结果替换之前失败的同 (platform, channel_id) 条目
-        retried_keys = {
-            (str(c.get("platform", "")), str(c.get("channel_id", "")))
-            for c in retry_channels
-        }
+        # 合并：删除 existing 中目标 platform 的所有旧条目（一个账号 / 平台只
+        # 对应一条 channel，channel_id 可能因换绑发生变化），再追加新提交结果。
         merged: list[dict] = [
             c for c in existing_statuses
-            if (str(c.get("platform", "")), str(c.get("channel_id", ""))) not in retried_keys
+            if str(c.get("platform", "")) != target_platform
         ]
         merged.extend(new_statuses)
 
@@ -1420,8 +1420,14 @@ class VideoPublicationService:
 
         error_message = "; ".join(errors) if errors else None
 
-        # 同步 request_payload：保留全部原始 channels 信息以便后续再次重试
+        # 同步 request_payload：保留其他平台原始 channels 信息；用最新绑定覆盖
+        # 目标 platform 那条 channel，以便后续再次重试 / sync 使用最新 channel_id。
+        existing_payload_channels = [
+            c for c in (payload.get("channels") or [])
+            if isinstance(c, dict) and str(c.get("platform", "")) != target_platform
+        ]
         updated_payload = dict(payload)
+        updated_payload["channels"] = existing_payload_channels + [retry_channel]
         updated_payload["promotion_code"] = promotion_code
         updated_payload["ext_products"] = ext_products
         updated_payload["_has_openapi"] = bool(openapi_channels) or payload.get("_has_openapi", False)

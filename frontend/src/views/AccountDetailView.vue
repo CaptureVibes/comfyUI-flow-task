@@ -1186,13 +1186,20 @@ async function handleRetryChannel(ch) {
     // 本地把弹窗中对应渠道行的状态/错误信息按最新 channels_status 同步刷新
     // 不重新调 fetchUploadMetrics：openapi 单渠道重发会生成新的 task_id，
     // 用新 task_id 查询会丢失已成功平台的指标数据。
-    const newStatus = (updated?.channels_status || []).find(
-      c => c.platform === ch.platform && c.channel_id === ch.channel_id,
-    )
+    // 按 platform 匹配（不带 channel_id）：后端可能因账号换绑用了新的 channel_id。
+    const newStatus = (updated?.channels_status || []).find(c => c.platform === ch.platform)
     if (newStatus && metricsData.value?.channels) {
       metricsData.value.channels = metricsData.value.channels.map(c => (
-        c.platform === ch.platform && c.channel_id === ch.channel_id
-          ? { ...c, status: newStatus.status, error_message: newStatus.error_message, platform_video_id: newStatus.platform_video_id, platform_video_url: newStatus.platform_video_url }
+        c.platform === ch.platform
+          ? {
+              ...c,
+              channel_id: newStatus.channel_id,
+              channel_name: newStatus.channel_name || c.channel_name,
+              status: newStatus.status,
+              error_message: newStatus.error_message,
+              platform_video_id: newStatus.platform_video_id,
+              platform_video_url: newStatus.platform_video_url,
+            }
           : c
       ))
     }
