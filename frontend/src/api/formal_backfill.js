@@ -15,8 +15,11 @@ export async function clearFormalBackfill() {
   return data
 }
 
-export async function fetchFormalBackfillSummary() {
-  const { data } = await http.get('/formal-backfill/summary')
+export async function fetchFormalBackfillSummary({ startDate, endDate } = {}) {
+  const params = {}
+  if (startDate) params.start_date = startDate
+  if (endDate) params.end_date = endDate
+  const { data } = await http.get('/formal-backfill/summary', { params })
   return data
 }
 

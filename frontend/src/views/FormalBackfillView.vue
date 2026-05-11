@@ -165,7 +165,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, h } from 'vue'
+import { computed, onMounted, ref, h, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   clearFormalBackfill,
@@ -341,7 +341,10 @@ const ltvPoints = computed(() =>
 
 async function loadSummary() {
   try {
-    summary.value = await fetchFormalBackfillSummary()
+    summary.value = await fetchFormalBackfillSummary({
+      startDate: form.value.startDate,
+      endDate: form.value.endDate,
+    })
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '加载方案失败')
   }
@@ -436,6 +439,11 @@ function downloadExport() {
 }
 
 onMounted(loadSummary)
+
+// 改起止日期 → 自动按新范围刷新图表
+watch(() => [form.value.startDate, form.value.endDate], () => {
+  if (form.value.startDate && form.value.endDate) loadSummary()
+})
 </script>
 
 <style scoped>

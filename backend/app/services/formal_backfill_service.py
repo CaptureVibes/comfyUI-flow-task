@@ -326,11 +326,19 @@ def _video_metrics_total(metrics_snapshot: dict | None) -> tuple[int, int]:
     return total_views, total_likes
 
 
-async def get_summary(session: AsyncSession, *, owner_id: uuid.UUID | None) -> dict:
+async def get_summary(
+    session: AsyncSession,
+    *,
+    owner_id: uuid.UUID | None,
+    range_start: date | None = None,
+    range_end: date | None = None,
+) -> dict:
     """返回当前方案（owner 范围）的每日统计、指标曲线、LTV、周窗口和增长倍数。
 
     口径：每日 views / likes 直接取「当日发布的视频」当前 metrics_snapshot 累计总和。
     每日定时任务覆盖 metrics_snapshot 即可（新数据覆盖旧的就行）。
+
+    range_start / range_end：调用方指定的展示窗口。若不传则从数据自动推断。
 
     daily_counts: [{date, new_accounts, cumulative_accounts, new_videos,
                     new_views, new_likes, ltv}]
@@ -414,15 +422,20 @@ async def get_summary(session: AsyncSession, *, owner_id: uuid.UUID | None) -> d
         }
 
     today = date.today()
-    start_date = min(
+    derived_start = min(
         min(new_acc_by_date.keys()) if new_acc_by_date else today,
         min(new_videos_by_date.keys()) if new_videos_by_date else today,
     )
-    end_date = max(
-        max(new_acc_by_date.keys()) if new_acc_by_date else start_date,
-        max(new_videos_by_date.keys()) if new_videos_by_date else start_date,
+    derived_end = max(
+        max(new_acc_by_date.keys()) if new_acc_by_date else derived_start,
+        max(new_videos_by_date.keys()) if new_videos_by_date else derived_start,
         today,
     )
+    # 调用方传了 range 就用调用方的，否则用从数据推出来的
+    start_date = range_start if range_start is not None else derived_start
+    end_date = range_end if range_end is not None else derived_end
+    if end_date < start_date:
+        end_date = start_date
 
     days_total = (end_date - start_date).days + 1
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,10 +80,17 @@ async def clear_formal_backfill(
 
 @router.get("/summary")
 async def get_formal_backfill_summary(
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await get_summary(session, owner_id=_resolve_owner_id(current_user))
+    return await get_summary(
+        session,
+        owner_id=_resolve_owner_id(current_user),
+        range_start=start_date,
+        range_end=end_date,
+    )
 
 
 @router.get("/export")
