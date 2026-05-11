@@ -326,6 +326,15 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 查看数据
               </button>
+              <button
+                v-if="hasFailedChannel(item.sub)"
+                class="ad-metrics-btn ad-retry-failed-btn"
+                :disabled="retryingFailedChannels === item.sub.id"
+                @click.stop="handleRetryFailedChannels(item.sub)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                {{ retryingFailedChannels === item.sub.id ? '重发中…' : '重发失败渠道' }}
+              </button>
             </div>
 
             <!-- Action buttons -->
@@ -760,7 +769,7 @@ import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish, patchAccount } from '../api/accounts'
 import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask, regeneratePublishMeta } from '../api/video_tasks'
-import { fetchSubTaskPublications, fetchUploadMetrics, retryPublication } from '../api/video_publications'
+import { fetchSubTaskPublications, fetchUploadMetrics, retryPublication, retryFailedChannels } from '../api/video_publications'
 import http from '../api/http'
 
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
@@ -810,6 +819,7 @@ const tasksLoading = ref(false)
 const activeTab = ref('pending_publish')
 const rollbacking = ref(null)
 const retrying = ref(null)
+const retryingFailedChannels = ref(null)
 const deleting = ref(null)
 const enqueuing = ref(null)
 const dequeuing = ref(null)
@@ -863,6 +873,12 @@ function fmtDate(iso) {
 }
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
+
+function hasFailedChannel(sub) {
+  const list = publicationsMap.value[sub.id]?.channels_status
+  if (!Array.isArray(list) || !list.length) return false
+  return list.some(ch => ch.status === 'failed')
+}
 const boundChannelBindings = computed(() =>
   (account.value?.channel_reservations || [])
     .filter(item => item.status === 'bound')
@@ -1059,6 +1075,25 @@ async function handleRetryPublish(_task, sub) {
     ElMessage.error(e?.response?.data?.detail || '重试发布失败')
   } finally {
     retrying.value = null
+  }
+}
+
+// 只重发当前 publication 中失败的渠道（用于 partial 状态）
+async function handleRetryFailedChannels(sub) {
+  const pub = publicationsMap.value[sub.id]
+  if (!pub?.id) {
+    ElMessage.error('找不到发布记录')
+    return
+  }
+  retryingFailedChannels.value = sub.id
+  try {
+    const updated = await retryFailedChannels(pub.id)
+    publicationsMap.value = { ...publicationsMap.value, [sub.id]: updated }
+    ElMessage.success('已重新提交失败的渠道')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '重发失败渠道失败')
+  } finally {
+    retryingFailedChannels.value = null
   }
 }
 
@@ -2505,6 +2540,20 @@ onUnmounted(() => {
 .ad-metrics-btn:hover {
   background: #e0e7ff;
   border-color: #a5b4fc;
+}
+.ad-metrics-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.ad-retry-failed-btn {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+  margin-left: 6px;
+}
+.ad-retry-failed-btn:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
 }
 
 /* 数据指标弹窗 */

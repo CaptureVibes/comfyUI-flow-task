@@ -532,6 +532,23 @@ async def retry_publication(
         raise HTTPException(status_code=500, detail=f"重试发布失败: {str(e)}")
 
 
+@router.post("/video-publications/{publication_id}/retry-failed", response_model=VideoPublicationRead)
+async def retry_failed_channels(
+    publication_id: uuid.UUID,
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """只重发当前 publication 中 status=failed 的渠道，保留已成功的渠道结果。"""
+    owner_id = None if current_user.is_admin else current_user.user_id
+    service = VideoPublicationService(db)
+    try:
+        return await service.retry_failed_channels(publication_id, owner_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重发失败渠道失败: {str(e)}")
+
+
 @router.post("/open-api/callback/publication")
 async def handle_publication_callback(
     callback_data: VideoPublicationStatusUpdate,

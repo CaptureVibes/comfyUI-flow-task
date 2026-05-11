@@ -110,6 +110,15 @@ export async function retryPublication(publicationId) {
 }
 
 /**
+ * 只重发当前 publication 中 status=failed 的渠道。
+ * 适用于 partial 状态（部分平台成功部分失败）的发布记录。
+ */
+export async function retryFailedChannels(publicationId) {
+  const { data } = await http.post(`/video-publications/${publicationId}/retry-failed`)
+  return data
+}
+
+/**
  * 查询上传任务各渠道视频指标
  * @param {Object} params - { task_id?, external_id? }
  */

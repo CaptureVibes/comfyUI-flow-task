@@ -1215,6 +1215,217 @@ class VideoPublicationService:
 
         return pub
 
+    async def retry_failed_channels(
+        self, publication_id: uuid.UUID, owner_id: uuid.UUID | None
+    ) -> VideoPublication:
+        """只重发当前 publication 中 status=failed 的渠道，保留其他已成功的渠道结果。
+
+        适用场景：publication 处于 partial/failed 状态，部分平台成功部分失败。
+        sub_task 状态可能是 published（partial）或 publish_failed（failed）。
+        """
+        from app.models.video_task import VideoSubTask
+
+        pub = await self.get_publication(publication_id)
+        if pub is None:
+            raise HTTPException(status_code=404, detail="发布记录不存在")
+
+        result = await self.db.execute(
+            select(VideoSubTask)
+            .where(VideoSubTask.id == pub.sub_task_id)
+            .options(selectinload(VideoSubTask.task))
+        )
+        sub_task = result.scalar_one_or_none()
+        if sub_task is None:
+            raise HTTPException(status_code=404, detail="子任务不存在")
+        if owner_id is not None and sub_task.task.owner_id != owner_id:
+            raise HTTPException(status_code=403, detail="无权操作")
+
+        existing_statuses: list[dict] = list(pub.channels_status or [])
+        failed_entries = [c for c in existing_statuses if c.get("status") in _FAILED_STATUSES]
+        if not failed_entries:
+            raise HTTPException(status_code=422, detail="没有失败的渠道需要重发")
+
+        payload = pub.request_payload or {}
+        payload_channels = payload.get("channels") or []
+        # 按 (platform, channel_id) 索引原始 channels，用于获取 channel_source 等元信息
+        payload_index: dict[tuple[str, str], dict] = {
+            (str(c.get("platform", "")), str(c.get("channel_id", ""))): c
+            for c in payload_channels
+            if isinstance(c, dict)
+        }
+
+        retry_channels: list[dict] = []
+        for ch in failed_entries:
+            key = (str(ch.get("platform", "")), str(ch.get("channel_id", "")))
+            base = payload_index.get(key)
+            if base is not None:
+                retry_channels.append(dict(base))
+            else:
+                # 回退：用 channels_status 中的 _source 推断 channel_source
+                retry_channels.append({
+                    "platform": ch.get("platform", ""),
+                    "channel_id": ch.get("channel_id", ""),
+                    "channel_name": ch.get("channel_name", ""),
+                    "channel_source": (
+                        "ext_pub" if ch.get("_source") == _SOURCE_EXT_PUB else "openapi"
+                    ),
+                })
+
+        ext_channels = [c for c in retry_channels if c.get("channel_source") == "ext_pub"]
+        openapi_channels = [c for c in retry_channels if c.get("channel_source") != "ext_pub"]
+
+        # 重试时使用账号当前 tier
+        retry_account_tier: str = "test"
+        if sub_task.task and sub_task.task.account_id:
+            tier = await self.db.scalar(
+                select(Account.account_tier).where(Account.id == sub_task.task.account_id)
+            )
+            if tier:
+                retry_account_tier = tier
+
+        payload_promotion_code = payload.get("promotion_code")
+        if (
+            isinstance(payload_promotion_code, str)
+            and len(payload_promotion_code) == 8
+            and payload_promotion_code.isdigit()
+        ):
+            promotion_code: str | None = payload_promotion_code
+        else:
+            promotion_code = pub.promotion_code
+        if not (
+            isinstance(promotion_code, str)
+            and len(promotion_code) == 8
+            and promotion_code.isdigit()
+        ):
+            promotion_code = None
+
+        ext_products = payload.get("ext_products")
+        if not isinstance(ext_products, list):
+            ext_products = pub.ext_products if isinstance(pub.ext_products, list) else []
+
+        data = VideoPublicationCreate(
+            sub_task_id=pub.sub_task_id,
+            video_url=payload.get("video_url", ""),
+            original_video_url=payload.get("original_video_url"),
+            video_type=payload.get("video_type"),
+            title=payload.get("title", ""),
+            description=payload.get("description"),
+            tags=payload.get("tags"),
+            channels=retry_channels,
+        )
+
+        logger.info(
+            "retry_failed_channels start: publication_id=%s sub_task_id=%s "
+            "failed_count=%s openapi=%s ext_pub=%s",
+            pub.id,
+            pub.sub_task_id,
+            len(failed_entries),
+            len(openapi_channels),
+            len(ext_channels),
+        )
+
+        submit_tasks: list[tuple[str, Any]] = []
+        if openapi_channels:
+            submit_tasks.append(("openapi", self._openapi_adapter.submit(
+                data, openapi_channels, promotion_code, ext_products,
+                account_tier=retry_account_tier,
+            )))
+        if ext_channels:
+            submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(
+                data, ext_channels, promotion_code, ext_products,
+            )))
+
+        results = await asyncio.gather(
+            *[t for _, t in submit_tasks],
+            return_exceptions=True,
+        )
+
+        new_open_api_task_id: str | None = None
+        new_statuses: list[dict] = []
+        errors: list[str] = []
+        for (source, _), result in zip(submit_tasks, results):
+            if isinstance(result, Exception):
+                logger.error("retry_failed_channels %s side failed: %s", source, result)
+                errors.append(f"{source}: {result}")
+                failed_for_source = ext_channels if source == "ext_pub" else openapi_channels
+                new_statuses.extend([
+                    {
+                        "platform": c.get("platform", ""),
+                        "channel_id": c["channel_id"],
+                        "channel_name": c.get("channel_name", ""),
+                        "status": "failed",
+                        "platform_video_id": None,
+                        "platform_video_url": None,
+                        "error_message": str(result),
+                        "uploaded_at": None,
+                        "_source": _SOURCE_EXT_PUB if source == "ext_pub" else _SOURCE_OPENAPI,
+                    }
+                    for c in failed_for_source
+                ])
+            else:
+                task_id, channel_statuses = result
+                if source == "openapi" and task_id:
+                    new_open_api_task_id = task_id
+                new_statuses.extend(channel_statuses)
+
+        # 合并：保留非失败的旧条目；用新结果替换之前失败的同 (platform, channel_id) 条目
+        retried_keys = {
+            (str(c.get("platform", "")), str(c.get("channel_id", "")))
+            for c in retry_channels
+        }
+        merged: list[dict] = [
+            c for c in existing_statuses
+            if (str(c.get("platform", "")), str(c.get("channel_id", ""))) not in retried_keys
+        ]
+        merged.extend(new_statuses)
+
+        overall_status = _compute_publication_status(merged)
+        error_message = "; ".join(errors) if errors else None
+
+        # 同步 request_payload：保留全部原始 channels 信息以便后续再次重试
+        updated_payload = dict(payload)
+        updated_payload["promotion_code"] = promotion_code
+        updated_payload["ext_products"] = ext_products
+        updated_payload["_has_openapi"] = bool(openapi_channels) or payload.get("_has_openapi", False)
+        updated_payload["_has_ext_pub"] = bool(ext_channels) or payload.get("_has_ext_pub", False)
+
+        if new_open_api_task_id:
+            pub.open_api_task_id = new_open_api_task_id
+        pub.status = overall_status
+        pub.request_payload = updated_payload
+        pub.promotion_code = promotion_code
+        pub.ext_products = ext_products
+        pub.channels_status = merged or None
+        pub.total_channels = len(merged)
+        pub.completed_channels = sum(1 for c in merged if c.get("status") in _SUCCESS_STATUSES)
+        pub.failed_channels = sum(1 for c in merged if c.get("status") in _FAILED_STATUSES)
+        pub.error_message = error_message
+        if overall_status in ("completed", "partial", "failed"):
+            pub.completed_at = utcnow()
+        # 若仍有非终态条目（如重新提交后变 pending/uploading），等待回调更新 completed_at
+        else:
+            pub.completed_at = None
+
+        await _apply_publication_status_to_sub_task(
+            self.db,
+            sub_task_id=pub.sub_task_id,
+            publication_status=overall_status,
+        )
+        await self.db.commit()
+        await self.db.refresh(pub)
+
+        logger.info(
+            "retry_failed_channels done: publication_id=%s sub_task_id=%s status=%s "
+            "completed=%s failed=%s",
+            pub.id, pub.sub_task_id, overall_status,
+            pub.completed_channels, pub.failed_channels,
+        )
+
+        if errors and len(errors) == len(submit_tasks):
+            raise RuntimeError(f"所有渠道重发提交失败: {error_message}")
+
+        return pub
+
     async def get_publication(self, publication_id: uuid.UUID) -> VideoPublication | None:
         """获取发布任务"""
         from sqlalchemy import select
