@@ -14,7 +14,10 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.account import Account
 from app.models.account_channel_reservation import AccountChannelReservation
-from app.services.channel_status_poller import refresh_reservation_channel_status
+from app.services.channel_status_poller import (
+    query_channel_authorization,
+    refresh_reservation_channel_status,
+)
 from app.schemas.account import (
     ExternalBindOpenAPIChannelBody,
     ExternalBindOpenAPIChannelResponse,
@@ -236,6 +239,36 @@ async def bind_openapi_channel_openapi(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
 
     platform = body.platform.lower()
+
+    # 优先以 Open API authorization 接口返回的 channel 信息为准：调用方传 username
+    # 时往往不知道平台真实的 channel_id（如 TikTok 的 users.id、Instagram 的 account_id），
+    # Open API 会根据 username/handle 反查并返回规范化的 {platform, channel_id, channel_name}。
+    # 没有 username 时回退用 body.channel_id 做查询键。
+    binding_payload = _channel_binding_payload(body)
+    lookup_key = (body.username or body.channel_id or "").strip()
+    if lookup_key:
+        try:
+            auth_result = await query_channel_authorization(platform, lookup_key)
+        except Exception as exc:
+            logger.warning(
+                "bind_openapi_channel_openapi: authorization 查询失败 account_id=%s platform=%s lookup=%s err=%s",
+                account_id, platform, lookup_key, exc,
+            )
+            auth_result = None
+        auth_channel = (auth_result or {}).get("channel") if auth_result else None
+        if isinstance(auth_channel, dict):
+            if auth_channel.get("channel_id"):
+                binding_payload["channel_id"] = str(auth_channel["channel_id"])
+            if auth_channel.get("channel_name"):
+                binding_payload["channel_name"] = str(auth_channel["channel_name"])
+            logger.info(
+                "bind_openapi_channel_openapi: 使用 authorization 返回的 channel 信息 "
+                "account_id=%s platform=%s channel_id=%s channel_name=%s",
+                account_id, platform,
+                binding_payload.get("channel_id"),
+                binding_payload.get("channel_name"),
+            )
+
     reservation = await session.scalar(
         select(AccountChannelReservation)
         .where(AccountChannelReservation.account_id == account_id)
@@ -252,12 +285,12 @@ async def bind_openapi_channel_openapi(
             confirmed_at=now,
         )
         session.add(reservation)
-        _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
+        _apply_channel_binding(reservation, binding_payload, now=now)
         await refresh_reservation_channel_status(reservation)
         await session.commit()
     elif reservation.status != "bound":
         # 旧 reservation 但尚未 bound（reserved/confirmed），允许覆盖完成绑定
-        _apply_channel_binding(reservation, _channel_binding_payload(body), now=now)
+        _apply_channel_binding(reservation, binding_payload, now=now)
         await refresh_reservation_channel_status(reservation)
         await session.commit()
     # 已 bound：保持原值，直接返回当前数据

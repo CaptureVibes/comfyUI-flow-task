@@ -150,12 +150,17 @@ async def query_channel_authorization(
     client: httpx.AsyncClient | None = None,
     base_url: str | None = None,
 ) -> dict:
-    """查询单个频道授权状态，返回与 _check_one 一致的结构。"""
+    """查询单个频道授权状态，返回与 _check_one 一致的结构。
+
+    新版 Open API 在 data 下额外返回 `channel: {platform, channel_id, channel_name}`
+    供调用方矫正 channel_id / channel_name；本函数将其原样透传在 `channel` 字段。
+    """
     if not channel_id:
         return {
             "result": "not_found",
             "new_status": None,
             "authorization_status": None,
+            "channel": None,
         }
 
     base_url = (base_url or settings.open_api_base_url).rstrip("/")
@@ -169,7 +174,9 @@ async def query_channel_authorization(
         )
         resp.raise_for_status()
         data = resp.json()
-        status_val: str = (data.get("data") or {}).get("status", "")
+        data_obj = data.get("data") or {}
+        status_val: str = data_obj.get("status", "")
+        channel_obj = data_obj.get("channel") if isinstance(data_obj.get("channel"), dict) else None
     except Exception as exc:
         logger.warning(
             "【频道状态轮询】查询 %s(%s) 失败: %s",
@@ -181,6 +188,7 @@ async def query_channel_authorization(
             "result": "request_failed",
             "new_status": None,
             "authorization_status": None,
+            "channel": None,
         }
     finally:
         if owns_client:
@@ -191,6 +199,7 @@ async def query_channel_authorization(
         "result": "resolved",
         "new_status": new_status,
         "authorization_status": status_val or None,
+        "channel": channel_obj,
     }
 
 
