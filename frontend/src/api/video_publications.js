@@ -110,11 +110,14 @@ export async function retryPublication(publicationId) {
 }
 
 /**
- * 只重发当前 publication 中 status=failed 的渠道。
- * 适用于 partial 状态（部分平台成功部分失败）的发布记录。
+ * 重发当前 publication 中某个失败渠道（platform + channel_id 指定）。
+ * 用于「查看数据」弹窗内单平台重发。
  */
-export async function retryFailedChannels(publicationId) {
-  const { data } = await http.post(`/video-publications/${publicationId}/retry-failed`)
+export async function retryPublicationChannel(publicationId, { platform, channel_id }) {
+  const { data } = await http.post(
+    `/video-publications/${publicationId}/retry-channel`,
+    { platform, channel_id },
+  )
   return data
 }
 

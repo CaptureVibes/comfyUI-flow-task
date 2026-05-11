@@ -1215,13 +1215,17 @@ class VideoPublicationService:
 
         return pub
 
-    async def retry_failed_channels(
-        self, publication_id: uuid.UUID, owner_id: uuid.UUID | None
+    async def retry_publication_channel(
+        self,
+        publication_id: uuid.UUID,
+        platform: str,
+        channel_id: str,
+        owner_id: uuid.UUID | None,
     ) -> VideoPublication:
-        """只重发当前 publication 中 status=failed 的渠道，保留其他已成功的渠道结果。
+        """只重发当前 publication 中指定 (platform, channel_id) 的失败渠道。
 
-        适用场景：publication 处于 partial/failed 状态，部分平台成功部分失败。
-        sub_task 状态可能是 published（partial）或 publish_failed（failed）。
+        其他渠道（包括已成功和其他失败渠道）结果原样保留，便于用户在「查看数据」
+        弹窗内逐个手动重发失败平台。
         """
         from app.models.video_task import VideoSubTask
 
@@ -1240,10 +1244,23 @@ class VideoPublicationService:
         if owner_id is not None and sub_task.task.owner_id != owner_id:
             raise HTTPException(status_code=403, detail="无权操作")
 
+        target_platform = str(platform or "")
+        target_channel_id = str(channel_id or "")
+        if not target_platform or not target_channel_id:
+            raise HTTPException(status_code=422, detail="platform 和 channel_id 不能为空")
+
         existing_statuses: list[dict] = list(pub.channels_status or [])
-        failed_entries = [c for c in existing_statuses if c.get("status") in _FAILED_STATUSES]
+        target_key = (target_platform, target_channel_id)
+        failed_entries = [
+            c for c in existing_statuses
+            if c.get("status") in _FAILED_STATUSES
+            and (str(c.get("platform", "")), str(c.get("channel_id", ""))) == target_key
+        ]
         if not failed_entries:
-            raise HTTPException(status_code=422, detail="没有失败的渠道需要重发")
+            raise HTTPException(
+                status_code=422,
+                detail=f"指定渠道 {target_platform}/{target_channel_id} 当前不是失败状态，无需重发",
+            )
 
         payload = pub.request_payload or {}
         payload_channels = payload.get("channels") or []
@@ -1315,13 +1332,13 @@ class VideoPublicationService:
         )
 
         logger.info(
-            "retry_failed_channels start: publication_id=%s sub_task_id=%s "
-            "failed_count=%s openapi=%s ext_pub=%s",
+            "retry_publication_channel start: publication_id=%s sub_task_id=%s "
+            "platform=%s channel_id=%s source=%s",
             pub.id,
             pub.sub_task_id,
-            len(failed_entries),
-            len(openapi_channels),
-            len(ext_channels),
+            target_platform,
+            target_channel_id,
+            "ext_pub" if ext_channels else "openapi",
         )
 
         submit_tasks: list[tuple[str, Any]] = []
@@ -1345,7 +1362,7 @@ class VideoPublicationService:
         errors: list[str] = []
         for (source, _), result in zip(submit_tasks, results):
             if isinstance(result, Exception):
-                logger.error("retry_failed_channels %s side failed: %s", source, result)
+                logger.error("retry_publication_channel %s side failed: %s", source, result)
                 errors.append(f"{source}: {result}")
                 failed_for_source = ext_channels if source == "ext_pub" else openapi_channels
                 new_statuses.extend([
@@ -1415,14 +1432,15 @@ class VideoPublicationService:
         await self.db.refresh(pub)
 
         logger.info(
-            "retry_failed_channels done: publication_id=%s sub_task_id=%s status=%s "
-            "completed=%s failed=%s",
-            pub.id, pub.sub_task_id, overall_status,
-            pub.completed_channels, pub.failed_channels,
+            "retry_publication_channel done: publication_id=%s sub_task_id=%s "
+            "platform=%s channel_id=%s status=%s completed=%s failed=%s",
+            pub.id, pub.sub_task_id,
+            target_platform, target_channel_id,
+            overall_status, pub.completed_channels, pub.failed_channels,
         )
 
         if errors and len(errors) == len(submit_tasks):
-            raise RuntimeError(f"所有渠道重发提交失败: {error_message}")
+            raise RuntimeError(f"渠道重发提交失败: {error_message}")
 
         return pub
 

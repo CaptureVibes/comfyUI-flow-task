@@ -326,15 +326,6 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 查看数据
               </button>
-              <button
-                v-if="hasFailedChannel(item.sub)"
-                class="ad-metrics-btn ad-retry-failed-btn"
-                :disabled="retryingFailedChannels === item.sub.id"
-                @click.stop="handleRetryFailedChannels(item.sub)"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                {{ retryingFailedChannels === item.sub.id ? '重发中…' : '重发失败渠道' }}
-              </button>
             </div>
 
             <!-- Action buttons -->
@@ -700,7 +691,17 @@
               <span v-if="ch.channel_name" class="metrics-ch-name">{{ ch.channel_name }}</span>
               <span class="metrics-ch-status" :class="`metrics-ch-status-${ch.status}`">{{ ch.status === 'completed' ? '成功' : ch.status === 'failed' ? '失败' : ch.status }}</span>
               <a v-if="ch.platform_video_url" :href="ch.platform_video_url" target="_blank" class="metrics-ch-link">查看视频 ↗</a>
+              <button
+                v-if="ch.status === 'failed'"
+                class="metrics-ch-retry-btn"
+                :disabled="retryingChannelKey === `${ch.platform}|${ch.channel_id}`"
+                @click="handleRetryChannel(ch)"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                {{ retryingChannelKey === `${ch.platform}|${ch.channel_id}` ? '重发中…' : '重发' }}
+              </button>
             </div>
+            <div v-if="ch.status === 'failed' && ch.error_message" class="metrics-ch-error">{{ ch.error_message }}</div>
 
             <!-- video_info 卡片 -->
             <div v-if="ch.video_info" class="metrics-video-info">
@@ -769,7 +770,7 @@ import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccount, fetchAIGenerationStatus, selectAIPhotoCandidate, updateScheduledPublish, patchAccount } from '../api/accounts'
 import { fetchSubtasksByAccount, fetchSubtaskCountsByAccount, patchSubTaskStatus, rollbackSubTaskStatus, deleteSubTask, enqueueSubTask, dequeueSubTask, regeneratePublishMeta } from '../api/video_tasks'
-import { fetchSubTaskPublications, fetchUploadMetrics, retryPublication, retryFailedChannels } from '../api/video_publications'
+import { fetchSubTaskPublications, fetchUploadMetrics, retryPublication, retryPublicationChannel } from '../api/video_publications'
 import http from '../api/http'
 
 import PublishVideoDialog from '../components/PublishVideoDialog.vue'
@@ -819,7 +820,7 @@ const tasksLoading = ref(false)
 const activeTab = ref('pending_publish')
 const rollbacking = ref(null)
 const retrying = ref(null)
-const retryingFailedChannels = ref(null)
+const retryingChannelKey = ref(null)  // 「查看数据」弹窗内单渠道重发标识：`${platform}|${channel_id}`
 const deleting = ref(null)
 const enqueuing = ref(null)
 const dequeuing = ref(null)
@@ -852,6 +853,8 @@ const metricsVisible = ref(false)
 const metricsLoading = ref(false)
 const metricsData = ref(null)
 const metricsTitle = ref('')
+const metricsSubId = ref(null)
+const metricsPubId = ref(null)
 
 // filteredSubTasks: 直接用当前 tab 从接口拿到的数据，格式 { task, sub }
 const filteredSubTasks = computed(() =>
@@ -873,12 +876,6 @@ function fmtDate(iso) {
 }
 
 function platformLabel(p) { return PLATFORM_LABELS[p] || p }
-
-function hasFailedChannel(sub) {
-  const list = publicationsMap.value[sub.id]?.channels_status
-  if (!Array.isArray(list) || !list.length) return false
-  return list.some(ch => ch.status === 'failed')
-}
 const boundChannelBindings = computed(() =>
   (account.value?.channel_reservations || [])
     .filter(item => item.status === 'bound')
@@ -1078,25 +1075,6 @@ async function handleRetryPublish(_task, sub) {
   }
 }
 
-// 只重发当前 publication 中失败的渠道（用于 partial 状态）
-async function handleRetryFailedChannels(sub) {
-  const pub = publicationsMap.value[sub.id]
-  if (!pub?.id) {
-    ElMessage.error('找不到发布记录')
-    return
-  }
-  retryingFailedChannels.value = sub.id
-  try {
-    const updated = await retryFailedChannels(pub.id)
-    publicationsMap.value = { ...publicationsMap.value, [sub.id]: updated }
-    ElMessage.success('已重新提交失败的渠道')
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '重发失败渠道失败')
-  } finally {
-    retryingFailedChannels.value = null
-  }
-}
-
 // 入队（pending_publish → queued）
 async function handleEnqueue(sub) {
   enqueuing.value = sub.id
@@ -1173,6 +1151,8 @@ async function openMetrics(sub, taskTitle) {
     return
   }
   metricsTitle.value = taskTitle || sub.title || '视频数据指标'
+  metricsSubId.value = sub.id
+  metricsPubId.value = pub.id
   metricsData.value = null
   metricsVisible.value = true
   metricsLoading.value = true
@@ -1184,6 +1164,43 @@ async function openMetrics(sub, taskTitle) {
     metricsVisible.value = false
   } finally {
     metricsLoading.value = false
+  }
+}
+
+// 「查看数据」弹窗内：重发单个失败渠道
+async function handleRetryChannel(ch) {
+  const pubId = metricsPubId.value
+  const subId = metricsSubId.value
+  if (!pubId || !subId) {
+    ElMessage.error('发布记录信息缺失')
+    return
+  }
+  const key = `${ch.platform}|${ch.channel_id}`
+  retryingChannelKey.value = key
+  try {
+    const updated = await retryPublicationChannel(pubId, {
+      platform: ch.platform,
+      channel_id: ch.channel_id,
+    })
+    publicationsMap.value = { ...publicationsMap.value, [subId]: updated }
+    // 本地把弹窗中对应渠道行的状态/错误信息按最新 channels_status 同步刷新
+    // 不重新调 fetchUploadMetrics：openapi 单渠道重发会生成新的 task_id，
+    // 用新 task_id 查询会丢失已成功平台的指标数据。
+    const newStatus = (updated?.channels_status || []).find(
+      c => c.platform === ch.platform && c.channel_id === ch.channel_id,
+    )
+    if (newStatus && metricsData.value?.channels) {
+      metricsData.value.channels = metricsData.value.channels.map(c => (
+        c.platform === ch.platform && c.channel_id === ch.channel_id
+          ? { ...c, status: newStatus.status, error_message: newStatus.error_message, platform_video_id: newStatus.platform_video_id, platform_video_url: newStatus.platform_video_url }
+          : c
+      ))
+    }
+    ElMessage.success(`已重新提交 ${platformLabel(ch.platform)}，请稍后刷新查看完整指标`)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '重发渠道失败')
+  } finally {
+    retryingChannelKey.value = null
   }
 }
 
@@ -2541,20 +2558,6 @@ onUnmounted(() => {
   background: #e0e7ff;
   border-color: #a5b4fc;
 }
-.ad-metrics-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.ad-retry-failed-btn {
-  color: #b91c1c;
-  background: #fef2f2;
-  border-color: #fecaca;
-  margin-left: 6px;
-}
-.ad-retry-failed-btn:hover {
-  background: #fee2e2;
-  border-color: #fca5a5;
-}
 
 /* 数据指标弹窗 */
 .metrics-body {
@@ -2644,6 +2647,37 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .metrics-ch-link:hover { background: #e0e7ff; }
+
+.metrics-ch-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.metrics-ch-retry-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+.metrics-ch-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.metrics-ch-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #b91c1c;
+  word-break: break-word;
+}
 
 .metrics-stats-grid {
   display: grid;
