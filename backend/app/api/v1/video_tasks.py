@@ -309,6 +309,7 @@ async def list_subtasks_by_account(
     from sqlalchemy import func, select
     from app.models.video_task import VideoSubTask, VideoTask
     from app.models.video_ai_template import VideoAITemplate
+    from app.models.video_publication import VideoPublication
     from app.schemas.video_task import TaskSummaryForSub
 
     base = (
@@ -322,11 +323,19 @@ async def list_subtasks_by_account(
     if status:
         base = base.where(VideoSubTask.status == status)
 
-    # queued 按 queue_order 排序；其他按创建时间倒序
+    # queued 按 queue_order 排序；published 按 video_publication.completed_at 倒序；
+    # pending_publish 按权重分；其他按创建时间倒序
     if status == "queued":
         base = base.order_by(VideoSubTask.queue_order.asc().nulls_last())
     elif status == "pending_publish":
         base = base.order_by(VideoSubTask.weighted_total_score.desc().nulls_last())
+    elif status == "published":
+        base = base.outerjoin(
+            VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id
+        ).order_by(
+            VideoPublication.completed_at.desc().nulls_last(),
+            VideoSubTask.created_at.desc(),
+        )
     else:
         base = base.order_by(VideoSubTask.created_at.desc())
 
