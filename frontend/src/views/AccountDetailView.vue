@@ -305,8 +305,8 @@
               <span>{{ item.sub.scoring_error }}</span>
             </div>
 
-            <!-- Channel status (published tab) -->
-            <div v-if="activeTab === 'published' && publicationsMap[item.sub.id]?.channels_status?.length" class="ad-channel-status">
+            <!-- Channel status (published / publish_failed tab) -->
+            <div v-if="(activeTab === 'published' || activeTab === 'publish_failed') && publicationsMap[item.sub.id]?.channels_status?.length" class="ad-channel-status">
               <div
                 v-for="ch in publicationsMap[item.sub.id].channels_status"
                 :key="ch.upload_id || ch.channel_id"
@@ -1266,7 +1266,7 @@ async function loadTab() {
     tabSubTasks.value = pageData.items
     tabTotal.value = pageData.total
     tabCounts.value = counts
-    if (activeTab.value === 'published') {
+    if (activeTab.value === 'published' || activeTab.value === 'publish_failed') {
       publicationsMap.value = {}
       loadPublishedPublications()
     }

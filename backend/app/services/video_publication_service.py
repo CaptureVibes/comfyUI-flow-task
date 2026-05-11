@@ -1074,6 +1074,51 @@ class VideoPublicationService:
         if not payload:
             raise HTTPException(status_code=422, detail="发布记录缺少原始请求参数，无法重试")
 
+        # 重新读 channel 绑定：原 request_payload 里的 channel_id 可能因为换绑失效，
+        # 仅以「原 publication 涉及哪些 platform」作为重试范围，每个 platform 的
+        # channel_id / channel_source / channel_name 从 account_channel_reservations
+        # 实时获取。
+        account_id_for_retry = sub_task.task.account_id if sub_task.task else None
+        if account_id_for_retry is None:
+            raise HTTPException(status_code=422, detail="子任务关联的账号缺失，无法重试")
+
+        original_platforms = list({
+            str(c.get("platform", ""))
+            for c in (payload.get("channels") or [])
+            if isinstance(c, dict) and c.get("platform")
+        })
+        if not original_platforms:
+            raise HTTPException(status_code=422, detail="发布记录缺少 platform 信息，无法重试")
+
+        reservations = (await self.db.execute(
+            select(AccountChannelReservation)
+            .where(AccountChannelReservation.account_id == account_id_for_retry)
+            .where(AccountChannelReservation.platform.in_(original_platforms))
+            .where(AccountChannelReservation.status == "bound")
+        )).scalars().all()
+        reservation_by_platform = {r.platform: r for r in reservations if r.channel_id}
+
+        retry_channels: list[dict] = []
+        missing_platforms: list[str] = []
+        for plat in original_platforms:
+            res = reservation_by_platform.get(plat)
+            if res is None:
+                missing_platforms.append(plat)
+                continue
+            retry_channels.append({
+                "platform": plat,
+                "channel_id": res.channel_id,
+                "channel_name": res.channel_name or "",
+                "channel_source": res.channel_source or "openapi",
+            })
+        if missing_platforms:
+            raise HTTPException(
+                status_code=422,
+                detail=f"账号当前未绑定以下平台或绑定渠道缺失，无法重试: {', '.join(missing_platforms)}",
+            )
+        if not retry_channels:
+            raise HTTPException(status_code=422, detail="发布记录缺少发布渠道，无法重试")
+
         data = VideoPublicationCreate(
             sub_task_id=pub.sub_task_id,
             video_url=payload.get("video_url", ""),
@@ -1082,12 +1127,10 @@ class VideoPublicationService:
             title=payload.get("title", ""),
             description=payload.get("description"),
             tags=payload.get("tags"),
-            channels=payload.get("channels") or [],
+            channels=retry_channels,
         )
         ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
-        if not data.channels:
-            raise HTTPException(status_code=422, detail="发布记录缺少发布渠道，无法重试")
 
         ext_products = payload.get("ext_products")
         if not isinstance(ext_products, list):
@@ -1121,6 +1164,7 @@ class VideoPublicationService:
 
         request_payload = dict(payload)
         request_payload.update({
+            "channels": retry_channels,
             "promotion_code": promotion_code,
             "ext_products": ext_products,
             "_has_openapi": bool(openapi_channels),
