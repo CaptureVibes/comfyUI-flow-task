@@ -60,10 +60,13 @@ class AccountFirstPub:
 
 async def _load_prod_accounts_with_first_pub(
     session: AsyncSession,
+    *,
+    owner_id: uuid.UUID | None = None,
 ) -> list[AccountFirstPub]:
-    """拉取所有 prod 账号 + 它们最早一条 openapi video_publication（按 created_at）。
+    """拉取（指定 owner 或全部）prod 账号 + 它们最早一条 openapi video_publication。
 
     `open_api_task_id IS NOT NULL` 充当「openapi 侧」的判别。
+    owner_id=None 表示 admin 全量查看。
     """
     # 子查询：每个 account 最早一条 openapi 发布的 created_at
     subq = (
@@ -99,6 +102,8 @@ async def _load_prod_accounts_with_first_pub(
         )
         .where(Account.account_tier == "prod")
     )
+    if owner_id is not None:
+        stmt = stmt.where(Account.owner_id == owner_id)
     rows = (await session.execute(stmt)).all()
 
     seen: set[uuid.UUID] = set()
@@ -179,16 +184,29 @@ async def generate_plan(
     target_total: int,
     start_date: date,
     end_date: date,
+    owner_id: uuid.UUID | None,
     seed: int | None = None,
 ) -> GenerationResult:
-    """全量重跑：清空 formal_video_backfills 后按曲线随机分配账号。"""
+    """全量重跑：清空（owner 范围内）formal_video_backfills 后按曲线随机分配账号。
+
+    owner_id=None 表示 admin 全量。
+    """
     rng = random.Random(seed)
 
-    # 1. 清空
-    await session.execute(delete(FormalVideoBackfill))
+    # 1. 清空（按 owner 范围）
+    if owner_id is None:
+        await session.execute(delete(FormalVideoBackfill))
+    else:
+        # 仅删除属于当前 owner 的 backfill 行
+        owner_account_ids_stmt = select(Account.id).where(Account.owner_id == owner_id)
+        await session.execute(
+            delete(FormalVideoBackfill).where(
+                FormalVideoBackfill.account_id.in_(owner_account_ids_stmt)
+            )
+        )
 
     # 2. 候选池
-    candidates = await _load_prod_accounts_with_first_pub(session)
+    candidates = await _load_prod_accounts_with_first_pub(session, owner_id=owner_id)
     rng.shuffle(candidates)
     by_id = {c.account_id: c for c in candidates}
     unassigned: set[uuid.UUID] = set(by_id.keys())
@@ -270,9 +288,17 @@ async def generate_plan(
     )
 
 
-async def clear_plan(session: AsyncSession) -> int:
-    """删除全部 formal_video_backfills 行，返回删除数。"""
-    result = await session.execute(delete(FormalVideoBackfill))
+async def clear_plan(session: AsyncSession, *, owner_id: uuid.UUID | None) -> int:
+    """删除 formal_video_backfills 行（owner 范围）；admin 传 None 删全部。"""
+    if owner_id is None:
+        result = await session.execute(delete(FormalVideoBackfill))
+    else:
+        owner_account_ids_stmt = select(Account.id).where(Account.owner_id == owner_id)
+        result = await session.execute(
+            delete(FormalVideoBackfill).where(
+                FormalVideoBackfill.account_id.in_(owner_account_ids_stmt)
+            )
+        )
     await session.commit()
     return int(result.rowcount or 0)
 
@@ -300,8 +326,8 @@ def _video_metrics_total(metrics_snapshot: dict | None) -> tuple[int, int]:
     return total_views, total_likes
 
 
-async def get_summary(session: AsyncSession) -> dict:
-    """返回当前方案的每日统计、指标曲线、LTV、周窗口和增长倍数。
+async def get_summary(session: AsyncSession, *, owner_id: uuid.UUID | None) -> dict:
+    """返回当前方案（owner 范围）的每日统计、指标曲线、LTV、周窗口和增长倍数。
 
     口径：每日 views / likes 直接取「当日发布的视频」当前 metrics_snapshot 累计总和。
     每日定时任务覆盖 metrics_snapshot 即可（新数据覆盖旧的就行）。
@@ -310,10 +336,16 @@ async def get_summary(session: AsyncSession) -> dict:
                     new_views, new_likes, ltv}]
     weekly_views: [{label, start, end, avg_daily_views, growth_multiplier}]
     growth_summary: {weekly, monthly, quarterly}
+
+    owner_id=None 表示 admin 全量查看。
     """
-    backfill_rows = (await session.execute(
+    bf_stmt = (
         select(FormalVideoBackfill.account_id, FormalVideoBackfill.promotion_date)
-    )).all()
+        .join(Account, Account.id == FormalVideoBackfill.account_id)
+    )
+    if owner_id is not None:
+        bf_stmt = bf_stmt.where(Account.owner_id == owner_id)
+    backfill_rows = (await session.execute(bf_stmt)).all()
     if not backfill_rows:
         return {
             "total_accounts": 0,
@@ -471,9 +503,11 @@ async def get_summary(session: AsyncSession) -> dict:
     }
 
 
-async def export_task_ids(session: AsyncSession) -> list[str]:
-    """扁平输出所有正式视频的 open_api_task_id 列表（去重）。"""
-    rows = (await session.execute(
+async def export_task_ids(
+    session: AsyncSession, *, owner_id: uuid.UUID | None
+) -> list[str]:
+    """扁平输出（owner 范围）所有正式视频的 open_api_task_id 列表（去重）。"""
+    stmt = (
         select(
             VideoPublication.open_api_task_id,
             VideoTask.account_id,
@@ -483,8 +517,12 @@ async def export_task_ids(session: AsyncSession) -> list[str]:
         .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
         .join(VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id)
         .join(FormalVideoBackfill, FormalVideoBackfill.account_id == VideoTask.account_id)
+        .join(Account, Account.id == FormalVideoBackfill.account_id)
         .where(VideoPublication.open_api_task_id.isnot(None))
-    )).all()
+    )
+    if owner_id is not None:
+        stmt = stmt.where(Account.owner_id == owner_id)
+    rows = (await session.execute(stmt)).all()
 
     seen: set[str] = set()
     out: list[str] = []

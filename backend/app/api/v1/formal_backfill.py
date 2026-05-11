@@ -1,6 +1,6 @@
 """临时需求：正式号回填 API。
 
-仅 admin 可访问。提供生成 / 清空 / 查询 / 导出四个端点，前端用一个独立页面驱动。
+任意登录用户可见；admin 看全量，非 admin 仅看自己 owner_id 下的数据。
 """
 from __future__ import annotations
 
@@ -24,10 +24,9 @@ router = APIRouter(prefix="/formal-backfill", tags=["formal-backfill"])
 logger = logging.getLogger("app.formal_backfill")
 
 
-def _require_admin(current_user: TokenData = Depends(get_current_user)) -> TokenData:
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-    return current_user
+def _resolve_owner_id(current_user: TokenData) -> str | None:
+    """admin → None（全量）；其他用户 → 自己的 user_id。"""
+    return None if current_user.is_admin else current_user.user_id
 
 
 class GeneratePlanBody(BaseModel):
@@ -48,7 +47,7 @@ class GeneratePlanResponse(BaseModel):
 @router.post("/generate", response_model=GeneratePlanResponse)
 async def generate_formal_backfill(
     body: GeneratePlanBody,
-    _: TokenData = Depends(_require_admin),
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> GeneratePlanResponse:
     if body.end_date < body.start_date:
@@ -58,6 +57,7 @@ async def generate_formal_backfill(
         target_total=body.target_total,
         start_date=body.start_date,
         end_date=body.end_date,
+        owner_id=_resolve_owner_id(current_user),
         seed=body.seed,
     )
     return GeneratePlanResponse(
@@ -71,25 +71,25 @@ async def generate_formal_backfill(
 
 @router.delete("")
 async def clear_formal_backfill(
-    _: TokenData = Depends(_require_admin),
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    deleted = await clear_plan(session)
+    deleted = await clear_plan(session, owner_id=_resolve_owner_id(current_user))
     return {"deleted": deleted}
 
 
 @router.get("/summary")
 async def get_formal_backfill_summary(
-    _: TokenData = Depends(_require_admin),
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await get_summary(session)
+    return await get_summary(session, owner_id=_resolve_owner_id(current_user))
 
 
 @router.get("/export")
 async def export_formal_backfill(
-    _: TokenData = Depends(_require_admin),
+    current_user: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    task_ids = await export_task_ids(session)
+    task_ids = await export_task_ids(session, owner_id=_resolve_owner_id(current_user))
     return {"total": len(task_ids), "task_ids": task_ids}
