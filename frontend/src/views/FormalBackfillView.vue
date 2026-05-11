@@ -175,14 +175,18 @@ import {
 } from '../api/formal_backfill'
 
 // ── Inline minimal SVG charts (no external chart lib dep) ─────────────────
+const _fmt = n => Intl.NumberFormat('en-US').format(n)
+
 const LineChart = {
   props: {
     points: { type: Array, required: true },  // [{x:dateStr, y:number}]
     height: { type: Number, default: 260 },
     stroke: { type: String, default: '#3b82f6' },
     fill: { type: String, default: 'rgba(59,130,246,0.08)' },
+    valueLabel: { type: String, default: '数值' },
   },
   setup(props) {
+    const hoverIdx = ref(null)
     return () => {
       const W = 1100
       const H = props.height
@@ -197,7 +201,7 @@ const LineChart = {
       const yMax = Math.max(...ys, 1)
       const yMin = Math.min(...ys, 0)
       const range = yMax - yMin || 1
-      const xOf = i => pts.length <= 1 ? 0 : (innerW * i) / (pts.length - 1)
+      const xOf = i => pts.length <= 1 ? innerW / 2 : (innerW * i) / (pts.length - 1)
       const yOf = v => innerH - (innerH * (v - yMin)) / range
       const polyline = pts.map((p, i) => `${xOf(i)},${yOf(p.y)}`).join(' ')
       const area = `${xOf(0)},${innerH} ${polyline} ${xOf(pts.length - 1)},${innerH}`
@@ -213,10 +217,52 @@ const LineChart = {
         xLabels.push({ x: xOf(last), label: pts[last].x.slice(5) })
       }
 
-      // Y label ticks (max + min only, like the mockup)
-      const fmt = n => Intl.NumberFormat('en-US').format(n)
+      // Hover overlay: 跟踪鼠标在 SVG 内的 x 坐标，吸附到最近的点
+      const onMove = (evt) => {
+        const svg = evt.currentTarget.ownerSVGElement
+        const ctm = svg.getScreenCTM()
+        if (!ctm) return
+        const pt = svg.createSVGPoint()
+        pt.x = evt.clientX
+        pt.y = evt.clientY
+        const local = pt.matrixTransform(ctm.inverse())
+        const xInChart = local.x - padL
+        let bestIdx = 0
+        let bestDist = Infinity
+        for (let i = 0; i < pts.length; i++) {
+          const d = Math.abs(xOf(i) - xInChart)
+          if (d < bestDist) { bestDist = d; bestIdx = i }
+        }
+        hoverIdx.value = bestIdx
+      }
+      const onLeave = () => { hoverIdx.value = null }
 
-      return h('svg', { viewBox: `0 0 ${W} ${H}`, style: 'width:100%;height:auto;display:block' }, [
+      // Tooltip
+      const tooltipNodes = []
+      if (hoverIdx.value != null && hoverIdx.value < pts.length) {
+        const i = hoverIdx.value
+        const p = pts[i]
+        const cx = xOf(i)
+        const cy = yOf(p.y)
+        const label = `${p.x}  ·  ${_fmt(p.y)}`
+        // 文字大致宽度估算
+        const tw = Math.max(120, label.length * 7 + 16)
+        const tipX = Math.min(Math.max(cx - tw / 2, 0), innerW - tw)
+        const tipY = Math.max(cy - 38, -padT + 4)
+        tooltipNodes.push(
+          h('line', { x1: cx, x2: cx, y1: 0, y2: innerH, stroke: '#94a3b8', 'stroke-width': 1, 'stroke-dasharray': '3 3' }),
+          h('circle', { cx, cy, r: 4.5, fill: '#fff', stroke: props.stroke, 'stroke-width': 2 }),
+          h('g', { transform: `translate(${tipX},${tipY})`, style: 'pointer-events:none' }, [
+            h('rect', { x: 0, y: 0, width: tw, height: 28, rx: 4, ry: 4, fill: '#0f172a', opacity: 0.92 }),
+            h('text', { x: tw / 2, y: 18, 'text-anchor': 'middle', 'font-size': 12, fill: '#fff' }, label),
+          ]),
+        )
+      }
+
+      return h('svg', {
+        viewBox: `0 0 ${W} ${H}`,
+        style: 'width:100%;height:auto;display:block',
+      }, [
         h('g', { transform: `translate(${padL},${padT})` }, [
           // gridlines
           h('g', null, [
@@ -228,10 +274,19 @@ const LineChart = {
           h('polygon', { points: area, fill: props.fill, stroke: 'none' }),
           h('polyline', { points: polyline, fill: 'none', stroke: props.stroke, 'stroke-width': 2.4, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }),
           // y labels (max + min)
-          h('text', { x: -10, y: 8, 'text-anchor': 'end', 'font-size': 11, fill: '#64748b' }, fmt(yMax)),
-          h('text', { x: -10, y: innerH + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#64748b' }, fmt(yMin)),
+          h('text', { x: -10, y: 8, 'text-anchor': 'end', 'font-size': 11, fill: '#64748b' }, _fmt(yMax)),
+          h('text', { x: -10, y: innerH + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#64748b' }, _fmt(yMin)),
           // x labels
           ...xLabels.map(l => h('text', { x: l.x, y: innerH + 18, 'text-anchor': 'middle', 'font-size': 11, fill: '#94a3b8' }, l.label)),
+          // tooltip overlay
+          ...tooltipNodes,
+          // hover hit area (放最后，覆盖在上面但 fill 透明)
+          h('rect', {
+            x: 0, y: 0, width: innerW, height: innerH,
+            fill: 'transparent',
+            onMousemove: onMove,
+            onMouseleave: onLeave,
+          }),
         ]),
       ])
     }
@@ -244,6 +299,7 @@ const WeeklyBarLineChart = {
     height: { type: Number, default: 320 },
   },
   setup(props) {
+    const hoverIdx = ref(null)
     return () => {
       const W = 1100
       const H = props.height
@@ -259,7 +315,51 @@ const WeeklyBarLineChart = {
       const yMinLine = Math.min(...growthVals, 0.8) * 0.9
       const slot = innerW / ws.length
       const barW = slot * 0.5
-      const fmt = n => Intl.NumberFormat('en-US').format(n)
+
+      // Hover: 鼠标 x 落在哪个柱子上
+      const onMove = (evt) => {
+        const svg = evt.currentTarget.ownerSVGElement
+        const ctm = svg.getScreenCTM()
+        if (!ctm) return
+        const pt = svg.createSVGPoint()
+        pt.x = evt.clientX
+        pt.y = evt.clientY
+        const local = pt.matrixTransform(ctm.inverse())
+        const xInChart = local.x - padL
+        const idx = Math.min(ws.length - 1, Math.max(0, Math.floor(xInChart / slot)))
+        hoverIdx.value = idx
+      }
+      const onLeave = () => { hoverIdx.value = null }
+
+      const tooltipNodes = []
+      if (hoverIdx.value != null) {
+        const i = hoverIdx.value
+        const w = ws[i]
+        const cx = slot * i + slot / 2
+        const lines = [
+          { label: '区间', value: w.label },
+          { label: '日均 views', value: _fmt(w.avg_daily_views) },
+          { label: '周增长倍数', value: `${w.growth_multiplier.toFixed(2)}×` },
+        ]
+        const tw = 200
+        const tipX = Math.min(Math.max(cx - tw / 2, 0), innerW - tw)
+        const tipY = 8
+        tooltipNodes.push(
+          // 高亮柱
+          h('rect', {
+            x: cx - slot / 2, y: 0, width: slot, height: innerH,
+            fill: 'rgba(118,145,183,0.08)',
+          }),
+          // tooltip
+          h('g', { transform: `translate(${tipX},${tipY})`, style: 'pointer-events:none' }, [
+            h('rect', { x: 0, y: 0, width: tw, height: 70, rx: 4, ry: 4, fill: '#0f172a', opacity: 0.92 }),
+            ...lines.map((ln, j) => h('g', null, [
+              h('text', { x: 12, y: 20 + j * 18, 'font-size': 12, fill: '#cbd5e1' }, ln.label),
+              h('text', { x: tw - 12, y: 20 + j * 18, 'text-anchor': 'end', 'font-size': 12, fill: '#fff', 'font-weight': 600 }, ln.value),
+            ])),
+          ]),
+        )
+      }
 
       return h('svg', { viewBox: `0 0 ${W} ${H}`, style: 'width:100%;height:auto;display:block' }, [
         // legend
@@ -276,7 +376,7 @@ const WeeklyBarLineChart = {
           // gridlines
           ...[0, 0.25, 0.5, 0.75, 1].map(p => h('line', { x1: 0, x2: innerW, y1: innerH * p, y2: innerH * p, stroke: '#f1f5f9', 'stroke-width': 1 })),
           // left axis ticks
-          ...[0, 0.25, 0.5, 0.75, 1].map(p => h('text', { x: -8, y: innerH * (1 - p) + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#94a3b8' }, fmt(Math.round(yMaxBar * p)))),
+          ...[0, 0.25, 0.5, 0.75, 1].map(p => h('text', { x: -8, y: innerH * (1 - p) + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#94a3b8' }, _fmt(Math.round(yMaxBar * p)))),
           // right axis ticks
           ...[0, 0.25, 0.5, 0.75, 1].map(p => h('text', { x: innerW + 8, y: innerH * (1 - p) + 4, 'text-anchor': 'start', 'font-size': 11, fill: '#94a3b8' }, (yMinLine + (yMaxLine - yMinLine) * p).toFixed(2) + 'x')),
           // bars
@@ -285,7 +385,7 @@ const WeeklyBarLineChart = {
             const h_ = (innerH * w.avg_daily_views) / yMaxBar
             return h('g', null, [
               h('rect', { x: cx - barW / 2, y: innerH - h_, width: barW, height: h_, fill: '#7691b7' }),
-              h('text', { x: cx, y: innerH - h_ - 6, 'text-anchor': 'middle', 'font-size': 11, fill: '#475569', 'font-weight': 600 }, fmt(w.avg_daily_views)),
+              h('text', { x: cx, y: innerH - h_ - 6, 'text-anchor': 'middle', 'font-size': 11, fill: '#475569', 'font-weight': 600 }, _fmt(w.avg_daily_views)),
               h('text', { x: cx, y: innerH + 16, 'text-anchor': 'middle', 'font-size': 11, fill: '#64748b' }, w.label),
             ])
           }),
@@ -302,6 +402,15 @@ const WeeklyBarLineChart = {
               h('circle', { cx, cy, r: 3.5, fill: '#fff', stroke: '#d97706', 'stroke-width': 2 }),
               h('text', { x: cx, y: cy - 10, 'text-anchor': 'middle', 'font-size': 12, fill: '#d97706', 'font-weight': 700 }, `${w.growth_multiplier.toFixed(2)}×`),
             ])
+          }),
+          // tooltip overlay
+          ...tooltipNodes,
+          // hit area
+          h('rect', {
+            x: 0, y: 0, width: innerW, height: innerH,
+            fill: 'transparent',
+            onMousemove: onMove,
+            onMouseleave: onLeave,
           }),
         ]),
       ])
