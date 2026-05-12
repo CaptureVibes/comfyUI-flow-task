@@ -253,7 +253,12 @@ async def generate_plan(
             continue
 
         take = min(quota, len(pool))
-        chosen = rng.sample(pool, take)
+        # 选取规则：优先挑 first_pub_date 最晚（最不灵活）的账号，把灵活度高的
+        # 早期账号留作后期填补，避免末段池子被掏空出现平台期。
+        # 同 first_pub_date 的多个账号之间仍保留随机性。
+        rng.shuffle(pool)
+        pool.sort(key=lambda cid: by_id[cid].first_pub_date, reverse=True)
+        chosen = pool[:take]
         for cid in chosen:
             c = by_id[cid]
             inserts.append(FormalVideoBackfill(
