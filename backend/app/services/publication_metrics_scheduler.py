@@ -1,8 +1,8 @@
 """
 Publication metrics scheduler
 ==============================
-每天北京时间 12:00 — 同步最近一个月已发布视频的指标快照（completed + partial）
-每天北京时间 13:00 — 根据 video_publications 数据聚合计算每个 Account 的 performance_snapshot
+每天北京时间 11:30 — 同步最近一个月已发布视频的指标快照（completed + partial）
+每天北京时间 12:30 — 根据 video_publications 数据聚合计算每个 Account 的 performance_snapshot
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ logger = logging.getLogger("app.publication_metrics_scheduler")
 
 _TZ = pytz.timezone("Asia/Shanghai")
 
-# 每日定时任务触发时间（北京时间，24小时制）
-_HOUR_SYNC_METRICS = 10        # 同步视频指标快照
-_HOUR_SYNC_ACCOUNT_SNAPSHOT = 11  # 计算账号 performance_snapshot（指标同步后1小时）
+# 每日定时任务触发时间（北京时间，24小时制；HH, MM）
+_TRIGGER_SYNC_METRICS = (11, 30)        # 同步视频指标快照
+_TRIGGER_SYNC_ACCOUNT_SNAPSHOT = (12, 30)  # 计算账号 performance_snapshot（指标同步后1小时）
 
 _scheduler_task: asyncio.Task | None = None
 _scheduler_stop_event: asyncio.Event | None = None
@@ -77,19 +77,26 @@ def _today_key(job: str) -> str:
     return f"{job}:{datetime.now(_TZ).strftime('%Y-%m-%d')}"
 
 
+def _is_in_window(now_bj: datetime, target: tuple[int, int], window_min: int = 2) -> bool:
+    """now_bj 的 (hour, minute) 是否落在 [target, target+window_min) 内。"""
+    now_minutes = now_bj.hour * 60 + now_bj.minute
+    target_minutes = target[0] * 60 + target[1]
+    return 0 <= (now_minutes - target_minutes) < window_min
+
+
 async def _check_and_run() -> None:
     now_bj = datetime.now(_TZ)
 
-    # 每天 12:00 同步指标
-    if now_bj.hour == _HOUR_SYNC_METRICS and now_bj.minute < 2:
+    # 每天 11:30 同步指标
+    if _is_in_window(now_bj, _TRIGGER_SYNC_METRICS):
         key = _today_key("sync_metrics")
         if _last_run.get("sync_metrics") != key:
             _last_run["sync_metrics"] = key
             logger.info("【指标同步调度器】触发每日指标同步（北京时间 %s）", now_bj.strftime("%H:%M"))
             asyncio.get_running_loop().create_task(_run_sync_metrics())
 
-    # 每天 13:00 计算账号快照
-    if now_bj.hour == _HOUR_SYNC_ACCOUNT_SNAPSHOT and now_bj.minute < 2:
+    # 每天 12:30 计算账号快照
+    if _is_in_window(now_bj, _TRIGGER_SYNC_ACCOUNT_SNAPSHOT):
         key = _today_key("sync_account_snapshot")
         if _last_run.get("sync_account_snapshot") != key:
             _last_run["sync_account_snapshot"] = key
