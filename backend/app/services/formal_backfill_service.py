@@ -20,10 +20,22 @@ import math
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _to_utc_date(value: date | datetime | None) -> date | None:
+    """把 timezone-aware datetime 归到 UTC 当日的 date；naive 视为 UTC。"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).date()
+    return value
 
 from app.models.account import Account
 from app.models.formal_video_backfill import FormalVideoBackfill
@@ -68,15 +80,16 @@ async def _load_prod_accounts_with_first_pub(
     `open_api_task_id IS NOT NULL` 充当「openapi 侧」的判别。
     owner_id=None 表示 admin 全量查看。
     """
-    # 子查询：每个 account 最早一条 openapi 发布的 created_at
+    # 子查询：每个 account 最早一条 openapi 发布的 completed_at
     subq = (
         select(
             VideoTask.account_id.label("account_id"),
-            func.min(VideoPublication.created_at).label("first_created_at"),
+            func.min(VideoPublication.completed_at).label("first_completed_at"),
         )
         .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
         .join(VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id)
         .where(VideoPublication.open_api_task_id.isnot(None))
+        .where(VideoPublication.completed_at.isnot(None))
         .where(VideoTask.account_id.isnot(None))
         .group_by(VideoTask.account_id)
         .subquery()
@@ -86,7 +99,7 @@ async def _load_prod_accounts_with_first_pub(
     stmt = (
         select(
             Account.id.label("account_id"),
-            subq.c.first_created_at.label("first_created_at"),
+            subq.c.first_completed_at.label("first_completed_at"),
             VideoPublication.id.label("pub_id"),
         )
         .join(subq, subq.c.account_id == Account.id)
@@ -96,7 +109,7 @@ async def _load_prod_accounts_with_first_pub(
             VideoPublication,
             and_(
                 VideoPublication.sub_task_id == VideoSubTask.id,
-                VideoPublication.created_at == subq.c.first_created_at,
+                VideoPublication.completed_at == subq.c.first_completed_at,
                 VideoPublication.open_api_task_id.isnot(None),
             ),
         )
@@ -112,10 +125,13 @@ async def _load_prod_accounts_with_first_pub(
         if r.account_id in seen:
             continue
         seen.add(r.account_id)
+        first_dt = _to_utc_date(r.first_completed_at)
+        if first_dt is None:
+            continue
         out.append(
             AccountFirstPub(
                 account_id=r.account_id,
-                first_pub_date=r.first_created_at.date(),
+                first_pub_date=first_dt,
                 first_pub_id=r.pub_id,
             )
         )
@@ -374,16 +390,18 @@ async def get_summary(
     total_accounts = len(backfill_rows)
 
     # 拉取所有相关账号的 openapi 发布 + metrics_snapshot
+    # 发布日按 completed_at 取（跟数据统计页一致），未完成的 publication 忽略
     pub_rows = (await session.execute(
         select(
             VideoTask.account_id.label("account_id"),
-            VideoPublication.created_at.label("created_at"),
+            VideoPublication.completed_at.label("completed_at"),
             VideoPublication.metrics_snapshot.label("metrics_snapshot"),
         )
         .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
         .join(VideoPublication, VideoPublication.sub_task_id == VideoSubTask.id)
         .where(VideoTask.account_id.in_(list(account_to_date.keys())))
         .where(VideoPublication.open_api_task_id.isnot(None))
+        .where(VideoPublication.completed_at.isnot(None))
     )).all()
 
     # 过滤正式视频；按发布日聚合 views / likes / count
@@ -399,8 +417,8 @@ async def get_summary(
         promo_date = account_to_date.get(r.account_id)
         if promo_date is None:
             continue
-        pub_date = r.created_at.date() if isinstance(r.created_at, datetime) else r.created_at
-        if pub_date < promo_date:
+        pub_date = _to_utc_date(r.completed_at)
+        if pub_date is None or pub_date < promo_date:
             continue
         v, l = _video_metrics_total(r.metrics_snapshot)
         new_videos_by_date[pub_date] = new_videos_by_date.get(pub_date, 0) + 1
@@ -426,7 +444,7 @@ async def get_summary(
             "end_date": None,
         }
 
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     derived_start = min(
         min(new_acc_by_date.keys()) if new_acc_by_date else today,
         min(new_videos_by_date.keys()) if new_videos_by_date else today,
@@ -529,7 +547,7 @@ async def export_task_ids(
         select(
             VideoPublication.open_api_task_id,
             VideoTask.account_id,
-            VideoPublication.created_at,
+            VideoPublication.completed_at,
             FormalVideoBackfill.promotion_date,
         )
         .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
@@ -537,6 +555,7 @@ async def export_task_ids(
         .join(FormalVideoBackfill, FormalVideoBackfill.account_id == VideoTask.account_id)
         .join(Account, Account.id == FormalVideoBackfill.account_id)
         .where(VideoPublication.open_api_task_id.isnot(None))
+        .where(VideoPublication.completed_at.isnot(None))
     )
     if owner_id is not None:
         stmt = stmt.where(Account.owner_id == owner_id)
@@ -547,8 +566,8 @@ async def export_task_ids(
     for r in rows:
         if not r.open_api_task_id:
             continue
-        d = r.created_at.date() if isinstance(r.created_at, datetime) else r.created_at
-        if d < r.promotion_date:
+        d = _to_utc_date(r.completed_at)
+        if d is None or d < r.promotion_date:
             continue
         tid = str(r.open_api_task_id)
         if tid in seen:

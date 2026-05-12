@@ -422,17 +422,15 @@ async def sync_publication_metrics(
     if query.account_id is not None:
         stmt = stmt.where(VideoTask.account_id == query.account_id)
     if query.date_from is not None:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+        from datetime import datetime, timezone
         stmt = stmt.where(
-            VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
+            VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc)
         )
     if query.date_to is not None:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+        from datetime import datetime, timezone
         next_day = date_type.fromordinal(query.date_to.toordinal() + 1)
         stmt = stmt.where(
-            VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
+            VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
         )
     total = (await db.execute(stmt)).scalar() or 0
 

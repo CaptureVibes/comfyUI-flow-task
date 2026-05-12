@@ -6,10 +6,6 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, date, timezone
-from zoneinfo import ZoneInfo
-
-# 数据统计页用户在 UI 上选的日期按北京时区解释（与展示口径一致）
-_STATS_FILTER_TZ = ZoneInfo("Asia/Shanghai")
 from typing import Any
 
 import httpx
@@ -1670,13 +1666,13 @@ class VideoPublicationService:
         if query.date_from is not None:
             stmt = stmt.where(
                 VideoPublication.completed_at
-                >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=_STATS_FILTER_TZ)
+                >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc)
             )
         if query.date_to is not None:
             next_day = date.fromordinal(query.date_to.toordinal() + 1)
             stmt = stmt.where(
                 VideoPublication.completed_at
-                < datetime.combine(next_day, datetime.min.time(), tzinfo=_STATS_FILTER_TZ)
+                < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
             )
         if query.unclassified:
             stmt = stmt.where(VideoClassification.id.is_(None))
@@ -1976,12 +1972,12 @@ class VideoPublicationService:
             stmt = stmt.where(VideoTask.account_id == query.account_id)
         if query.date_from is not None:
             stmt = stmt.where(
-                VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=_STATS_FILTER_TZ)
+                VideoPublication.completed_at >= datetime.combine(query.date_from, datetime.min.time(), tzinfo=timezone.utc)
             )
         if query.date_to is not None:
             next_day = date.fromordinal(query.date_to.toordinal() + 1)
             stmt = stmt.where(
-                VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=_STATS_FILTER_TZ)
+                VideoPublication.completed_at < datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
             )
 
         publications = list((await self.db.execute(stmt)).scalars().all())
