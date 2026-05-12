@@ -10,24 +10,48 @@
       </p>
     </div>
 
-    <div v-if="!isInvestorMode" class="fb-controls">
+    <div class="fb-controls">
       <div class="fb-field">
-        <label>目标总数 N</label>
-        <el-input-number v-model="form.targetTotal" :min="1" :max="10000" :step="1" />
+        <label>目标总数</label>
+        <el-input-number
+          v-model="form.targetTotal"
+          :min="1"
+          :max="10000"
+          :step="1"
+          controls-position="right"
+          class="fb-input"
+        />
       </div>
       <div class="fb-field">
-        <label>起始日</label>
-        <el-date-picker v-model="form.startDate" type="date" value-format="YYYY-MM-DD" />
+        <label>起始日期</label>
+        <el-date-picker
+          v-model="form.startDate"
+          type="date"
+          value-format="YYYY-MM-DD"
+          :clearable="false"
+          class="fb-input"
+        />
       </div>
       <div class="fb-field">
-        <label>截止日</label>
-        <el-date-picker v-model="form.endDate" type="date" value-format="YYYY-MM-DD" />
+        <label>截止日期</label>
+        <el-date-picker
+          v-model="form.endDate"
+          type="date"
+          value-format="YYYY-MM-DD"
+          :clearable="false"
+          class="fb-input"
+        />
       </div>
-      <div class="fb-field">
+      <div v-if="!isInvestorMode" class="fb-field">
         <label>随机种子（可选）</label>
-        <el-input v-model.number="form.seed" placeholder="留空则真随机" style="width:140px" />
+        <el-input
+          v-model.number="form.seed"
+          placeholder="留空则真随机"
+          class="fb-input"
+          style="width:140px"
+        />
       </div>
-      <div class="fb-actions">
+      <div v-if="!isInvestorMode" class="fb-actions">
         <el-button type="primary" :loading="generating" @click="onGenerate">生成方案</el-button>
         <el-button :loading="clearing" @click="onClear">清空</el-button>
         <el-button :loading="exporting" @click="onExport">导出 task_ids</el-button>
@@ -561,16 +585,80 @@ watch(() => [form.value.startDate, form.value.endDate], () => {
 
 <style scoped>
 .fb-page { padding: 24px; max-width: 1180px; margin: 0 auto; }
-.fb-header h2 { margin: 0 0 8px; font-size: 22px; }
-.fb-desc { color: #64748b; font-size: 13px; margin: 0 0 20px; line-height: 1.7; }
-.fb-controls {
-  display: flex; flex-wrap: wrap; gap: 16px 24px;
-  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
-  padding: 16px 20px; align-items: flex-end;
+.fb-header h2 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
 }
-.fb-field { display: flex; flex-direction: column; gap: 6px; }
-.fb-field label { font-size: 12px; color: #475569; font-weight: 600; }
-.fb-actions { display: flex; gap: 8px; align-items: center; }
+.fb-desc { color: #64748b; font-size: 13px; margin: 0 0 20px; line-height: 1.7; }
+
+/* 重设计的过滤栏 */
+.fb-controls {
+  display: flex; flex-wrap: wrap; gap: 20px 28px;
+  background: #ffffff;
+  border: 1px solid #e6e9ef;
+  border-radius: 14px;
+  padding: 22px 28px;
+  align-items: flex-end;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+.fb-field { display: flex; flex-direction: column; gap: 8px; }
+.fb-field label {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.fb-actions { display: flex; gap: 10px; align-items: center; }
+
+/* 覆写 Element Plus 输入控件，让它更轻、更现代 */
+.fb-input :deep(.el-input__wrapper),
+.fb-input :deep(.el-input-number) {
+  box-shadow: none;
+  border: 1px solid #d8dde6;
+  border-radius: 8px;
+  background: #fbfcfe;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.fb-input :deep(.el-input-number .el-input__wrapper) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.fb-input :deep(.el-input__wrapper:hover),
+.fb-input :deep(.el-input-number:hover) {
+  border-color: #94a3b8;
+  background: #fff;
+}
+.fb-input :deep(.el-input__wrapper.is-focus),
+.fb-input :deep(.el-input-number.is-focus) {
+  border-color: #4f46e5;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+.fb-input :deep(.el-input__inner) {
+  height: 38px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 500;
+}
+.fb-input :deep(.el-input__inner::placeholder) { color: #94a3b8; }
+.fb-input :deep(.el-input-number__decrease),
+.fb-input :deep(.el-input-number__increase) {
+  background: transparent;
+  border-color: transparent;
+  color: #64748b;
+}
+.fb-input :deep(.el-input-number__decrease:hover),
+.fb-input :deep(.el-input-number__increase:hover) {
+  color: #4f46e5;
+}
+.fb-input :deep(.el-date-editor.el-input) {
+  height: 40px;
+}
 .fb-stats { display: flex; gap: 24px; margin: 20px 0 12px; flex-wrap: wrap; }
 .fb-stat {
   background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;

@@ -422,11 +422,14 @@ async def get_summary(
             continue
         v, l = _video_metrics_total(r.metrics_snapshot)
         new_videos_by_date[pub_date] = new_videos_by_date.get(pub_date, 0) + 1
+        total_videos += 1
+        # views == 0 视为数据尚未回流，不计入 views / likes / LTV 统计
+        if v <= 0:
+            continue
         views_by_date[pub_date] = views_by_date.get(pub_date, 0) + v
         likes_by_date[pub_date] = likes_by_date.get(pub_date, 0) + l
         cohort_views_sum[pub_date] = cohort_views_sum.get(pub_date, 0) + v
         cohort_count[pub_date] = cohort_count.get(pub_date, 0) + 1
-        total_videos += 1
 
     # 每日新增账号
     new_acc_by_date: dict[date, int] = {}
