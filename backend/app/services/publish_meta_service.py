@@ -138,9 +138,12 @@ _JSON_SUFFIX = """
 Output strictly as JSON (no markdown, no explanation):
 {"title": "...", "desc": "...", "hashtag": ["tag1", "tag2"]}"""
 
-_PRODUCT_CODE_TITLE_PREFIX = "👇 👀 Get my exact look here 👀 👇"
-# 旧版本曾以下面这个文案作为后缀拼接，保留常量供清洗脚本识别历史数据
+_PRODUCT_CODE_TITLE_PREFIX = "👆Outfit linked in bio"
+# 旧版本曾以下面文案做拼接，保留常量供清洗脚本识别历史数据
 _PRODUCT_CODE_TITLE_LEGACY_SUFFIX = "Get my exact look here 👀 👇"
+_PRODUCT_CODE_TITLE_LEGACY_PREFIX = "👇 👀 Get my exact look here 👀 👇"
+# description 第一段引流文案
+_BIO_LINK_DESC_HEADER = "You can find this outfit through the link in my bio💗"
 
 
 def _format_price_number(value: Any) -> str:
@@ -180,10 +183,12 @@ def _fallback_brand_label(index: int) -> str:
 
 def _build_product_code_description(
     base_description: str,
-    promotion_code: str,
+    promotion_code: str,  # 保留入参兼容旧调用方；新版描述不再使用商品码文案
     ext_products: list[dict],
 ) -> str:
-    lines: list[str] = []
+    del promotion_code  # noqa: F841 — 新版不再拼接「Search code X on Alvin's Club」引流
+    lines: list[str] = [_BIO_LINK_DESC_HEADER]
+
     base = (base_description or "").strip()
     if base:
         lines.append(base)
@@ -205,19 +210,18 @@ def _build_product_code_description(
         price = _format_product_price(product.get("price")) or "price unavailable"
         product_lines.append(f"{label}: {price}")
 
-    code_lines = [
-        f"Love this look? Search code {promotion_code} on Alvin’s Club to shop the exact outfit.",
-        *product_lines,
-    ]
-    lines.append("\n".join(code_lines))
+    if product_lines:
+        lines.append("\n".join(product_lines))
     return "\n\n".join(lines)
 
 
 def _build_product_code_title(base_title: str) -> str:
     title = (base_title or "").strip()
-    # 兼容历史脏数据：去掉旧版后缀，避免再次拼接造成重复
+    # 兼容历史脏数据：去掉旧版后缀 / 前缀，避免再次拼接造成重复
     if title.endswith(_PRODUCT_CODE_TITLE_LEGACY_SUFFIX):
         title = title[: -len(_PRODUCT_CODE_TITLE_LEGACY_SUFFIX)].rstrip()
+    if title.startswith(_PRODUCT_CODE_TITLE_LEGACY_PREFIX):
+        title = title[len(_PRODUCT_CODE_TITLE_LEGACY_PREFIX):].lstrip()
     if not title:
         return _PRODUCT_CODE_TITLE_PREFIX[:100]
     if title.startswith(_PRODUCT_CODE_TITLE_PREFIX):
