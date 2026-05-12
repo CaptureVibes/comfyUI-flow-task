@@ -12,17 +12,6 @@
 
     <div class="fb-controls">
       <div class="fb-field">
-        <label>目标总数</label>
-        <el-input-number
-          v-model="form.targetTotal"
-          :min="1"
-          :max="10000"
-          :step="1"
-          controls-position="right"
-          class="fb-input"
-        />
-      </div>
-      <div class="fb-field">
         <label>起始日期</label>
         <el-date-picker
           v-model="form.startDate"
