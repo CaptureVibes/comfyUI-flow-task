@@ -4,6 +4,7 @@ import DashboardLayout from '../layouts/DashboardLayout.vue'
 import LandingLayout from '../layouts/LandingLayout.vue'
 import LoginView from '../views/LoginView.vue'
 import { TOKEN_KEY } from '../utils/constants'
+import { useInvestorMode } from '../composables/useInvestorMode'
 
 const routes = [
   /* ── Landing page (public, full screen) ── */
@@ -219,6 +220,12 @@ router.beforeEach((to) => {
   }
   if (token && to.path === '/login') {
     return '/dashboard'
+  }
+
+  // 投资人演示模式：除登录页 / formal-backfill 之外的路由都重定向过来
+  const { isInvestorMode } = useInvestorMode()
+  if (isInvestorMode.value && to.path !== '/dashboard/formal-backfill' && to.path !== '/login') {
+    return '/dashboard/formal-backfill'
   }
   return true
 })

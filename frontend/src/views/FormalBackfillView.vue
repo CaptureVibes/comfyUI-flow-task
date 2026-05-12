@@ -1,8 +1,8 @@
 <template>
   <div class="fb-page">
     <div class="fb-header">
-      <h2>正式号回填（临时）</h2>
-      <p class="fb-desc">
+      <h2>{{ isInvestorMode ? '内容增长趋势' : '正式号回填（临时）' }}</h2>
+      <p v-if="!isInvestorMode" class="fb-desc">
         从 4/1 开始把当前 prod 账号的「转正日期」重新随机分布，目标曲线 30 → N 单调递增、后期斜率更大。
         <strong>「生成方案」会先清空旧表再重跑。</strong>
         图表中 views / likes / LTV 的口径：当日数值 = 当日发布的正式视频的当前 metrics_snapshot 累计值之和；
@@ -10,7 +10,7 @@
       </p>
     </div>
 
-    <div class="fb-controls">
+    <div v-if="!isInvestorMode" class="fb-controls">
       <div class="fb-field">
         <label>目标总数 N</label>
         <el-input-number v-model="form.targetTotal" :min="1" :max="10000" :step="1" />
@@ -34,7 +34,7 @@
       </div>
     </div>
 
-    <div v-if="summary" class="fb-stats">
+    <div v-if="summary && !isInvestorMode" class="fb-stats">
       <div class="fb-stat"><strong>{{ summary.total_accounts }}</strong><span>正式号总数</span></div>
       <div class="fb-stat"><strong>{{ summary.total_videos }}</strong><span>正式视频总数</span></div>
       <div class="fb-stat">
@@ -68,7 +68,7 @@
           stroke="#10b981"
           fill="rgba(16, 185, 129, 0.08)"
         />
-        <p class="fb-note">统计口径：当天新发布的视频数量，只计算发布日期落在当天的视频。</p>
+        <p v-if="!isInvestorMode" class="fb-note">统计口径：当天新发布的视频数量，只计算发布日期落在当天的视频。</p>
       </div>
 
       <!-- 表 3 -->
@@ -84,7 +84,7 @@
           stroke="#7c3aed"
           fill="rgba(124, 58, 237, 0.08)"
         />
-        <p class="fb-note">
+        <p v-if="!isInvestorMode" class="fb-note">
           统计口径：定义一个视频的生命周期为 7 天。<br>
           7 日前发布视频的平均 LTV = Σ(7 天前发布的每条视频在发布后 7 日内累计 views) / 7 天前发布的视频总数
         </p>
@@ -99,7 +99,7 @@
           stroke="#ef4444"
           fill="rgba(239, 68, 68, 0.08)"
         />
-        <p class="fb-note">统计口径：截至当天已经创建（转正）的内容账号总数。</p>
+        <p v-if="!isInvestorMode" class="fb-note">统计口径：截至当天已经创建（转正）的内容账号总数。</p>
       </div>
 
       <!-- 表 5 -->
@@ -111,14 +111,14 @@
           stroke="#f59e0b"
           fill="rgba(245, 158, 11, 0.08)"
         />
-        <p class="fb-note">统计口径：当天统计截至当日已经发布过的全部视频，在这一天新增获得的点赞数总和。</p>
+        <p v-if="!isInvestorMode" class="fb-note">统计口径：当天统计截至当日已经发布过的全部视频，在这一天新增获得的点赞数总和。</p>
       </div>
 
       <!-- 表 6 -->
       <div v-if="weeklyViews.length" class="fb-chart-card">
         <h3 class="fb-chart-title">每日新增总 views 的周平均值与增长倍数 <span class="fb-tag">表6</span></h3>
         <WeeklyBarLineChart :weeks="weeklyViews" :height="320" />
-        <p class="fb-note">
+        <p v-if="!isInvestorMode" class="fb-note">
           统计口径：以表1为基础指标，按时间序列将每日观测值划分为连续 7 日窗口，并计算各窗口内每日新增总 views 的算术平均值。
           柱状图表示各 7 日窗口的均值水平，折线图表示相邻窗口均值之间的增长倍数。
         </p>
@@ -173,6 +173,9 @@ import {
   fetchFormalBackfillSummary,
   generateFormalBackfill,
 } from '../api/formal_backfill'
+import { useInvestorMode } from '../composables/useInvestorMode'
+
+const { isInvestorMode } = useInvestorMode()
 
 // ── Inline minimal SVG charts (no external chart lib dep) ─────────────────
 const _fmt = n => Intl.NumberFormat('en-US').format(n)

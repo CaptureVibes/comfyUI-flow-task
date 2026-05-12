@@ -1,9 +1,12 @@
 <template>
-  <div class="dashboard-layout" :class="{ 'sidebar-collapsed': isCollapsed }">
-    <AppSidebar :collapsed="isCollapsed" @toggle="toggle" />
+  <div class="dashboard-layout" :class="{ 'sidebar-collapsed': isCollapsed, 'investor-mode': isInvestorMode }">
+    <AppSidebar v-if="!isInvestorMode" :collapsed="isCollapsed" @toggle="toggle" />
 
-    <div class="dashboard-main" :style="{ marginLeft: isCollapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)' }">
-      <AppHeader @toggle-sidebar="toggle" />
+    <div
+      class="dashboard-main"
+      :style="{ marginLeft: isInvestorMode ? '0' : (isCollapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)') }"
+    >
+      <AppHeader v-if="!isInvestorMode" @toggle-sidebar="toggle" />
 
       <main class="dashboard-content">
         <router-view v-slot="{ Component, route: viewRoute }">
@@ -23,8 +26,10 @@ import { useRoute } from 'vue-router'
 import AppSidebar from '../components/AppSidebar.vue'
 import AppHeader from '../components/AppHeader.vue'
 import { useSidebar } from '../composables/useSidebar'
+import { useInvestorMode } from '../composables/useInvestorMode'
 
 const { isCollapsed, toggle } = useSidebar()
+const { isInvestorMode } = useInvestorMode()
 </script>
 
 <style scoped>
