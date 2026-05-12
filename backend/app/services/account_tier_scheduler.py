@@ -229,7 +229,9 @@ async def compute_tier_changes(
         return []
     account_ids = [a.id for a in accounts]
 
-    # Q2: 每个账号最近 N 条 publication 的 metrics_snapshot
+    # Q2: 每个账号最近若干条 publication 的 metrics_snapshot。
+    # 多取一些（×10）供后续 Python 端过滤掉 views=0/空的样本（刚发布、数据未回灌），
+    # 再按时间序取真正用于均播判定的 N 条。
     rn = func.row_number().over(
         partition_by=VideoTask.account_id,
         order_by=VideoPublication.completed_at.desc(),
@@ -238,6 +240,7 @@ async def compute_tier_changes(
         select(
             VideoTask.account_id.label("aid"),
             VideoPublication.metrics_snapshot.label("snap"),
+            VideoPublication.completed_at.label("completed_at"),
             rn,
         )
         .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
@@ -247,13 +250,13 @@ async def compute_tier_changes(
         .where(VideoPublication.completed_at.isnot(None))
         .subquery()
     )
-    samples_by_account: dict[uuid.UUID, list] = {}
+    samples_by_account: dict[uuid.UUID, list[tuple]] = {}
     rows = (await session.execute(
-        select(sample_subq.c.aid, sample_subq.c.snap)
-        .where(sample_subq.c.rn <= th.video_sample_count)
+        select(sample_subq.c.aid, sample_subq.c.snap, sample_subq.c.completed_at)
+        .where(sample_subq.c.rn <= th.video_sample_count * 10)
     )).all()
-    for aid, snap in rows:
-        samples_by_account.setdefault(aid, []).append(snap)
+    for aid, snap, completed_at in rows:
+        samples_by_account.setdefault(aid, []).append((snap, completed_at))
 
     # Q3: 每个账号最近 K 天 publication 数
     cutoff = datetime.now(timezone.utc) - timedelta(days=th.activity_days)
@@ -279,12 +282,24 @@ async def compute_tier_changes(
     }
     changes: list[dict] = []
     for account in accounts:
-        snapshots = samples_by_account.get(account.id, [])
-        sample_count = len(snapshots)
+        # 按时间序倒序排好（DB 不一定保证顺序），过滤掉 views<=0/空 的样本——刚发布
+        # 的视频还没回灌数据，这些样本会拉低均播误判账号档位。
+        raw_samples = samples_by_account.get(account.id, [])
+        raw_samples.sort(
+            key=lambda x: x[1] or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        valid_snapshots: list = []
+        for snap, _ in raw_samples:
+            if _views_from_snapshot(snap) > 0:
+                valid_snapshots.append(snap)
+                if len(valid_snapshots) >= th.video_sample_count:
+                    break
+        sample_count = len(valid_snapshots)
         recent_count = recent_counts.get(account.id, 0)
         avg_views = 0.0
         if sample_count >= th.video_sample_count:
-            avg_views = sum(_views_from_snapshot(s) for s in snapshots) / th.video_sample_count
+            avg_views = sum(_views_from_snapshot(s) for s in valid_snapshots) / th.video_sample_count
         meets = (
             sample_count >= th.video_sample_count
             and avg_views >= th.avg_play_threshold
