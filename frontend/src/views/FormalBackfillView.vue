@@ -148,17 +148,17 @@
     </div>
 
     <el-dialog v-model="exportDialogVisible" title="导出 task_ids" width="640px">
-      <div class="fb-export-info">共 {{ exportTaskIds.length }} 条</div>
+      <div class="fb-export-info">共 {{ exportTaskIds.length }} 条，每行一个 open_api_task_id</div>
       <el-input
-        :model-value="exportTaskIdsJson"
+        :model-value="exportTaskIdsText"
         type="textarea"
         :rows="14"
         readonly
         style="font-family: 'Courier New', monospace; font-size: 12px;"
       />
       <template #footer>
-        <el-button @click="copyExport">复制 JSON</el-button>
-        <el-button type="primary" @click="downloadExport">下载 .json 文件</el-button>
+        <el-button @click="copyExport">复制</el-button>
+        <el-button type="primary" @click="downloadExport">下载 .txt 文件</el-button>
       </template>
     </el-dialog>
   </div>
@@ -524,11 +524,12 @@ async function onExport() {
   }
 }
 
-const exportTaskIdsJson = computed(() => JSON.stringify(exportTaskIds.value, null, 2))
+// 每行一个 task_id 的纯文本表示
+const exportTaskIdsText = computed(() => exportTaskIds.value.join('\n'))
 
 async function copyExport() {
   try {
-    await navigator.clipboard.writeText(exportTaskIdsJson.value)
+    await navigator.clipboard.writeText(exportTaskIdsText.value)
     ElMessage.success('已复制到剪贴板')
   } catch {
     ElMessage.error('复制失败，请改用「下载」')
@@ -536,11 +537,11 @@ async function copyExport() {
 }
 
 function downloadExport() {
-  const blob = new Blob([exportTaskIdsJson.value], { type: 'application/json' })
+  const blob = new Blob([exportTaskIdsText.value], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `formal_backfill_task_ids_${todayStr()}.json`
+  a.download = `formal_backfill_task_ids_${todayStr()}.txt`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
