@@ -72,7 +72,12 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
             for record in kv.list_keys().get("items", []):
                 key = record.get("key", "")
                 if key.endswith(".mp4") or "video" in key.lower():
-                    file_url = f"https://api.apify.com/v2/key-value-stores/{kv_store_id}/records/{key}"
+                    # KV store record 默认私有，匿名 GET 会 404 / 403；
+                    # 把 token 拼到 query string 里供 _stream_download 直接拉。
+                    file_url = (
+                        f"https://api.apify.com/v2/key-value-stores/{kv_store_id}"
+                        f"/records/{key}?token={settings.apify_token}"
+                    )
                     logger.info("apify: found video in KV store key=%s", key)
                     return file_url
 

@@ -1341,20 +1341,39 @@ async def _abandon_linked_tasks_if_marked(template_id: str) -> None:
 
     仅当 batch_restart_templates 通过 abandon_task_ids_on_fail 提前登记过本模板时
     才生效；其他重跑入口不会触发，因此不影响 _run_pipeline 的主流程语义。
+
+    支持两层来源：先看内存（最新一次 batch_restart），再回退到 DB tpl.extra
+    （重启后内存丢失但 DB 还保留）。命中后立即清空两边状态，保证幂等。
     """
     task_ids = _abandon_task_ids_on_fail.pop(template_id, None)
-    if not task_ids:
-        return
     try:
         from sqlalchemy import update as sa_update
         from app.models.video_task import VideoTask
         async with SessionLocal() as session:
+            if not task_ids:
+                tpl = await session.get(VideoAITemplate, UUID(template_id))
+                if tpl and isinstance(tpl.extra, dict):
+                    stored = tpl.extra.get("abandon_task_ids_on_fail")
+                    if isinstance(stored, list) and stored:
+                        task_ids = [str(t) for t in stored]
+            if not task_ids:
+                return
             await session.execute(
                 sa_update(VideoTask)
                 .where(VideoTask.id.in_([UUID(t) for t in task_ids]))
                 .where(VideoTask.status.notin_(["published", "abandoned"]))
                 .values(status="abandoned")
             )
+            # 清掉 extra 里的登记，防止下一次重跑误触发
+            tpl = await session.get(VideoAITemplate, UUID(template_id))
+            if tpl and isinstance(tpl.extra, dict) and (
+                "abandon_task_ids_on_fail" in tpl.extra
+                or "sync_shots_to_tasks" in tpl.extra
+            ):
+                cleaned = dict(tpl.extra)
+                cleaned.pop("abandon_task_ids_on_fail", None)
+                cleaned.pop("sync_shots_to_tasks", None)
+                tpl.extra = cleaned
             await session.commit()
         logger.info("[%s] template failed → abandoned %d linked video_tasks", template_id, len(task_ids))
     except Exception as exc:
@@ -1873,9 +1892,17 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             # 最终持久化
             await _persist_states([template_id])
 
-            # 如果是"一键重新分析"触发的，同步 shots 到关联 video_tasks
-            if template_id in _sync_shots_on_success:
-                _sync_shots_on_success.discard(template_id)
+            # 如果是"一键重新分析"触发的，同步 shots 到关联 video_tasks。
+            # 先看内存，再回退 DB tpl.extra["sync_shots_to_tasks"]，
+            # 确保重启后续跑的模板也能命中。
+            should_sync_shots = template_id in _sync_shots_on_success
+            _sync_shots_on_success.discard(template_id)
+            if not should_sync_shots:
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl and isinstance(tpl.extra, dict) and tpl.extra.get("sync_shots_to_tasks"):
+                        should_sync_shots = True
+            if should_sync_shots:
                 _final_outfits = state.get("final_outfits") or []
                 await _sync_task_shots(
                     template_id,
@@ -1883,8 +1910,22 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                     _final_outfits,
                     state.get("prompt_description") or "",
                 )
-            # 模板成功跑完 → 取消"失败时废弃关联视频任务"的标记
+            # 模板成功跑完 → 取消"失败时废弃关联视频任务"的标记 + 清 DB 登记
             _abandon_task_ids_on_fail.pop(template_id, None)
+            try:
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl and isinstance(tpl.extra, dict) and (
+                        "abandon_task_ids_on_fail" in tpl.extra
+                        or "sync_shots_to_tasks" in tpl.extra
+                    ):
+                        cleaned = dict(tpl.extra)
+                        cleaned.pop("abandon_task_ids_on_fail", None)
+                        cleaned.pop("sync_shots_to_tasks", None)
+                        tpl.extra = cleaned
+                        await session.commit()
+            except Exception as exc:
+                logger.warning("[%s] failed to clear backfill flags on success: %s", template_id, exc)
 
         except asyncio.CancelledError:
             # 进程关停时取消的任务保留运行中状态，由 recover_stuck_templates_on_startup 续跑；
@@ -2117,6 +2158,32 @@ async def batch_restart_templates(
             mapped = abandon_task_ids_on_fail.get(_tid)
             if mapped:
                 _abandon_task_ids_on_fail[_tid] = list(mapped)
+
+    # 同步把「成功后同步 shots」+「失败时废弃 task_ids」持久化到 DB tpl.extra，
+    # 后端重启后这些状态不会丢；管道在终态再清掉。
+    try:
+        async with SessionLocal() as session:
+            tpl_rows = (await session.execute(
+                sa_select(VideoAITemplate).where(
+                    VideoAITemplate.id.in_([UUID(tid) for tid in tids])
+                )
+            )).scalars().all()
+            tpl_map = {str(t.id): t for t in tpl_rows}
+            for _tid in tids:
+                tpl = tpl_map.get(_tid)
+                if tpl is None:
+                    continue
+                extra = dict(tpl.extra or {})
+                extra["sync_shots_to_tasks"] = True
+                mapped = (abandon_task_ids_on_fail or {}).get(_tid)
+                if mapped:
+                    extra["abandon_task_ids_on_fail"] = list(mapped)
+                else:
+                    extra.pop("abandon_task_ids_on_fail", None)
+                tpl.extra = extra
+            await session.commit()
+    except Exception as exc:
+        logger.warning("batch_restart: failed to persist sync flags to DB: %s", exc)
 
     logger.info("batch_restart started: %d templates", len(tids))
     success_count = 0
