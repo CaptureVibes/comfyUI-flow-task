@@ -18,7 +18,7 @@ from google.genai import types
 logger = logging.getLogger("app.google_api")
 
 _QUOTA_RETRY_DELAY_SECONDS = 30
-_QUOTA_MAX_RETRIES = 15
+_QUOTA_MAX_RETRIES = 2
 
 _MEDIA_DOWNLOAD_HEADERS = {
     "Accept": "*/*",
