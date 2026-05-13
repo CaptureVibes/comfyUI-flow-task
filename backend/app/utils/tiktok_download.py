@@ -18,6 +18,22 @@ logger = logging.getLogger("app.tiktok_download")
 _APIFY_ACTOR_ID = "GdWCkxBtKWOsKjdch"  # clockworks/tiktok-scraper
 
 
+def _attach_apify_token(url: str) -> str:
+    """对指向 api.apify.com 的 URL 自动拼上 ?token=...。
+
+    Apify 在 shouldDownloadVideos=True 时，会把视频存入 KV store，并把 KV URL
+    塞回 dataset 的 videoUrl 字段；该 URL 默认私有，匿名 GET 会 404。
+    所有从 Apify 取回的 url 都过这里统一鉴权。
+    """
+    if not url or "api.apify.com" not in url:
+        return url
+    token = settings.apify_token
+    if not token:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}token={token}"
+
+
 # ---------------------------------------------------------------------------
 # 内部：获取直链
 # ---------------------------------------------------------------------------
@@ -63,7 +79,7 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
                 or item.get("videoMeta", {}).get("playAddr")
             )
             if url:
-                return url
+                return _attach_apify_token(url)
 
         # fallback：从 KV store 找视频文件
         kv_store_id = run.get("defaultKeyValueStoreId")
@@ -72,14 +88,12 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
             for record in kv.list_keys().get("items", []):
                 key = record.get("key", "")
                 if key.endswith(".mp4") or "video" in key.lower():
-                    # KV store record 默认私有，匿名 GET 会 404 / 403；
-                    # 把 token 拼到 query string 里供 _stream_download 直接拉。
                     file_url = (
                         f"https://api.apify.com/v2/key-value-stores/{kv_store_id}"
-                        f"/records/{key}?token={settings.apify_token}"
+                        f"/records/{key}"
                     )
                     logger.info("apify: found video in KV store key=%s", key)
-                    return file_url
+                    return _attach_apify_token(file_url)
 
         raise RuntimeError(f"Apify actor returned no video URL. dataset={len(items)} items")
 
