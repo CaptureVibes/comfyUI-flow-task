@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     # Google Gemini 官方 API（设置后优先使用，替代 REST API fallback）
     google_api_key: str = ""
 
+    # Evolink AI（Google Gemini 配额耗尽后的兜底 vendor）
+    # 文本走 direct.evolink.ai/v1/chat/completions（OpenAI 兼容）
+    # 图像生成/任务查询走 api.evolink.ai
+    evolink_api_key: str = ""
+    evolink_text_base_url: str = "https://direct.evolink.ai"
+    evolink_api_base_url: str = "https://api.evolink.ai"
+    evolink_text_model: str = "gemini-3.1-pro-preview"
+    evolink_image_model: str = "gemini-3-pro-image-preview"
+    evolink_image_poll_interval_sec: float = 5.0
+    evolink_image_poll_timeout_sec: float = 300.0
+
     # TikTok 第三方 API 配置
     tikwm_api_key: str = ""       # tikwm.com API key（可选，不传也可访问）
     rapidapi_key: str = ""        # RapidAPI key，用于 tiktok-api23 fallback

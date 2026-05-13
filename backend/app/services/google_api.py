@@ -57,6 +57,11 @@ def _is_quota_error(exc: Exception) -> bool:
     )
 
 
+def is_quota_error(exc: Exception) -> bool:
+    """Public alias for use by fallback adapters in ai_api.py."""
+    return _is_quota_error(exc)
+
+
 def _retry_delay_seconds(exc: Exception, attempt: int) -> int:
     if _is_quota_error(exc):
         return _QUOTA_RETRY_DELAY_SECONDS
