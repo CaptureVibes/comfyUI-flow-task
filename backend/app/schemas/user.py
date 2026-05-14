@@ -33,7 +33,7 @@ class UserProfileUpdate(BaseModel):
     """Request body for updating user's own profile."""
     display_name: str | None = Field(None, max_length=80)
     bio: str | None = Field(None, max_length=500)
-    avatar_url: str | None = Field(None, max_length=500_000)  # base64 data-url can be long
+    avatar_url: str | None = Field(None, max_length=10_000_000)  # base64 data-url；放宽到 ~7MB 原图
 
 
 class UserCreate(BaseModel):
