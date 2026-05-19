@@ -1379,13 +1379,8 @@ async def _load_bulk_video_task_templates(
     if not unique_tagged_tpls:
         return ([], "no_tag_matching_templates") if with_reason else []
 
-    # 一键生成排除失败状态的模板（fail 模板的 prompt_description / shots 不完整或为空）
-    from app.models.enums import VideoAIProcessStatus
-    unique_tagged_tpls = [
-        tpl for tpl in unique_tagged_tpls if tpl.process_status != VideoAIProcessStatus.fail
-    ]
-    if not unique_tagged_tpls:
-        return ([], "all_templates_failed") if with_reason else []
+    # 不再按 process_status 过滤 fail 模板：fail 状态的模板也允许进候选池
+    # （由调用方在 enqueue 时自行处理可能的不完整 shots / prompt_description）
 
     if use_used:
         unique_tpls = [tpl for tpl in unique_tagged_tpls if tpl.is_used]
@@ -1444,11 +1439,11 @@ async def _count_account_templates(
     """复用「一键生成」的过滤逻辑，返回 (unused_count, used_count)。
     - unused：not is_used 或 repeatable
     - used：is_used
-    都已排除 failed 模板与不在账号 single/dual 分类下的模板。
+    已排除不在账号 single/dual 分类下的模板；不再按 process_status 过滤
+    （fail 模板也计入；与「一键生成」候选池口径一致）。
     """
     from app.models.video_ai_template import VideoAITemplate
     from app.models.video_classification import VideoClassification
-    from app.models.enums import VideoAIProcessStatus
 
     cls_type = account.classification_type
     summary = account.classification_summary or {}
@@ -1480,7 +1475,6 @@ async def _count_account_templates(
     if owner_id is not None:
         tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
     tpls = list((await session.execute(tpl_stmt)).scalars().all())
-    tpls = [t for t in tpls if t.process_status != VideoAIProcessStatus.fail]
 
     if allowed_indices is not None:
         vs_ids = list({t.video_source_id for t in tpls if t.video_source_id})
