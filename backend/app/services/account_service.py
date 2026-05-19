@@ -243,6 +243,93 @@ async def bulk_update_account_attributes(
     return accounts
 
 
+# ── 最近 N 条子任务成功率 ─────────────────────────────────────────────────────
+
+_SUB_TASK_SUCCESS_NUMER_STATUSES: tuple[str, ...] = ("stashed", "queued", "published")
+_SUB_TASK_SUCCESS_DENOM_STATUSES: tuple[str, ...] = (
+    "stashed", "reviewing", "decision_rejected", "queued", "published",
+)
+
+
+async def compute_sub_task_success_rate(
+    session: AsyncSession,
+    account_id: UUID,
+    *,
+    sample_size: int = 20,
+) -> tuple[int, int, int]:
+    """计算账号最近 N 条 sub_task 的成功率。
+
+    公式：成功率 = (暂存 + 队列中 + 已发布) / (暂存 + 待决策 + 决策未通过 + 队列中 + 已发布)
+
+    返回 (numer, denom, sample) —— numer/denom 用于算比例；sample 是
+    实际拉到的子任务总数（包含分母外的状态，便于调用方了解样本规模）。
+    """
+    from app.models.video_task import VideoSubTask, VideoTask
+
+    stmt = (
+        select(VideoSubTask.status)
+        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+        .where(VideoTask.account_id == account_id)
+        .order_by(VideoSubTask.created_at.desc())
+        .limit(sample_size)
+    )
+    statuses = list((await session.execute(stmt)).scalars().all())
+    numer = sum(1 for s in statuses if s in _SUB_TASK_SUCCESS_NUMER_STATUSES)
+    denom = sum(1 for s in statuses if s in _SUB_TASK_SUCCESS_DENOM_STATUSES)
+    return numer, denom, len(statuses)
+
+
+async def batch_compute_sub_task_success_rate(
+    session: AsyncSession,
+    account_ids: list[UUID],
+    *,
+    sample_size: int = 20,
+) -> dict[UUID, tuple[int, int, int]]:
+    """批量版本：返回 {account_id: (numer, denom, sample)}。
+
+    每个账号独立按 created_at desc 取最近 N 条；用 row_number over partition 一次
+    捞完所有候选行，再在 Python 端聚合。
+    """
+    from sqlalchemy import func as sa_func
+    from app.models.video_task import VideoSubTask, VideoTask
+
+    if not account_ids:
+        return {}
+
+    rn = sa_func.row_number().over(
+        partition_by=VideoTask.account_id,
+        order_by=VideoSubTask.created_at.desc(),
+    ).label("rn")
+    subq = (
+        select(
+            VideoTask.account_id.label("aid"),
+            VideoSubTask.status.label("status"),
+            rn,
+        )
+        .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+        .where(VideoTask.account_id.in_(account_ids))
+        .subquery()
+    )
+    rows = (await session.execute(
+        select(subq.c.aid, subq.c.status).where(subq.c.rn <= sample_size)
+    )).all()
+
+    out: dict[UUID, tuple[int, int, int]] = {aid: (0, 0, 0) for aid in account_ids}
+    counters: dict[UUID, list[int]] = {aid: [0, 0, 0] for aid in account_ids}  # [numer, denom, sample]
+    for aid, status_val in rows:
+        if aid is None:
+            continue
+        bucket = counters.setdefault(aid, [0, 0, 0])
+        bucket[2] += 1
+        if status_val in _SUB_TASK_SUCCESS_NUMER_STATUSES:
+            bucket[0] += 1
+        if status_val in _SUB_TASK_SUCCESS_DENOM_STATUSES:
+            bucket[1] += 1
+    for aid, (n, d, s) in counters.items():
+        out[aid] = (n, d, s)
+    return out
+
+
 async def delete_account(
     session: AsyncSession,
     account_id: UUID,

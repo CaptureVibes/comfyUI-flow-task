@@ -309,6 +309,7 @@ def _account_read(
     linked_video_count: int = 0,
     unused_template_count: int = 0,
     used_template_count: int = 0,
+    sub_task_success: tuple[int, int, int] = (0, 0, 0),
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
@@ -318,6 +319,11 @@ def _account_read(
     data.linked_video_count = linked_video_count
     data.unused_template_count = unused_template_count
     data.used_template_count = used_template_count
+    numer, denom, sample = sub_task_success
+    data.sub_task_success_numer = numer
+    data.sub_task_success_denom = denom
+    data.sub_task_success_sample = sample
+    data.sub_task_success_rate = (numer / denom) if denom > 0 else None
     data.channel_reservations = channel_reservations or []
     data.social_bindings = None
     return data
@@ -478,6 +484,12 @@ async def list_accounts_endpoint(
             session, account=a, owner_id=owner_id,
         )
 
+    # 最近 N 条子任务的成功率（N 默认 20，沿用全局口径）
+    from app.services.account_service import batch_compute_sub_task_success_rate
+    success_rate_map = await batch_compute_sub_task_success_rate(
+        session, account_ids, sample_size=20,
+    )
+
     rich_items = [
         _account_read(
             a,
@@ -489,6 +501,7 @@ async def list_accounts_endpoint(
             linked_video_count=video_count_map.get(a.id, 0),
             unused_template_count=template_counts[a.id][0],
             used_template_count=template_counts[a.id][1],
+            sub_task_success=success_rate_map.get(a.id, (0, 0, 0)),
         )
         for a in items
     ]

@@ -400,6 +400,13 @@ class AccountRead(BaseModel):
     linked_video_count: int = 0
     unused_template_count: int = 0
     used_template_count: int = 0
+    # 最近 N 条子任务的成功率：
+    # numer = 暂存 + 队列中 + 已发布；
+    # denom = 暂存 + 待决策 + 决策未通过 + 队列中 + 已发布
+    sub_task_success_sample: int = 0   # 实际命中的子任务总数（denom 的样本量）
+    sub_task_success_numer: int = 0
+    sub_task_success_denom: int = 0
+    sub_task_success_rate: float | None = None
     classification_status: str = "idle"
     classification_type: str | None = None
     classification_summary: dict | None = None

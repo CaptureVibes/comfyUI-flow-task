@@ -1191,6 +1191,13 @@
                 <span class="ac-classify-count" :title="`未使用 ${item.unused_template_count ?? 0} / 已使用 ${item.used_template_count ?? 0} 模板`">
                   {{ item.unused_template_count ?? 0 }}/{{ item.used_template_count ?? 0 }}模板
                 </span>
+                <span
+                  v-if="(item.sub_task_success_denom ?? 0) > 0"
+                  class="ac-classify-count"
+                  :title="`最近 ${item.sub_task_success_sample ?? 0} 条子任务中：成功（暂存/队列中/已发布）${item.sub_task_success_numer ?? 0} / 决策样本（含待决策、决策未通过）${item.sub_task_success_denom ?? 0}`"
+                >
+                  成功率 {{ ((item.sub_task_success_rate ?? 0) * 100).toFixed(0) }}%
+                </span>
               </div>
               <div v-if="item.style_description" class="al-style-desc">{{ item.style_description }}</div>
             </td>
