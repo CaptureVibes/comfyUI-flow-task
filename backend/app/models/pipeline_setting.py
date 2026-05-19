@@ -142,6 +142,9 @@ class PipelineSetting(Base):
     tier_daily_formal_growth_min_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)   # 正式号每日新增比例下限
     tier_daily_formal_growth_max_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.06)  # 正式号每日新增比例上限
 
+    # 「最近 N 条子任务的成功率」公式里 N 的样本量
+    sub_task_success_sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+
     # 「有CTA」版本的 9 个 prompt（与同名无 _cta 字段对应；启用见 video_task.cta）
     outfit_select_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")
     outfit_detail_prompt_cta: Mapped[str] = mapped_column(Text, nullable=False, default="")

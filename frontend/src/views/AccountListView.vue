@@ -337,6 +337,12 @@
               <span style="color:#6b7280;font-size:13px">× 当前正式号数（每日扩量区间）</span>
             </div>
           </el-form-item>
+          <el-form-item label="子任务成功率样本 N">
+            <el-input-number v-model="aiSettingsForm.sub_task_success_sample_size" :min="1" :max="200" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">
+              账号列表展示「成功率」时取最近 N 条子任务；分子 = 暂存 + 队列中 + 已发布，分母 = 暂存 + 待决策 + 决策未通过 + 队列中 + 已发布
+            </span>
+          </el-form-item>
           <el-form-item label="">
             <el-button
               type="warning"
@@ -2277,6 +2283,7 @@ const aiSettingsForm = ref({
   tier_min_video_count: 6,
   tier_daily_formal_growth_min_rate: 0.0,
   tier_daily_formal_growth_max_rate: 0.06,
+  sub_task_success_sample_size: 10,
 })
 
 async function openAISettings() {
@@ -2315,6 +2322,7 @@ async function openAISettings() {
     aiSettingsForm.value.tier_min_video_count = data.tier_min_video_count ?? 6
     aiSettingsForm.value.tier_daily_formal_growth_min_rate = data.tier_daily_formal_growth_min_rate ?? 0.0
     aiSettingsForm.value.tier_daily_formal_growth_max_rate = data.tier_daily_formal_growth_max_rate ?? 0.06
+    aiSettingsForm.value.sub_task_success_sample_size = data.sub_task_success_sample_size ?? 10
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || '加载配置失败')
   } finally {
@@ -2359,6 +2367,7 @@ async function saveAISettings() {
       tier_min_video_count: aiSettingsForm.value.tier_min_video_count,
       tier_daily_formal_growth_min_rate: aiSettingsForm.value.tier_daily_formal_growth_min_rate,
       tier_daily_formal_growth_max_rate: aiSettingsForm.value.tier_daily_formal_growth_max_rate,
+      sub_task_success_sample_size: aiSettingsForm.value.sub_task_success_sample_size,
     }
     await updatePipelineSettings(payload)
     ElMessage.success('配置已保存')

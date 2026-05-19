@@ -484,10 +484,18 @@ async def list_accounts_endpoint(
             session, account=a, owner_id=owner_id,
         )
 
-    # 最近 N 条子任务的成功率（N 默认 20，沿用全局口径）
+    # 最近 N 条子任务的成功率，N 从 pipeline_settings 读（owner 维度），缺省 10
+    from app.models.pipeline_setting import PipelineSetting
     from app.services.account_service import batch_compute_sub_task_success_rate
+    success_sample_size = 10
+    if owner_id is not None:
+        ps_row = await session.scalar(
+            select(PipelineSetting).where(PipelineSetting.owner_id == owner_id)
+        )
+        if ps_row is not None and ps_row.sub_task_success_sample_size > 0:
+            success_sample_size = int(ps_row.sub_task_success_sample_size)
     success_rate_map = await batch_compute_sub_task_success_rate(
-        session, account_ids, sample_size=20,
+        session, account_ids, sample_size=success_sample_size,
     )
 
     rich_items = [
