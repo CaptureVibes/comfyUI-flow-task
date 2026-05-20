@@ -204,9 +204,23 @@ async def submit_supplement_request(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    import json as _json
+    bloggers_preview = [
+        {
+            "account_id": it["account_id"],
+            "blogger": it["blogger"]["handle"],
+            "existing_videos": len(it.get("existing_video_urls") or []),
+        }
+        for it in payload["items"]
+    ]
     logger.info(
-        "external_supplement outbound: request_id=%s mode=%s items=%d",
-        request_id, mode, len(payload["items"]),
+        "[ext_supp][outbound] → vendor: request_id=%s mode=%s url=%s target=%d filters=%s items=%d",
+        request_id, mode, url, target_video_count,
+        payload.get("filters") or {}, len(payload["items"]),
+    )
+    logger.info(
+        "[ext_supp][outbound] payload.items=%s",
+        _json.dumps(bloggers_preview, ensure_ascii=False),
     )
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -216,8 +230,15 @@ async def submit_supplement_request(
             vendor_body = resp.json()
         except Exception:
             vendor_body = resp.text
+        logger.info(
+            "[ext_supp][outbound] ← vendor: request_id=%s http=%s body=%s",
+            request_id, resp.status_code,
+            (_json.dumps(vendor_body, ensure_ascii=False)[:1000]
+             if isinstance(vendor_body, (dict, list))
+             else str(vendor_body)[:1000]),
+        )
     except Exception as exc:
-        logger.error("external_supplement outbound POST failed: %s", exc)
+        logger.error("[ext_supp][outbound] POST failed request_id=%s: %s", request_id, exc)
         async with SessionLocal() as session:
             r = await session.get(ExternalSupplementRequest, row.id)
             if r is not None:
@@ -302,10 +323,25 @@ async def handle_supplement_callback(
         owner_id = req.owner_id
         request_account_ids = {str(aid) for aid in (req.account_ids or [])}
 
+        import json as _json
         total_videos = sum(len(it.videos) for it in items)
         logger.info(
-            "supplement-callback received: request_id=%s mode=%s final=%s items=%d videos=%d",
+            "[ext_supp][callback] ← vendor: request_id=%s mode=%s final=%s items=%d videos=%d",
             request_id, mode, final, len(items), total_videos,
+        )
+        callback_preview = [
+            {
+                "account_id": str(it.account_id),
+                "status": it.status,
+                "videos": len(it.videos),
+                "video_urls": [v.source_url for v in it.videos][:5],
+                "error": it.error,
+            }
+            for it in items
+        ]
+        logger.info(
+            "[ext_supp][callback] payload.items=%s",
+            _json.dumps(callback_preview, ensure_ascii=False)[:2000],
         )
 
         scheduled = 0       # 进入异步 pipeline 的数量
@@ -348,6 +384,12 @@ async def handle_supplement_callback(
             req.status = "completed"
             req.completed_at = datetime.now(timezone.utc)
         await session.commit()
+
+    logger.info(
+        "[ext_supp][callback] processed: request_id=%s scheduled=%d duplicated=%d rejected=%d (cumulative: cb=%s accepted=%s dup=%s rej=%s)",
+        request_id, scheduled, duplicated, rejected,
+        req.callbacks_received, req.videos_accepted, req.videos_duplicated, req.videos_rejected,
+    )
 
     # 异步：每条 video 单独跑 AI 审核 + 可能的分类过滤 + 写库 + enqueue
     for entry in to_process:
