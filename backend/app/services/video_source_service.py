@@ -741,10 +741,13 @@ async def trigger_download_and_upload(
 
 
 async def recover_stuck_downloads_on_startup() -> None:
-    """启动时恢复中断的下载：将 downloading/failed 状态的 video_sources 重新触发下载。"""
+    """启动时恢复中断的下载：只重试 downloading（真正中断的），
+    failed 视为终态——slideshow / Apify KV 404 / 反复重试已耗尽次数等情形
+    都不应该再自动唤醒（白烧 Apify actor 调用费）；要重试请用户手动点重试。
+    """
     async with SessionLocal() as session:
         stmt = select(VideoSource).where(
-            VideoSource.download_status.in_(["downloading", "failed"])
+            VideoSource.download_status == "downloading"
         )
         rows = (await session.execute(stmt)).scalars().all()
 
