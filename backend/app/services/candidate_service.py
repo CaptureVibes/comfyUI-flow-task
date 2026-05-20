@@ -1524,8 +1524,12 @@ _CATEGORY_MAJOR_MAP: dict[int, str] = {
 async def _classify_video_for_auto_supplement(
     local_video_url: str,
     owner_id: uuid.UUID | None,
-) -> str | None:
-    """对视频调用 Gemini 分类，返回 major_category 或 None（失败时）。"""
+) -> int | None:
+    """对视频调用 Gemini 分类，返回小类 category_index (0-13) 或 None（失败时）。
+
+    自动补充的过滤口径是「小类必须命中账号 single primary / dual primary+secondary」，
+    因此这里直接返回 idx，让调用方与 classification_summary.primary_index / secondary_index 比对。
+    """
     from app.services.ai_api import call_gemini_api
     from app.services.pipeline_settings_service import get_or_create_pipeline_settings
     from app.db.session import SessionLocal
@@ -1561,7 +1565,9 @@ async def _classify_video_for_auto_supplement(
             idx = int(m.group(1)) if m else int(text)
         else:
             idx = int(obj["category_index"])
-        return _CATEGORY_MAJOR_MAP.get(idx)
+        if 0 <= idx <= 13:
+            return idx
+        return None
     except Exception as exc:
         logger.warning("【自动补充】分类失败 url=%s: %s", local_video_url, exc)
         return None
@@ -1600,8 +1606,8 @@ async def auto_supplement_for_account(
             return {"account_id": str(account_id), "error": "账号不存在", "imported": 0, "skipped": 0, "filtered": 0}
         cls_type = account.classification_type
         summary = account.classification_summary or {}
-        primary = summary.get("primary")
-        secondary = summary.get("secondary")
+        primary_index = summary.get("primary_index")
+        secondary_index = summary.get("secondary_index")
 
     if cls_type not in ("single", "dual"):
         return {
@@ -1610,11 +1616,14 @@ async def auto_supplement_for_account(
             "imported": 0, "skipped": 0, "filtered": 0,
         }
 
-    allowed_categories: list[str] = [primary] if primary else []
-    if cls_type == "dual" and secondary:
-        allowed_categories.append(secondary)
-    if not allowed_categories:
-        return {"account_id": str(account_id), "error": "无法确定允许的视频类别", "imported": 0, "skipped": 0, "filtered": 0}
+    # 用小类 index 严格匹配（single → 仅 primary；dual → primary + secondary）
+    allowed_indices: list[int] = []
+    if isinstance(primary_index, int):
+        allowed_indices.append(primary_index)
+    if cls_type == "dual" and isinstance(secondary_index, int):
+        allowed_indices.append(secondary_index)
+    if not allowed_indices:
+        return {"account_id": str(account_id), "error": "无法确定允许的视频小类", "imported": 0, "skipped": 0, "filtered": 0}
 
     async with SessionLocal() as session:
         blogger_handle: str | None = await session.scalar(
@@ -1647,8 +1656,8 @@ async def auto_supplement_for_account(
     ai_review_prompt = _search_cfg.ai_review_prompt
 
     logger.info(
-        "【自动补充】account_id=%s cls_type=%s allowed=%s blogger=%s ai_review=%s 开始",
-        account_id, cls_type, allowed_categories, blogger_handle, ai_review_enabled,
+        "【自动补充】account_id=%s cls_type=%s allowed_indices=%s blogger=%s ai_review=%s 开始",
+        account_id, cls_type, allowed_indices, blogger_handle, ai_review_enabled,
     )
 
     imported = 0
@@ -1745,12 +1754,12 @@ async def auto_supplement_for_account(
                     continue
                 logger.info("【自动补充】AI审核通过 %s", video_url)
 
-            # ── Step 3.5: Gemini 分类 ─────────────────────────────────────
-            major = await _classify_video_for_auto_supplement(local_video_url, owner_id)
-            if major not in allowed_categories:
+            # ── Step 3.5: Gemini 分类（小类必须命中 allowed_indices）─────────
+            category_index = await _classify_video_for_auto_supplement(local_video_url, owner_id)
+            if category_index is None or category_index not in allowed_indices:
                 logger.info(
-                    "【自动补充】分类不匹配 major=%s allowed=%s，丢弃（不写库）%s",
-                    major, allowed_categories, video_url,
+                    "【自动补充】分类不匹配 index=%s allowed=%s，丢弃（不写库）%s",
+                    category_index, allowed_indices, video_url,
                 )
                 filtered += 1
                 continue
