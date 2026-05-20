@@ -2864,9 +2864,9 @@ const supplementing = ref(false)
 const supplementForm = ref({
   templateType: 'shared',
   targetVideoCount: 10,
-  minViewCount: null,
-  publishedAfter: null,
-  maxDurationSeconds: null,
+  minViewCount: 10000,
+  publishedAfter: '2024-01-01',
+  maxDurationSeconds: 30,
 })
 
 
@@ -2874,9 +2874,9 @@ function openSupplementDialog() {
   supplementForm.value = {
     templateType: 'shared',
     targetVideoCount: 10,
-    minViewCount: null,
-    publishedAfter: null,
-    maxDurationSeconds: null,
+    minViewCount: 10000,
+    publishedAfter: '2024-01-01',
+    maxDurationSeconds: 30,
   }
   showSupplementDialog.value = true
 }
