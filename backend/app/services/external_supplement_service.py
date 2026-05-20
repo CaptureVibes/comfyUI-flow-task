@@ -191,8 +191,17 @@ async def submit_supplement_request(
 
     # 调 vendor
     url = settings.vendor_supplement_api_url.rstrip("/") + "/supplement-requests"
+    api_key = (settings.vendor_supplement_api_key or "").strip()
+    if not api_key:
+        raise RuntimeError("VENDOR_SUPPLEMENT_API_KEY 未配置")
+    try:
+        api_key.encode("ascii")
+    except UnicodeEncodeError:
+        raise RuntimeError(
+            "VENDOR_SUPPLEMENT_API_KEY 含非 ASCII 字符，请检查 .env 是否误把注释/占位符当成 key"
+        )
     headers = {
-        "Authorization": f"Bearer {settings.vendor_supplement_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     logger.info(
