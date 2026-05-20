@@ -1329,16 +1329,41 @@ async def supplement_templates_for_account(
                 logger.warning("【补充模板】搜索失败 keyword=%s round=%d: %s", search_keyword, round_num, exc)
                 break
 
-            # 过滤已见过 / 已尝试过的，web_video_url 去重
+            # 内部过滤截止时间戳（publish_after_date → unix ts）
+            import calendar as _cal
+            from datetime import datetime as _dt
+            _cutoff_ts = 0
+            if _search_cfg.publish_after_date:
+                try:
+                    _d = _dt.strptime(_search_cfg.publish_after_date, "%Y-%m-%d")
+                    _cutoff_ts = int(_cal.timegm(_d.timetuple()))
+                except ValueError:
+                    _cutoff_ts = 0
+
+            # 过滤已见过 / 已尝试过的，并按 pipeline_settings 内部过滤条件筛选；不满足就跳过继续查找
             batch_urls = []
+            filtered_count = 0
             for v in videos:
                 url = v.web_video_url
                 if not url or url in seen_urls or url in attempted_urls:
                     continue
                 seen_urls.add(url)
+                # 内部过滤：时长上限
+                if _search_cfg.max_duration_seconds > 0 and v.video_meta.duration > _search_cfg.max_duration_seconds:
+                    filtered_count += 1
+                    continue
+                # 内部过滤：最少播放量
+                if _search_cfg.min_play_count > 0 and v.play_count < _search_cfg.min_play_count:
+                    filtered_count += 1
+                    continue
+                # 内部过滤：发布日期下限
+                if _cutoff_ts > 0 and v.create_time < _cutoff_ts:
+                    filtered_count += 1
+                    continue
                 batch_urls.append(url)
 
-            logger.info("【补充模板】第%d轮搜索 keyword=%s 新URL=%d条", round_num, search_keyword, len(batch_urls))
+            logger.info("【补充模板】第%d轮搜索 keyword=%s 新URL=%d条 内部过滤丢弃=%d条",
+                        round_num, search_keyword, len(batch_urls), filtered_count)
 
             if not batch_urls:
                 # 连续一轮无新 URL，停止

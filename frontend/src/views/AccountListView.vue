@@ -673,8 +673,8 @@
           </div>
         </div>
 
-        <!-- 过滤条件 -->
-        <div class="al-supplement-config">
+        <!-- 过滤条件（仅 exclusive / auto；shared 走内部默认配置） -->
+        <div v-if="supplementForm.templateType !== 'shared'" class="al-supplement-config">
           <div class="al-supplement-config-label">过滤条件（留空 = 不限）</div>
           <div class="al-supplement-filters">
             <div class="al-supplement-filter-row">
@@ -2900,11 +2900,14 @@ async function handleSupplement() {
     }
   }
 
-  const filters = {
-    min_view_count: supplementForm.value.minViewCount,
-    published_after: supplementForm.value.publishedAfter,
-    max_duration_seconds: supplementForm.value.maxDurationSeconds,
-  }
+  // shared 模式不使用弹窗过滤条件（走内部 pipeline_settings 默认）
+  const filters = supplementForm.value.templateType === 'shared'
+    ? null
+    : {
+        min_view_count: supplementForm.value.minViewCount,
+        published_after: supplementForm.value.publishedAfter,
+        max_duration_seconds: supplementForm.value.maxDurationSeconds,
+      }
   const target = supplementForm.value.targetVideoCount
   try {
     let result
