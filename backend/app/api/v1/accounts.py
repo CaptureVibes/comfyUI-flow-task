@@ -1756,10 +1756,8 @@ async def supplement_templates(
     """
     为指定账号批量补充模板（后台异步执行，立即返回）。
 
-    - `template_type=exclusive`：走 vendor outbound（StyleDNA），由 callback 入库
-    - `template_type=shared`：仍走内部 candidate_service（按 tag 关键词搜索）
-
-    vendor 未配置时 exclusive 也会回退到内部 candidate_service（兼容旧链路）。
+    - `template_type=exclusive`：走 vendor outbound（StyleDNA），由 callback 入库；vendor 未配/失败直接报错，不 fallback
+    - `template_type=shared`：走内部 candidate_service（按 tag 关键词搜索）
     """
     from app.services.candidate_service import supplement_templates_for_accounts
     from app.services.external_supplement_service import (
@@ -1775,8 +1773,10 @@ async def supplement_templates(
     effective_owner = owner_id if owner_id is not None else creator_id
     filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
 
-    # exclusive 走 vendor outbound（如已配）
-    if template_type == "exclusive" and _vendor_configured():
+    # exclusive 模式：只走 vendor，失败/未配置直接报错
+    if template_type == "exclusive":
+        if not _vendor_configured():
+            raise HTTPException(status_code=503, detail="vendor 未配置（VENDOR_SUPPLEMENT_API_URL / API_KEY）")
         try:
             result = await submit_supplement_request(
                 owner_id=effective_owner,
@@ -1785,16 +1785,17 @@ async def supplement_templates(
                 target_video_count=target_count,
                 filters=filters_dict,
             )
-            return {
-                "message": f"已委托 vendor 为 {result['submitted_items']} 个账号补充模板",
-                "count": result["submitted_items"],
-                "skipped_accounts": result["skipped_accounts"],
-                "request_id": result["request_id"],
-            }
         except Exception as exc:
-            logger.warning("vendor outbound 失败，回退到内部 candidate_service: %s", exc)
+            logger.error("vendor outbound 失败: %s", exc)
+            raise HTTPException(status_code=502, detail=f"vendor outbound 失败: {exc}")
+        return {
+            "message": f"已委托 vendor 为 {result['submitted_items']} 个账号补充模板",
+            "count": result["submitted_items"],
+            "skipped_accounts": result["skipped_accounts"],
+            "request_id": result["request_id"],
+        }
 
-    # 内部路径（shared 模式 / vendor 未配 / vendor 出错）
+    # shared 模式：内部 candidate_service
     _asyncio.create_task(
         supplement_templates_for_accounts(
             account_ids=body.account_ids,
@@ -1804,7 +1805,7 @@ async def supplement_templates(
         )
     )
     return {
-        "message": f"已为 {len(body.account_ids)} 个账号启动补充模板任务（{template_type}，内部路径）",
+        "message": f"已为 {len(body.account_ids)} 个账号启动共享补充模板任务（内部路径）",
         "count": len(body.account_ids),
     }
 
@@ -1824,10 +1825,8 @@ async def auto_supplement_templates(
 ):
     """
     根据 AI 博主分类类型自动补充匹配视频模板。
-    vendor 已配置则走 outbound；未配置则回退到内部 candidate_service.auto_supplement_for_accounts。
+    只走 vendor outbound；vendor 未配置 / 失败直接报错，不 fallback。
     """
-    import asyncio as _asyncio
-    from app.services.candidate_service import auto_supplement_for_accounts
     from app.services.external_supplement_service import (
         submit_supplement_request, _vendor_configured,
     )
@@ -1839,34 +1838,24 @@ async def auto_supplement_templates(
     effective_owner = owner_id if owner_id is not None else creator_id
     filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
 
-    if _vendor_configured():
-        try:
-            result = await submit_supplement_request(
-                owner_id=effective_owner,
-                account_ids=body.account_ids,
-                mode="auto",
-                target_video_count=target_count,
-                filters=filters_dict,
-            )
-            return {
-                "message": f"已委托 vendor 为 {result['submitted_items']} 个账号自动补充",
-                "count": result["submitted_items"],
-                "skipped_accounts": result["skipped_accounts"],
-                "request_id": result["request_id"],
-            }
-        except Exception as exc:
-            logger.warning("vendor outbound 失败，回退到内部 auto_supplement: %s", exc)
-
-    _asyncio.create_task(
-        auto_supplement_for_accounts(
-            account_ids=body.account_ids,
+    if not _vendor_configured():
+        raise HTTPException(status_code=503, detail="vendor 未配置（VENDOR_SUPPLEMENT_API_URL / API_KEY）")
+    try:
+        result = await submit_supplement_request(
             owner_id=effective_owner,
-            max_new_videos=target_count,
+            account_ids=body.account_ids,
+            mode="auto",
+            target_video_count=target_count,
+            filters=filters_dict,
         )
-    )
+    except Exception as exc:
+        logger.error("vendor outbound 失败: %s", exc)
+        raise HTTPException(status_code=502, detail=f"vendor outbound 失败: {exc}")
     return {
-        "message": f"已为 {len(body.account_ids)} 个账号启动自动补充任务（内部路径）",
-        "count": len(body.account_ids),
+        "message": f"已委托 vendor 为 {result['submitted_items']} 个账号自动补充",
+        "count": result["submitted_items"],
+        "skipped_accounts": result["skipped_accounts"],
+        "request_id": result["request_id"],
     }
 
 
