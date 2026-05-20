@@ -510,26 +510,18 @@ class VideoTaskService:
         return gcs_url, len(tasks), len(payload)
 
     async def _upload_gcs_video_to_cdn(self, blob: Any, filename: str) -> str:
-        """Download a GCS blob to a temp file and upload to CDN. Returns CDN URL."""
+        """把一个 GCS blob 下载到本地，再走 upload_video_file 统一上传入口。
+
+        函数名沿用历史，实际目标由 VIDEO_UPLOAD_BACKEND 决定。
+        """
         from app.utils.tmp_storage import disk_namedtempfile
+        from app.utils.video_upload import upload_video_file
+
         with disk_namedtempfile(suffix=".mp4", delete=False) as tmp:
             tmp_path = tmp.name
         try:
             await asyncio.to_thread(blob.download_to_filename, tmp_path)
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                with open(tmp_path, "rb") as f:
-                    response = await client.post(
-                        settings.video_upload_api_url,
-                        files={"file": (filename, f, "video/mp4")},
-                        headers={"Accept": "*/*"},
-                    )
-            if response.status_code >= 400:
-                raise RuntimeError(f"Upload API returned {response.status_code}: {response.text[:300]}")
-            payload = response.json()
-            cdn_url = payload.get("data", {}).get("url") if isinstance(payload.get("data"), dict) else None
-            if not cdn_url:
-                raise RuntimeError(f"Upload API response missing data.url: {payload}")
-            return cdn_url
+            return await upload_video_file(tmp_path, filename)
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)

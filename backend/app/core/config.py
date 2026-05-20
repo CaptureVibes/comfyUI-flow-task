@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     gcs_project_id: str = "ai-agent-461123"
     gcs_bucket_name: str = "audio_test_112"
+    # video_sources / 模板视频上传时使用的对象前缀
+    gcs_video_prefix: str = "video-sources"
+    # 视频上传后端开关：'gcs' = 上传到 GCS bucket；'cdn' = 沿用旧 HTTP upload API
+    video_upload_backend: str = "gcs"
 
     # Open API 配置
     open_api_base_url: str = "http://192.168.199.28:8080"
@@ -36,6 +40,12 @@ class Settings(BaseSettings):
 
     # Google Gemini 官方 API（设置后优先使用，替代 REST API fallback）
     google_api_key: str = ""
+
+    # 「补充模板」外包给 StyleDNA / vendor 的对接配置（exclusive + auto 模式）
+    # vendor URL = ws.alvinsclub.ai/supplement-vendor；留空则按内部 candidate_service fallback
+    vendor_supplement_api_url: str = ""
+    vendor_supplement_api_key: str = ""    # outbound Bearer token
+    vendor_callback_public_base: str = ""  # 我们这边公网地址，构造 callback_url 用，例如 http://echoootx.top
 
     # Evolink AI（Google Gemini 配额耗尽后的兜底 vendor）
     # 文本走 direct.evolink.ai/v1/chat/completions（OpenAI 兼容）

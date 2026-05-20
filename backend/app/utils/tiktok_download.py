@@ -123,31 +123,9 @@ async def _stream_download(direct_url: str, out_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def _upload_to_cdn(file_path: str, filename: str) -> str:
-    """上传本地 mp4 到存储 API，返回 CDN 永久 URL。"""
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                with open(file_path, "rb") as f:
-                    response = await client.post(
-                        settings.video_upload_api_url,
-                        files={"file": (filename, f, "video/mp4")},
-                        headers={"Accept": "*/*"},
-                    )
-            if response.status_code >= 400:
-                raise RuntimeError(f"Upload API returned {response.status_code}: {response.text[:300]}")
-            payload = response.json()
-            url = payload.get("data", {}).get("url") if isinstance(payload.get("data"), dict) else None
-            if not url:
-                raise RuntimeError(f"Upload API response missing data.url: {payload}")
-            return url
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            delay = min(attempt * 2, 30)
-            logger.warning("_upload_to_cdn failed (attempt %d, %ds后重试): %s", attempt, delay, exc)
-            await asyncio.sleep(delay)
+    """上传本地 mp4，返回 URL。后端由 VIDEO_UPLOAD_BACKEND 决定。"""
+    from app.utils.video_upload import upload_video_file
+    return await upload_video_file(file_path, filename)
 
 
 # ---------------------------------------------------------------------------
