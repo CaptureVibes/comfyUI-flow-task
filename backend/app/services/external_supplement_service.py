@@ -357,6 +357,7 @@ async def handle_supplement_callback(
                 video=entry["video"],
                 owner_id=owner_id,
                 mode=mode,
+                request_id=request_id,
             )
         )
 
@@ -370,12 +371,55 @@ async def handle_supplement_callback(
     }
 
 
+async def _append_rejected_video(
+    request_id: uuid.UUID,
+    entry: dict,
+) -> None:
+    """把一条未通过的视频追加到对应 request 的 rejected_videos 列表。
+
+    用 SELECT ... FOR UPDATE 串行化并发回调对 JSON 列的修改。
+    """
+    async with SessionLocal() as session:
+        async with session.begin():
+            req = (await session.execute(
+                select(ExternalSupplementRequest)
+                .where(ExternalSupplementRequest.request_id == request_id)
+                .with_for_update()
+            )).scalar_one_or_none()
+            if req is None:
+                logger.warning("[ext_supp] append_rejected: request %s 不存在", request_id)
+                return
+            current = list(req.rejected_videos or [])
+            current.append(entry)
+            req.rejected_videos = current
+            req.videos_rejected = (req.videos_rejected or 0) + 1
+            # handle_supplement_callback 在调度时已把这条计入 videos_accepted（=已调度），
+            # 现在终因 AI 审核 / 分类未过被丢弃，回退该计数以保持总和一致
+            if (req.videos_accepted or 0) > 0:
+                req.videos_accepted = req.videos_accepted - 1
+
+
+def _rejected_entry(video: dict, account_id: uuid.UUID, **extras) -> dict:
+    """组装 rejected_videos 列表里的一条记录。"""
+    return {
+        "account_id": str(account_id),
+        "source_url": str(video.get("source_url") or ""),
+        "local_video_url": str(video.get("local_video_url") or ""),
+        "blogger_name": video.get("blogger_name"),
+        "video_title": video.get("video_title"),
+        "thumbnail_url": video.get("thumbnail_url"),
+        "rejected_at": datetime.now(timezone.utc).isoformat(),
+        **extras,
+    }
+
+
 async def _post_callback_pipeline(
     *,
     account_id: uuid.UUID,
     video: dict,
     owner_id: uuid.UUID | None,
     mode: str,
+    request_id: uuid.UUID,
 ) -> None:
     """单条视频的后处理：
 
@@ -523,6 +567,11 @@ async def _post_callback_pipeline(
                 "[ext_supp] AI 审核未通过，丢弃 source_url=%s reason=%s",
                 source_url, reason,
             )
+            await _append_rejected_video(request_id, _rejected_entry(
+                video, account_id,
+                reason_type="ai_review",
+                reason=reason,
+            ))
             return
         logger.info("[ext_supp] AI 审核通过 source_url=%s", source_url)
 
@@ -535,12 +584,25 @@ async def _post_callback_pipeline(
             category_index = None
         if category_index is None:
             logger.info("[ext_supp] auto 分类失败，丢弃 source_url=%s", source_url)
+            await _append_rejected_video(request_id, _rejected_entry(
+                video, account_id,
+                reason_type="classify_failed",
+                reason="Gemini 分类未返回结果",
+                allowed_indices=allowed_indices,
+            ))
             return
         if category_index not in allowed_indices:
             logger.info(
                 "[ext_supp] auto 分类 idx=%s ∉ 允许 %s，丢弃 source_url=%s",
                 category_index, allowed_indices, source_url,
             )
+            await _append_rejected_video(request_id, _rejected_entry(
+                video, account_id,
+                reason_type="classify_unmatched",
+                reason=f"分类 idx={category_index} 不在允许小类 {allowed_indices}",
+                category_index=category_index,
+                allowed_indices=allowed_indices,
+            ))
             return
         logger.info("[ext_supp] auto 分类匹配 idx=%s source_url=%s", category_index, source_url)
 
