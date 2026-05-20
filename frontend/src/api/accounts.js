@@ -114,19 +114,33 @@ export async function exportVideoUrls(accountIds) {
   return response.data
 }
 
-export async function autoSupplementTemplates(accountIds, maxNewVideos = 10) {
+function _normalizeFilters(filters = {}) {
+  // 把空值 / 0 视为不限，转 null
+  const minV = filters.min_view_count
+  const pub = filters.published_after
+  const dur = filters.max_duration_seconds
+  return {
+    min_view_count: typeof minV === 'number' && minV > 0 ? minV : null,
+    published_after: pub || null,
+    max_duration_seconds: typeof dur === 'number' && dur > 0 ? dur : null,
+  }
+}
+
+export async function autoSupplementTemplates(accountIds, targetVideoCount = 10, filters = {}) {
   const { data } = await http.post('/accounts/auto-supplement-templates', {
     account_ids: accountIds,
-    max_new_videos: maxNewVideos,
+    target_video_count: targetVideoCount,
+    filters: _normalizeFilters(filters),
   })
   return data
 }
 
-export async function supplementTemplates(accountIds, templateType = 'shared', maxNewVideos = 10) {
+export async function supplementTemplates(accountIds, templateType = 'shared', targetVideoCount = 10, filters = {}) {
   const { data } = await http.post('/accounts/supplement-templates', {
     account_ids: accountIds,
     template_type: templateType,
-    max_new_videos: maxNewVideos,
+    target_video_count: targetVideoCount,
+    filters: _normalizeFilters(filters),
   })
   return data
 }

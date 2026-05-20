@@ -664,12 +664,54 @@
         </div>
         <!-- 数量配置 -->
         <div class="al-supplement-config">
-          <div class="al-supplement-config-label">每账号最多新增视频数</div>
+          <div class="al-supplement-config-label">目标视频数量（每个博主）</div>
           <div class="al-supplement-config-row">
-            <button class="al-supplement-minus" @click="supplementForm.maxNewVideos = Math.max(1, supplementForm.maxNewVideos - 1)">−</button>
-            <span class="al-supplement-num">{{ supplementForm.maxNewVideos }}</span>
-            <button class="al-supplement-plus" @click="supplementForm.maxNewVideos = Math.min(50, supplementForm.maxNewVideos + 1)">+</button>
+            <button class="al-supplement-minus" @click="supplementForm.targetVideoCount = Math.max(1, supplementForm.targetVideoCount - 1)">−</button>
+            <span class="al-supplement-num">{{ supplementForm.targetVideoCount }}</span>
+            <button class="al-supplement-plus" @click="supplementForm.targetVideoCount = Math.min(50, supplementForm.targetVideoCount + 1)">+</button>
             <span class="al-supplement-num-hint">条</span>
+          </div>
+        </div>
+
+        <!-- 过滤条件 -->
+        <div class="al-supplement-config">
+          <div class="al-supplement-config-label">过滤条件（留空 = 不限）</div>
+          <div class="al-supplement-filters">
+            <div class="al-supplement-filter-row">
+              <label>最少播放量</label>
+              <el-input-number
+                v-model="supplementForm.minViewCount"
+                :min="0"
+                :step="1000"
+                controls-position="right"
+                placeholder="不限"
+                style="width:180px"
+              />
+              <span class="al-supplement-filter-hint">view_count ≥ 该值才采集</span>
+            </div>
+            <div class="al-supplement-filter-row">
+              <label>发布日期之后</label>
+              <el-date-picker
+                v-model="supplementForm.publishedAfter"
+                type="date"
+                value-format="YYYY-MM-DD"
+                placeholder="不限"
+                style="width:180px"
+              />
+              <span class="al-supplement-filter-hint">仅该日期及之后发布的视频</span>
+            </div>
+            <div class="al-supplement-filter-row">
+              <label>时长上限（秒）</label>
+              <el-input-number
+                v-model="supplementForm.maxDurationSeconds"
+                :min="0"
+                :step="5"
+                controls-position="right"
+                placeholder="不限"
+                style="width:180px"
+              />
+              <span class="al-supplement-filter-hint">视频时长 ≤ 该值</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2819,11 +2861,23 @@ async function handleBulkSchedule() {
 
 const showSupplementDialog = ref(false)
 const supplementing = ref(false)
-const supplementForm = ref({ templateType: 'shared', maxNewVideos: 10 })
+const supplementForm = ref({
+  templateType: 'shared',
+  targetVideoCount: 10,
+  minViewCount: null,
+  publishedAfter: null,
+  maxDurationSeconds: null,
+})
 
 
 function openSupplementDialog() {
-  supplementForm.value = { templateType: 'shared', maxNewVideos: 10 }
+  supplementForm.value = {
+    templateType: 'shared',
+    targetVideoCount: 10,
+    minViewCount: null,
+    publishedAfter: null,
+    maxDurationSeconds: null,
+  }
   showSupplementDialog.value = true
 }
 
@@ -2846,17 +2900,28 @@ async function handleSupplement() {
     }
   }
 
+  const filters = {
+    min_view_count: supplementForm.value.minViewCount,
+    published_after: supplementForm.value.publishedAfter,
+    max_duration_seconds: supplementForm.value.maxDurationSeconds,
+  }
+  const target = supplementForm.value.targetVideoCount
   try {
     let result
     if (supplementForm.value.templateType === 'auto') {
-      result = await autoSupplementTemplates(accountIds, supplementForm.value.maxNewVideos)
+      result = await autoSupplementTemplates(accountIds, target, filters)
     } else {
-      result = await supplementTemplates(accountIds, supplementForm.value.templateType, supplementForm.value.maxNewVideos)
+      result = await supplementTemplates(
+        accountIds,
+        supplementForm.value.templateType,
+        target,
+        filters,
+      )
     }
     showSupplementDialog.value = false
     ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
   } catch (e) {
-    ElMessage.error('启动补充模板失败')
+    ElMessage.error(e?.response?.data?.detail || '启动补充模板失败')
   } finally {
     supplementing.value = false
   }
@@ -5167,6 +5232,27 @@ onMounted(() => {
 }
 .al-supplement-num-hint {
   font-size: 13px;
+  color: #94a3b8;
+}
+.al-supplement-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.al-supplement-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.al-supplement-filter-row label {
+  font-size: 12px;
+  color: #475569;
+  width: 92px;
+  flex-shrink: 0;
+}
+.al-supplement-filter-hint {
+  font-size: 12px;
   color: #94a3b8;
 }
 

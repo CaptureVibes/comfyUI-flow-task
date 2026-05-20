@@ -21,6 +21,7 @@ from app.models.candidate_video import CandidateVideo
 from app.models.face_photo import FacePhoto
 from app.models.video_classification import VideoClassification
 from app.models.formal_video_backfill import FormalVideoBackfill
+from app.models.external_supplement_request import ExternalSupplementRequest
 
 __all__ = [
     "VideoSource", "VideoSourceStat", "VideoAITemplate", "Account",
@@ -38,4 +39,5 @@ __all__ = [
     "FacePhoto",
     "VideoClassification",
     "FormalVideoBackfill",
+    "ExternalSupplementRequest",
 ]

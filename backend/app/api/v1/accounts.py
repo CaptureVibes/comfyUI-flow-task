@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -1300,10 +1300,20 @@ async def unbind_tag_from_account(
 # 补充模板
 # ---------------------------------------------------------------------------
 
+class SupplementFiltersBody(BaseModel):
+    """补充模板过滤条件（缺省 = 不限）。"""
+    min_view_count: int | None = None
+    published_after: date | None = None
+    max_duration_seconds: int | None = None
+
+
 class SupplementTemplatesBody(BaseModel):
     account_ids: list[uuid.UUID]
     template_type: str = "shared"  # "shared" | "exclusive"
-    max_new_videos: int = 10
+    # 新版字段 + 兼容旧前端
+    target_video_count: int | None = None
+    max_new_videos: int | None = None
+    filters: SupplementFiltersBody | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1731,6 +1741,12 @@ async def bulk_generate_video_tasks(
     }
 
 
+def _resolve_target_count(body: SupplementTemplatesBody | "AutoSupplementBody") -> int:
+    """新字段 target_video_count 优先，没传 fallback 到旧字段 max_new_videos，再没有默认 10。"""
+    n = getattr(body, "target_video_count", None) or getattr(body, "max_new_videos", None)
+    return int(n) if n and int(n) > 0 else 10
+
+
 @router.post("/supplement-templates", status_code=200)
 async def supplement_templates(
     body: SupplementTemplatesBody,
@@ -1739,33 +1755,65 @@ async def supplement_templates(
 ):
     """
     为指定账号批量补充模板（后台异步执行，立即返回）。
+
+    - `template_type=exclusive`：走 vendor outbound（StyleDNA），由 callback 入库
+    - `template_type=shared`：仍走内部 candidate_service（按 tag 关键词搜索）
+
+    vendor 未配置时 exclusive 也会回退到内部 candidate_service（兼容旧链路）。
     """
     from app.services.candidate_service import supplement_templates_for_accounts
+    from app.services.external_supplement_service import (
+        submit_supplement_request, _vendor_configured,
+    )
     import asyncio as _asyncio
 
     if not body.account_ids:
         return {"message": "无账号，跳过", "count": 0}
 
     template_type = body.template_type if body.template_type in ("shared", "exclusive") else "shared"
+    target_count = _resolve_target_count(body)
+    effective_owner = owner_id if owner_id is not None else creator_id
+    filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
 
+    # exclusive 走 vendor outbound（如已配）
+    if template_type == "exclusive" and _vendor_configured():
+        try:
+            result = await submit_supplement_request(
+                owner_id=effective_owner,
+                account_ids=body.account_ids,
+                mode="exclusive",
+                target_video_count=target_count,
+                filters=filters_dict,
+            )
+            return {
+                "message": f"已委托 vendor 为 {result['submitted_items']} 个账号补充模板",
+                "count": result["submitted_items"],
+                "skipped_accounts": result["skipped_accounts"],
+                "request_id": result["request_id"],
+            }
+        except Exception as exc:
+            logger.warning("vendor outbound 失败，回退到内部 candidate_service: %s", exc)
+
+    # 内部路径（shared 模式 / vendor 未配 / vendor 出错）
     _asyncio.create_task(
         supplement_templates_for_accounts(
             account_ids=body.account_ids,
-            owner_id=owner_id if owner_id is not None else creator_id,
+            owner_id=effective_owner,
             template_type=template_type,
-            max_new_videos=body.max_new_videos,
+            max_new_videos=target_count,
         )
     )
-
     return {
-        "message": f"已为 {len(body.account_ids)} 个账号启动补充模板任务（{template_type}）",
+        "message": f"已为 {len(body.account_ids)} 个账号启动补充模板任务（{template_type}，内部路径）",
         "count": len(body.account_ids),
     }
 
 
 class AutoSupplementBody(BaseModel):
     account_ids: list[uuid.UUID]
-    max_new_videos: int = 10
+    target_video_count: int | None = None
+    max_new_videos: int | None = None
+    filters: SupplementFiltersBody | None = None
 
 
 @router.post("/auto-supplement-templates", status_code=200)
@@ -1775,24 +1823,49 @@ async def auto_supplement_templates(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
 ):
     """
-    根据 AI 博主分类类型自动补充匹配视频模板（后台异步执行，立即返回）。
-    仅支持 single/dual 分类账号；视频下载后先分类，仅匹配核心类别才入库。
+    根据 AI 博主分类类型自动补充匹配视频模板。
+    vendor 已配置则走 outbound；未配置则回退到内部 candidate_service.auto_supplement_for_accounts。
     """
     import asyncio as _asyncio
     from app.services.candidate_service import auto_supplement_for_accounts
+    from app.services.external_supplement_service import (
+        submit_supplement_request, _vendor_configured,
+    )
 
     if not body.account_ids:
         return {"message": "无账号，跳过", "count": 0}
 
+    target_count = _resolve_target_count(body)
+    effective_owner = owner_id if owner_id is not None else creator_id
+    filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
+
+    if _vendor_configured():
+        try:
+            result = await submit_supplement_request(
+                owner_id=effective_owner,
+                account_ids=body.account_ids,
+                mode="auto",
+                target_video_count=target_count,
+                filters=filters_dict,
+            )
+            return {
+                "message": f"已委托 vendor 为 {result['submitted_items']} 个账号自动补充",
+                "count": result["submitted_items"],
+                "skipped_accounts": result["skipped_accounts"],
+                "request_id": result["request_id"],
+            }
+        except Exception as exc:
+            logger.warning("vendor outbound 失败，回退到内部 auto_supplement: %s", exc)
+
     _asyncio.create_task(
         auto_supplement_for_accounts(
             account_ids=body.account_ids,
-            owner_id=owner_id if owner_id is not None else creator_id,
-            max_new_videos=body.max_new_videos,
+            owner_id=effective_owner,
+            max_new_videos=target_count,
         )
     )
     return {
-        "message": f"已为 {len(body.account_ids)} 个账号启动自动补充任务",
+        "message": f"已为 {len(body.account_ids)} 个账号启动自动补充任务（内部路径）",
         "count": len(body.account_ids),
     }
 
