@@ -72,11 +72,26 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
         logger.info("apify: dataset items=%d", len(items))
         if items:
             item = items[0]
+            # 诊断：actor 偶发返回失效 KV URL，把 item 全部字段名 + 几个候选 URL 都打出来便于排障
+            logger.info("apify: dataset item keys=%s", sorted(item.keys()))
+            for field_name in ("videoUrl", "downloadUrl", "mediaUrls", "videoUrls"):
+                v = item.get(field_name)
+                if v:
+                    logger.info("apify: item.%s=%r", field_name, v)
+            video_meta = item.get("videoMeta") or {}
+            if video_meta:
+                logger.info(
+                    "apify: videoMeta keys=%s downloadAddr=%s playAddr=%s",
+                    sorted(video_meta.keys()),
+                    (video_meta.get("downloadAddr") or "")[:120],
+                    (video_meta.get("playAddr") or "")[:120],
+                )
             url = (
                 item.get("videoUrl")
                 or item.get("downloadUrl")
-                or item.get("videoMeta", {}).get("downloadAddr")
-                or item.get("videoMeta", {}).get("playAddr")
+                or (item.get("mediaUrls") or [None])[0]
+                or video_meta.get("downloadAddr")
+                or video_meta.get("playAddr")
             )
             if url:
                 return _attach_apify_token(url)
@@ -85,8 +100,9 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
         kv_store_id = run.get("defaultKeyValueStoreId")
         if kv_store_id:
             kv = client.key_value_store(kv_store_id)
-            for record in kv.list_keys().get("items", []):
-                key = record.get("key", "")
+            kv_keys = [r.get("key", "") for r in kv.list_keys().get("items", [])]
+            logger.info("apify: KV store keys=%s", kv_keys)
+            for key in kv_keys:
                 if key.endswith(".mp4") or "video" in key.lower():
                     file_url = (
                         f"https://api.apify.com/v2/key-value-stores/{kv_store_id}"
