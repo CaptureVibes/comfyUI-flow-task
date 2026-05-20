@@ -98,7 +98,7 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
         raise RuntimeError(f"Apify actor returned no video URL. dataset={len(items)} items")
 
     url = await asyncio.to_thread(_run_sync)
-    logger.info("apify: got direct_url=%s", url[:100])
+    logger.info("apify: got direct_url=%s", url)
     return url
 
 
