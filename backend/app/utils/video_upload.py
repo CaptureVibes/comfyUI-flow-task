@@ -30,7 +30,8 @@ def _today_prefix() -> str:
 
 
 def _backend() -> str:
-    return (settings.video_upload_backend or "gcs").lower()
+    raw = settings.video_upload_backend or "gcs"
+    return raw.split("#", 1)[0].strip().lower() or "gcs"
 
 
 async def upload_video_file(file_path: str, filename: str) -> str:
