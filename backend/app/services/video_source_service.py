@@ -698,13 +698,17 @@ async def _do_download_and_upload_inner(vs_id: UUID) -> None:
             # GET 直链拿到 404。这种情况下视频本身大概率不可达（已删 / 地区屏蔽 /
             # 年龄限制等），重试 14 次只是白烧 actor 调用费，直接判定为永久失败。
             import httpx as _httpx
+            from app.utils.tiktok_download import SlideshowNotDownloadable
             is_apify_404 = (
                 isinstance(exc, _httpx.HTTPStatusError)
                 and exc.response.status_code == 404
                 and "api.apify.com" in str(exc.request.url)
             )
-            if is_apify_404 or attempt >= _MAX_ATTEMPTS:
-                if is_apify_404:
+            is_slideshow = isinstance(exc, SlideshowNotDownloadable)
+            if is_apify_404 or is_slideshow or attempt >= _MAX_ATTEMPTS:
+                if is_slideshow:
+                    logger.error("Video %s slideshow 帖（无视频文件），不再重试", vs_id, exc_info=exc)
+                elif is_apify_404:
                     logger.error("Video %s Apify KV 404（视频不可达），不再重试", vs_id, exc_info=exc)
                 else:
                     logger.error("Video %s 下载上传达到最大重试次数 %d，放弃", vs_id, _MAX_ATTEMPTS, exc_info=exc)

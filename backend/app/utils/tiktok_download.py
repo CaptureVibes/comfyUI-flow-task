@@ -18,6 +18,10 @@ logger = logging.getLogger("app.tiktok_download")
 _APIFY_ACTOR_ID = "GdWCkxBtKWOsKjdch"  # clockworks/tiktok-scraper
 
 
+class SlideshowNotDownloadable(RuntimeError):
+    """TikTok slideshow（轮播图）帖子：actor 不会真正生成视频文件，标记永久失败。"""
+
+
 def _attach_apify_token(url: str) -> str:
     """对指向 api.apify.com 的 URL 自动拼上 ?token=...。
 
@@ -74,6 +78,13 @@ async def _apify_get_direct_url(tiktok_url: str) -> str:
             item = items[0]
             # 诊断：actor 偶发返回失效 KV URL，把 item 全部字段名 + 几个候选 URL 都打出来便于排障
             logger.info("apify: dataset item keys=%s", sorted(item.keys()))
+
+            # Slideshow（轮播图）帖子：actor 会编一个 video-xxx.mp4 URL 塞进 mediaUrls / videoMeta.downloadAddr，
+            # 但实际上没把视频写进 KV，GET 必 404。直接判定为不可下载，避免白烧 actor 调用费 + 重试。
+            if item.get("isSlideshow") or item.get("slideshowImageLinks"):
+                raise SlideshowNotDownloadable(
+                    f"TikTok 链接是 slideshow（轮播图）非视频，无法下载: {tiktok_url}"
+                )
             for field_name in ("videoUrl", "downloadUrl", "mediaUrls", "videoUrls"):
                 v = item.get(field_name)
                 if v:
