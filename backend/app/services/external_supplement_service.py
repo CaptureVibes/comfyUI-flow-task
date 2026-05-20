@@ -383,6 +383,20 @@ async def handle_supplement_callback(
         if final:
             req.status = "completed"
             req.completed_at = datetime.now(timezone.utc)
+
+        # 把本次回调的摘要追加到 callbacks_log（JSON 列需重新赋值才会写库）
+        callback_log_entry = {
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+            "final": final,
+            "items_count": len(items),
+            "videos_count": total_videos,
+            "scheduled": scheduled,
+            "duplicated": duplicated,
+            "rejected": rejected,
+            "items": callback_preview,
+        }
+        req.callbacks_log = list(req.callbacks_log or []) + [callback_log_entry]
         await session.commit()
 
     logger.info(

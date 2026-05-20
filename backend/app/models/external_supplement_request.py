@@ -45,6 +45,8 @@ class ExternalSupplementRequest(Base):
     videos_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # AI 审核 / 分类未通过的视频明细，便于这次请求事后查看；元素结构见 _append_rejected_video
     rejected_videos: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # vendor 每次回调的明细：received_at / mode / final / items / videos / scheduled / dup / rej + 每个 account 的 status & video_urls
+    callbacks_log: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
