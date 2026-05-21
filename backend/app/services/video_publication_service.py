@@ -533,11 +533,19 @@ class OpenAPIAdapter(PublishAdapter):
         promotion_code: str | None,
         ext_products: list[dict],
         account_tier: str | None = None,
+        kol_user_id: str | None = None,
     ) -> tuple[str | None, list[dict]]:
         callback_url = data.callback_url or settings.open_api_callback_url or None
         env = (account_tier or "test").lower()
         if env not in {"test", "dev", "prod"}:
             env = "test"
+        ext_info: dict = {
+            "promotion_code": promotion_code,
+            "ext_products": ext_products,
+            "video_tags": {"env": [env]},
+        }
+        if kol_user_id:
+            ext_info["kol_user_id"] = kol_user_id
         api_payload: dict = {
             "video_url": data.video_url,
             "original_video_url": data.original_video_url or data.video_url,
@@ -545,11 +553,7 @@ class OpenAPIAdapter(PublishAdapter):
             "title": data.title,
             "description": data.description,
             "tags": data.tags or [],
-            "ext_info": {
-                "promotion_code": promotion_code,
-                "ext_products": ext_products,
-                "video_tags": {"env": [env]},
-            },
+            "ext_info": ext_info,
             "channels": [{"platform": c["platform"], "channel_id": c["channel_id"]} for c in channels],
             "external_id": str(data.sub_task_id),
         }
@@ -816,17 +820,20 @@ class VideoPublicationService:
                 "promotion_code": None,
                 "product_code_mode": None,
                 "account_tier": None,
+                "kol_user_id": None,
             }
         product_code_mode: str | None = None
         account_tier: str | None = None
+        kol_user_id: str | None = None
         if sub_task.task.account_id:
             row = (await self.db.execute(
-                select(Account.product_code_mode, Account.account_tier)
+                select(Account.product_code_mode, Account.account_tier, Account.kol_user_id)
                 .where(Account.id == sub_task.task.account_id)
             )).first()
             if row is not None:
                 product_code_mode = row[0]
                 account_tier = row[1]
+                kol_user_id = row[2]
         publish_meta = sub_task.publish_meta if isinstance(sub_task.publish_meta, dict) else {}
         promotion_code = publish_meta.get("promotion_code")
         if not (
@@ -840,6 +847,7 @@ class VideoPublicationService:
             "promotion_code": promotion_code,
             "product_code_mode": product_code_mode,
             "account_tier": account_tier,
+            "kol_user_id": kol_user_id,
         }
 
     async def create_publication(self, data: VideoPublicationCreate) -> VideoPublication:
@@ -862,6 +870,7 @@ class VideoPublicationService:
         ext_products = publication_context["ext_products"]
         product_code_mode = (publication_context.get("product_code_mode") or "without_code")
         account_tier = publication_context.get("account_tier") or "test"
+        kol_user_id: str | None = publication_context.get("kol_user_id") or None
         logger.info(
             "create_publication: sub_task_id=%s openapi_channels=%s ext_channels=%s ext_products=%d pre_generated_promotion_code=%s product_code_mode=%s",
             data.sub_task_id,
@@ -895,6 +904,7 @@ class VideoPublicationService:
             "tags": data.tags or [],
             "promotion_code": promotion_code,
             "ext_products": ext_products,
+            "kol_user_id": kol_user_id,
             "channels": data.channels,
             "external_id": str(data.sub_task_id),
             # 标记哪些来源被使用，供 sync_status 判断是否需要调用对应 adapter
@@ -920,6 +930,7 @@ class VideoPublicationService:
                 promotion_code,
                 ext_products,
                 account_tier=account_tier,
+                kol_user_id=kol_user_id,
             )))
         if ext_channels:
             submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(
@@ -1106,14 +1117,18 @@ class VideoPublicationService:
         if not isinstance(ext_products, list):
             ext_products = pub.ext_products if isinstance(pub.ext_products, list) else []
 
-        # 重试时使用账号当前的 account_tier（晋级后立即生效）
+        # 重试时使用账号当前的 account_tier（晋级后立即生效）+ kol_user_id（事后回填的会被取到）
         retry_account_tier: str = "test"
+        retry_kol_user_id: str | None = None
         if sub_task.task and sub_task.task.account_id:
-            tier = await self.db.scalar(
-                select(Account.account_tier).where(Account.id == sub_task.task.account_id)
-            )
-            if tier:
-                retry_account_tier = tier
+            row = (await self.db.execute(
+                select(Account.account_tier, Account.kol_user_id)
+                .where(Account.id == sub_task.task.account_id)
+            )).first()
+            if row is not None:
+                if row[0]:
+                    retry_account_tier = row[0]
+                retry_kol_user_id = row[1] or None
 
         payload_promotion_code = payload.get("promotion_code")
         if (
@@ -1137,6 +1152,7 @@ class VideoPublicationService:
             "channels": retry_channels,
             "promotion_code": promotion_code,
             "ext_products": ext_products,
+            "kol_user_id": retry_kol_user_id,
             "_has_openapi": bool(openapi_channels),
             "_has_ext_pub": bool(ext_channels),
         })
@@ -1160,6 +1176,7 @@ class VideoPublicationService:
                 promotion_code,
                 ext_products,
                 account_tier=retry_account_tier,
+                kol_user_id=retry_kol_user_id,
             )))
         if ext_channels:
             submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(
@@ -1318,14 +1335,18 @@ class VideoPublicationService:
         ext_channels = [c for c in retry_channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in retry_channels if c.get("channel_source") != "ext_pub"]
 
-        # 重试时使用账号当前 tier
+        # 重试时使用账号当前 tier + kol_user_id
         retry_account_tier: str = "test"
+        retry_kol_user_id: str | None = None
         if sub_task.task and sub_task.task.account_id:
-            tier = await self.db.scalar(
-                select(Account.account_tier).where(Account.id == sub_task.task.account_id)
-            )
-            if tier:
-                retry_account_tier = tier
+            row = (await self.db.execute(
+                select(Account.account_tier, Account.kol_user_id)
+                .where(Account.id == sub_task.task.account_id)
+            )).first()
+            if row is not None:
+                if row[0]:
+                    retry_account_tier = row[0]
+                retry_kol_user_id = row[1] or None
 
         payload_promotion_code = payload.get("promotion_code")
         if (
@@ -1373,6 +1394,7 @@ class VideoPublicationService:
             submit_tasks.append(("openapi", self._openapi_adapter.submit(
                 data, openapi_channels, promotion_code, ext_products,
                 account_tier=retry_account_tier,
+                kol_user_id=retry_kol_user_id,
             )))
         if ext_channels:
             submit_tasks.append(("ext_pub", self._ext_pub_adapter.submit(
