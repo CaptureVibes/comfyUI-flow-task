@@ -40,6 +40,9 @@ class AccountChannelReservation(Base):
     channel_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     channel_status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # KOL 长/短链（来自 kol_service.build_long_link + encode_short_link，按本 reservation 的 platform 生成）
+    kol_long_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kol_short_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

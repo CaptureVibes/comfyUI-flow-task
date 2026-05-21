@@ -231,6 +231,8 @@ class AccountChannelReservationRead(BaseModel):
     avatar_url: str | None = None
     channel_status: str = "active"
     note: str | None = None
+    kol_long_link: str | None = None
+    kol_short_link: str | None = None
     reserved_at: datetime
     confirmed_at: datetime | None = None
     bound_at: datetime | None = None
@@ -355,6 +357,8 @@ class ExternalChannelReservationRead(BaseModel):
     channel_name: str | None = None
     username: str | None = None
     avatar_url: str | None = None
+    kol_long_link: str | None = None
+    kol_short_link: str | None = None
     reserved_at: datetime
     confirmed_at: datetime | None = None
     bound_at: datetime | None = None
@@ -416,10 +420,8 @@ class AccountRead(BaseModel):
     classification_status: str = "idle"
     classification_type: str | None = None
     classification_summary: dict | None = None
-    # 站内 KOL 创建结果（只读，外部不可写）
-    kol_id: str | None = None
+    # 站内 KOL 创建结果（只读，外部不可写）；长/短链存在 channel_reservations[] 上
     kol_user_id: str | None = None
-    kol_links: dict | None = None
     kol_provision_status: str = "pending"
     kol_provision_error: str | None = None
     created_at: datetime

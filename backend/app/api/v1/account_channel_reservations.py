@@ -77,18 +77,15 @@ def _verify_api_key(body_api_key: str = "", header_api_key: str | None = None) -
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid api_key")
 
 
-async def _resolve_short_link(account: Account, platform: str) -> str | None:
-    """获取 (account, platform) 对应的短链。优先用 ``account.kol_links`` 里的缓存；
-    没缓存就 build_long_link → encode_short_link，并把结果写回 ``account.kol_links``。
+async def _build_kol_links_for_account(
+    account: Account, platform: str,
+) -> tuple[str | None, str | None]:
+    """为 (account, platform) 生成 (long_link, short_link)。
 
-    任何一步失败（包括没有 kol_user_id、短链 API 异常）都返回 None，不抛异常。
-    调用方需保证 ``account`` 仍处于活动 session 中，对其属性的修改会随 commit 持久化。
+    没有 ``kol_user_id`` 或短链 API 失败时返回 (None, None)；不抛异常。
     """
     if not account.kol_user_id:
-        return None
-    cached = (account.kol_links or {}).get(platform) or {}
-    if cached.get("short"):
-        return cached["short"]
+        return None, None
     long_link = build_long_link(account.kol_user_id, platform)
     try:
         encoded = await encode_short_link(long_link)
@@ -97,11 +94,8 @@ async def _resolve_short_link(account: Account, platform: str) -> str | None:
             "reserve_ai_accounts short link encode failed: account=%s platform=%s",
             account.id, platform,
         )
-        return None
-    new_links = dict(account.kol_links or {})
-    new_links[platform] = encoded
-    account.kol_links = new_links  # 整体赋值触发 SQLAlchemy dirty 检测
-    return encoded.get("short") or None
+        return long_link, None
+    return long_link, encoded.get("short") or None
 
 
 def _channel_binding_payload(body: ExternalBindOpenAPIChannelBody) -> dict:
@@ -177,20 +171,22 @@ async def reserve_ai_accounts_for_channel_openapi(
 
     accounts = (await session.execute(stmt)).scalars().all()
 
-    # 并发拿短链（缓存命中 → 直接复用；缺则 build_long_link + encode_short_link 写回 kol_links）
-    short_link_results: list[str | None] = []
+    # 并发跑 build_long_link + encode_short_link（每条账号一对长/短链）
+    link_pairs: list[tuple[str | None, str | None]] = []
     if accounts:
-        short_link_results = await asyncio.gather(
-            *(_resolve_short_link(account, platform) for account in accounts)
-        )
+        link_pairs = list(await asyncio.gather(
+            *(_build_kol_links_for_account(account, platform) for account in accounts)
+        ))
 
-    for account, short_link in zip(accounts, short_link_results, strict=True):
+    for account, (long_link, short_link) in zip(accounts, link_pairs, strict=True):
         reservation = AccountChannelReservation(
             account_id=account.id,
             platform=platform,
             status="confirmed",
             source=body.source,
             channel_source=body.source,
+            kol_long_link=long_link,
+            kol_short_link=short_link,
             reserved_at=now,
             confirmed_at=now,
         )

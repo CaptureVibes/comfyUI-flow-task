@@ -1270,9 +1270,9 @@
                     @click.stop
                   >{{ primaryKolShortLink(item) }}</a>
                   <span
-                    v-else-if="item.kol_id"
+                    v-else-if="item.kol_user_id"
                     class="ac-kol-badge ac-kol-success"
-                    :title="`kol_id=${item.kol_id} · kol_user_id=${item.kol_user_id || '—'}`"
+                    :title="`kol_user_id=${item.kol_user_id}`"
                   >KOL 已创建</span>
                 </template>
               </div>
@@ -2540,13 +2540,15 @@ function snapshotValue(item, key) {
   return item?.performance_snapshot?.[key]
 }
 function primaryKolShortLink(item) {
-  const links = item?.kol_links
-  if (!links) return ''
-  for (const platform of ['tiktok', 'youtube', 'instagram']) {
-    const entry = links[platform]
-    if (entry?.short) return entry.short
+  const reservations = item?.channel_reservations || []
+  // 优先 youtube → tiktok → instagram → 任何带短链的 reservation
+  const preferenceOrder = ['youtube', 'tiktok', 'instagram']
+  for (const platform of preferenceOrder) {
+    const hit = reservations.find(r => r?.platform === platform && r?.kol_short_link)
+    if (hit) return hit.kol_short_link
   }
-  return ''
+  const any = reservations.find(r => r?.kol_short_link)
+  return any ? any.kol_short_link : ''
 }
 
 function aiGenerationStatusLabel(status) {

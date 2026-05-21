@@ -471,33 +471,31 @@
             </div>
           </div>
           <div v-else style="padding: 12px 16px;">
-            <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">
-              kol_id：<span style="color: #0f172a; font-family: monospace;">{{ kolInfo.kol_id }}</span>
-            </div>
             <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">
               kol_user_id：<span style="color: #0f172a; font-family: monospace;">{{ kolInfo.kol_user_id }}</span>
             </div>
-            <template v-if="kolInfo.kol_links">
-              <div v-for="platform in ['tiktok', 'youtube', 'instagram']" :key="platform" class="kol-link-row">
-                <span class="kol-link-platform">{{ platform }}</span>
+            <template v-if="kolReservationLinks.length">
+              <div v-for="entry in kolReservationLinks" :key="entry.id" class="kol-link-row">
+                <span class="kol-link-platform">{{ entry.platform }}</span>
                 <a
-                  v-if="kolInfo.kol_links[platform] && kolInfo.kol_links[platform].short"
-                  :href="kolInfo.kol_links[platform].short"
+                  v-if="entry.short"
+                  :href="entry.short"
                   target="_blank"
                   rel="noopener"
                   class="kol-link-url"
-                >{{ kolInfo.kol_links[platform].short }}</a>
+                >{{ entry.short }}</a>
+                <span v-else-if="entry.long" class="kol-link-empty" :title="entry.long">短链未生成（仅有长链）</span>
                 <span v-else class="kol-link-empty">未生成</span>
                 <el-button
-                  v-if="kolInfo.kol_links[platform] && kolInfo.kol_links[platform].short"
+                  v-if="entry.short"
                   size="small"
                   link
-                  @click="copyKolShortLink(kolInfo.kol_links[platform].short)"
+                  @click="copyKolShortLink(entry.short)"
                 >复制</el-button>
               </div>
             </template>
             <div v-else style="font-size: 12px; color: #94a3b8; padding: 4px 0;">
-              短链由后续流程按需生成
+              暂无平台绑定 / 短链；reserve 该 AI 博主或在绑定平台后由对应流程写入
             </div>
           </div>
         </div>
@@ -721,12 +719,12 @@ const saving = ref(false)
 const lockedReservations = ref([])  // confirmed/bound 状态，只读展示
 // 站内 KOL 创建结果（异步落库，只读展示）
 const kolInfo = ref({
-  kol_id: null,
   kol_user_id: null,
-  kol_links: null,
   kol_provision_status: 'pending',
   kol_provision_error: null,
 })
+// 长/短链来自 channel_reservations[].kol_long_link / kol_short_link
+const kolReservationLinks = ref([])
 
 async function copyKolShortLink(url) {
   if (!url) return
@@ -1057,12 +1055,18 @@ async function loadAccount() {
     boundBloggers.value = data.tiktok_bloggers || []
     boundTags.value = data.bound_tags || []
     kolInfo.value = {
-      kol_id: data.kol_id || null,
       kol_user_id: data.kol_user_id || null,
-      kol_links: data.kol_links || null,
       kol_provision_status: data.kol_provision_status || 'pending',
       kol_provision_error: data.kol_provision_error || null,
     }
+    kolReservationLinks.value = (data.channel_reservations || [])
+      .filter(r => r?.kol_long_link || r?.kol_short_link)
+      .map(r => ({
+        id: r.id,
+        platform: r.platform,
+        long: r.kol_long_link || '',
+        short: r.kol_short_link || '',
+      }))
 
     // 加载已绑定平台的频道列表
     for (const binding of form.social_bindings) {

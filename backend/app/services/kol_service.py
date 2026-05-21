@@ -2,7 +2,8 @@
 
 Account 创建成功（手动）或 AI 生成完成（自动）后同步调用
 ``provision_kol_for_account``，只做一件事：调站内平台
-POST /open-api/v1/internal-platform/kol 拿到 kol_id / kol_user_id 写回 accounts。
+POST /open-api/v1/internal-platform/kol 拿到 kol_user_id（接口 data.user_id）
+写回 accounts。
 
 长链 / 短链由其它流程在需要时按 ``kol_user_id`` 现算 —— 这里以独立函数
 ``build_long_link`` / ``encode_short_link`` 暴露，给其他模块复用。
@@ -76,7 +77,7 @@ async def create_kol_via_open_api(account: Account) -> dict[str, Any]:
         raise RuntimeError(f"KOL create biz error: {payload}")
     data = payload.get("data") or {}
     if not data.get("user_id"):
-        raise RuntimeError(f"KOL create response missing id/user_id: {payload}")
+        raise RuntimeError(f"KOL create response missing user_id: {payload}")
     return data
 
 
@@ -109,10 +110,10 @@ async def encode_short_link(long_link: str) -> dict[str, str]:
 
 
 async def provision_kol_for_account(account_id: UUID) -> None:
-    """调用站内平台创建 KOL，将 kol_id / kol_user_id 写回 accounts。
+    """调用站内平台创建 KOL，将 kol_user_id 写回 accounts。
 
     自带 session，自带 try/except，不抛出任何异常给调用方。
-    幂等：若 kol_id 已存在则跳过整次调用。
+    幂等：若 kol_user_id 已存在则跳过整次调用。
     长链/短链不在此触发 —— 需要时由其它流程读取 ``kol_user_id`` 后现算。
     """
     async with SessionLocal() as session:
@@ -120,20 +121,19 @@ async def provision_kol_for_account(account_id: UUID) -> None:
         if account is None:
             logger.warning("KOL provision skipped: account %s not found", account_id)
             return
-        if account.kol_id:
-            logger.info("KOL provision skipped: account %s already has kol_id=%s", account_id, account.kol_id)
+        if account.kol_user_id:
+            logger.info("KOL provision skipped: account %s already has kol_user_id=%s", account_id, account.kol_user_id)
             return
 
         try:
             data = await create_kol_via_open_api(account)
-            account.kol_id = str(data["id"])
             account.kol_user_id = str(data["user_id"])
             account.kol_provision_status = "success"
             account.kol_provision_error = None
             await session.commit()
             logger.info(
-                "KOL provisioned for account=%s kol_id=%s kol_user_id=%s",
-                account_id, account.kol_id, account.kol_user_id,
+                "KOL provisioned for account=%s kol_user_id=%s",
+                account_id, account.kol_user_id,
             )
         except Exception as exc:
             logger.exception("KOL provision failed for account=%s", account_id)
