@@ -496,6 +496,79 @@ def _finalize_ext_pub_channel_statuses(channels_status: list[dict]) -> tuple[lis
     return finalized, changed
 
 
+# YouTube 返回账号被封禁时的错误标识。命中后把对应 reservation 标为 disabled，
+# 后续 reserve / bind / 发布流程都会跳过该频道。
+_SUSPENDED_ERROR_TOKENS = (
+    "authenticatedUserAccountSuspended",
+    "accountSuspended",
+)
+
+
+def _channel_indicates_account_suspended(channel: dict) -> bool:
+    if (channel.get("status") or "") not in _FAILED_STATUSES:
+        return False
+    msg = str(channel.get("error_message") or "")
+    return any(tok in msg for tok in _SUSPENDED_ERROR_TOKENS)
+
+
+async def _disable_suspended_channel_reservations(
+    db: AsyncSession,
+    sub_task_id: uuid.UUID,
+    channels_status: list[dict],
+) -> int:
+    """扫描 channels_status，把命中"账号被封禁"错误的 channel 对应的
+    AccountChannelReservation 标记为 disabled。返回被禁用的 reservation 数。
+    任何子步骤失败都吞掉、不影响外层主流程；仅记日志。
+    """
+    targets = [
+        (c.get("platform"), c.get("channel_id"))
+        for c in (channels_status or [])
+        if _channel_indicates_account_suspended(c)
+    ]
+    if not targets:
+        return 0
+    try:
+        row = (await db.execute(
+            select(VideoTask.account_id)
+            .join(VideoSubTask, VideoSubTask.task_id == VideoTask.id)
+            .where(VideoSubTask.id == sub_task_id)
+        )).first()
+    except Exception:
+        logger.exception("disable_suspended_reservations: 查找 account_id 失败 sub_task=%s", sub_task_id)
+        return 0
+    if row is None or row[0] is None:
+        return 0
+    account_id = row[0]
+    disabled = 0
+    for platform, channel_id in targets:
+        if not platform or not channel_id:
+            continue
+        try:
+            reservation = await db.scalar(
+                select(AccountChannelReservation)
+                .where(AccountChannelReservation.account_id == account_id)
+                .where(AccountChannelReservation.platform == platform)
+                .where(AccountChannelReservation.channel_id == channel_id)
+                .where(AccountChannelReservation.channel_status != "disabled")
+            )
+        except Exception:
+            logger.exception(
+                "disable_suspended_reservations: 查询 reservation 失败 account=%s platform=%s channel=%s",
+                account_id, platform, channel_id,
+            )
+            continue
+        if reservation is None:
+            continue
+        reservation.channel_status = "disabled"
+        disabled += 1
+        logger.warning(
+            "Channel reservation marked disabled (account suspended): "
+            "account_id=%s platform=%s channel_id=%s reservation_id=%s",
+            account_id, platform, channel_id, reservation.id,
+        )
+    return disabled
+
+
 async def _apply_publication_status_to_sub_task(
     db: AsyncSession,
     *,
@@ -1038,6 +1111,10 @@ class VideoPublicationService:
 
         try:
             self.db.add(publication)
+            # 检测 YouTube 账号被封禁的 channel，标记对应 reservation 为 disabled
+            await _disable_suspended_channel_reservations(
+                self.db, data.sub_task_id, all_channel_statuses,
+            )
             await _apply_publication_status_to_sub_task(
                 self.db,
                 sub_task_id=data.sub_task_id,
@@ -1275,6 +1352,11 @@ class VideoPublicationService:
         pub.callback_received_at = None
         pub.error_message = error_message
         pub.completed_at = utcnow() if overall_status in ("completed", "partial", "failed") else None
+
+        # 检测 YouTube 账号被封禁的 channel，标记对应 reservation 为 disabled
+        await _disable_suspended_channel_reservations(
+            self.db, pub.sub_task_id, all_channel_statuses,
+        )
 
         await _apply_publication_status_to_sub_task(
             self.db,
@@ -1542,6 +1624,11 @@ class VideoPublicationService:
         # 若仍有非终态条目（如重新提交后变 pending/uploading），等待回调更新 completed_at
         else:
             pub.completed_at = None
+
+        # 检测 YouTube 账号被封禁的 channel，标记对应 reservation 为 disabled
+        await _disable_suspended_channel_reservations(
+            self.db, pub.sub_task_id, merged,
+        )
 
         await _apply_publication_status_to_sub_task(
             self.db,
@@ -1984,6 +2071,11 @@ class VideoPublicationService:
         if new_status in ("completed", "partial", "failed") and not publication.completed_at:
             publication.completed_at = utcnow()
 
+        # 同步检测 YouTube 账号被封禁的 channel，标记对应 reservation 为 disabled
+        await _disable_suspended_channel_reservations(
+            self.db, publication.sub_task_id, merged,
+        )
+
         # 根据终态联动更新子任务状态
         await _apply_publication_status_to_sub_task(
             self.db,
@@ -2150,6 +2242,11 @@ class VideoPublicationService:
         logger.info(
             "handle_callback: updating publication %s openapi channels=%d → computed_status=%s",
             publication.id, len(callback_channels), computed_status,
+        )
+
+        # 检测 YouTube 账号被封禁的 channel，标记对应 reservation 为 disabled
+        await _disable_suspended_channel_reservations(
+            self.db, publication.sub_task_id, merged,
         )
 
         await _apply_publication_status_to_sub_task(
