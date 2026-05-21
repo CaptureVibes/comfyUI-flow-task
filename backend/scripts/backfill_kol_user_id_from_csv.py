@@ -105,6 +105,9 @@ async def backfill(csv_path: Path, apply: bool) -> dict[str, int]:
                     )
                     continue
                 account.kol_user_id = row.kol_user_id
+                # 既然 kol_user_id 已确定，状态同步置为 success（前端依据这字段渲染徽标）
+                account.kol_provision_status = "success"
+                account.kol_provision_error = None
                 stats["accounts_updated"] += 1
 
             # 写每条 reservation 的 kol_long_link / kol_short_link
