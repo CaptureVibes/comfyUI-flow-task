@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import uuid
@@ -18,6 +19,7 @@ from app.services.channel_status_poller import (
     query_channel_authorization,
     refresh_reservation_channel_status,
 )
+from app.services.kol_service import build_long_link, encode_short_link
 from app.schemas.account import (
     ExternalBindOpenAPIChannelBody,
     ExternalBindOpenAPIChannelResponse,
@@ -25,10 +27,13 @@ from app.schemas.account import (
     ExternalChannelReservationRead,
     ExternalConfirmChannelReservationBody,
     ExternalConfirmChannelReservationResponse,
+    ExternalLinkInfoItem,
     ExternalReserveAIAccountsBody,
     ExternalReserveAIAccountsResponse,
     ExternalReleaseChannelReservationBody,
 )
+
+LINK_INFO_NAME = "Outfit details below ⬇️"
 
 router = APIRouter(prefix="/open-api/accounts", tags=["open-api-account-channels"])
 logger = logging.getLogger("app.account_channel_reservations")
@@ -70,6 +75,33 @@ def _verify_api_key(body_api_key: str = "", header_api_key: str | None = None) -
     supplied = header_api_key or body_api_key or ""
     if not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid api_key")
+
+
+async def _resolve_short_link(account: Account, platform: str) -> str | None:
+    """获取 (account, platform) 对应的短链。优先用 ``account.kol_links`` 里的缓存；
+    没缓存就 build_long_link → encode_short_link，并把结果写回 ``account.kol_links``。
+
+    任何一步失败（包括没有 kol_user_id、短链 API 异常）都返回 None，不抛异常。
+    调用方需保证 ``account`` 仍处于活动 session 中，对其属性的修改会随 commit 持久化。
+    """
+    if not account.kol_user_id:
+        return None
+    cached = (account.kol_links or {}).get(platform) or {}
+    if cached.get("short"):
+        return cached["short"]
+    long_link = build_long_link(account.kol_user_id, platform)
+    try:
+        encoded = await encode_short_link(long_link)
+    except Exception:
+        logger.exception(
+            "reserve_ai_accounts short link encode failed: account=%s platform=%s",
+            account.id, platform,
+        )
+        return None
+    new_links = dict(account.kol_links or {})
+    new_links[platform] = encoded
+    account.kol_links = new_links  # 整体赋值触发 SQLAlchemy dirty 检测
+    return encoded.get("short") or None
 
 
 def _channel_binding_payload(body: ExternalBindOpenAPIChannelBody) -> dict:
@@ -144,7 +176,15 @@ async def reserve_ai_accounts_for_channel_openapi(
     confirmed_count = 0
 
     accounts = (await session.execute(stmt)).scalars().all()
-    for account in accounts:
+
+    # 并发拿短链（缓存命中 → 直接复用；缺则 build_long_link + encode_short_link 写回 kol_links）
+    short_link_results: list[str | None] = []
+    if accounts:
+        short_link_results = await asyncio.gather(
+            *(_resolve_short_link(account, platform) for account in accounts)
+        )
+
+    for account, short_link in zip(accounts, short_link_results, strict=True):
         reservation = AccountChannelReservation(
             account_id=account.id,
             platform=platform,
@@ -156,6 +196,11 @@ async def reserve_ai_accounts_for_channel_openapi(
         )
         session.add(reservation)
         confirmed_count += 1
+        link_info = (
+            [ExternalLinkInfoItem(name=LINK_INFO_NAME, link=short_link)]
+            if short_link
+            else None
+        )
         items.append(
             ExternalAIAccountCandidateItem(
                 account_id=account.id,
@@ -166,6 +211,7 @@ async def reserve_ai_accounts_for_channel_openapi(
                 hashtags=account.hashtags,
                 avatar_url=account.avatar_url,
                 confirmed=True,
+                link_info=link_info,
             )
         )
 

@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     open_api_client_secret: str = ""
     open_api_callback_url: str | None = None  # 回调地址，由外部注入
 
+    # KOL 长链 / 短链
+    kol_long_link_base_url: str = "https://www.alvinclub.ai/en-us/m/vibe"
+    short_link_encode_api: str = "https://api.alvinclub.com/user-service/slk/encode/link"
+    short_link_display_host: str = "https://alvc.me"
+
     # Google Gemini 官方 API（设置后优先使用，替代 REST API fallback）
     google_api_key: str = ""
 

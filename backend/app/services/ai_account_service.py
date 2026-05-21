@@ -944,6 +944,15 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
             logger.info("[%s] pipeline completed", account_id)
             await _save_state(account_id)
 
+            # 完成后同步等待站内 KOL 创建。此时账号名/头像/签名已就绪。
+            # provision_kol_for_account 内部已吞掉所有异常，只把 status='failed' 写库，
+            # 这里 await 不会影响 AI pipeline 自身的 completed 状态。
+            try:
+                from app.services.kol_service import provision_kol_for_account
+                await provision_kol_for_account(UUID(account_id))
+            except Exception:
+                logger.exception("[%s] KOL provisioning unexpectedly raised", account_id)
+
         except asyncio.CancelledError:
             _set_status(account_id, "failed", error="任务被取消")
             await _save_state(account_id)

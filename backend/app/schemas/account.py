@@ -289,6 +289,11 @@ class ExternalReserveAIAccountsBody(BaseModel):
     source: str = "openapi"
 
 
+class ExternalLinkInfoItem(BaseModel):
+    name: str
+    link: str
+
+
 class ExternalAIAccountCandidateItem(BaseModel):
     account_id: uuid.UUID
     platform: ChannelPlatform
@@ -298,6 +303,7 @@ class ExternalAIAccountCandidateItem(BaseModel):
     hashtags: list[str] | None = None
     avatar_url: str | None = None
     confirmed: bool = False
+    link_info: list[ExternalLinkInfoItem] | None = None
 
 
 class ExternalReserveAIAccountsResponse(BaseModel):
@@ -410,6 +416,12 @@ class AccountRead(BaseModel):
     classification_status: str = "idle"
     classification_type: str | None = None
     classification_summary: dict | None = None
+    # 站内 KOL 创建结果（只读，外部不可写）
+    kol_id: str | None = None
+    kol_user_id: str | None = None
+    kol_links: dict | None = None
+    kol_provision_status: str = "pending"
+    kol_provision_error: str | None = None
     created_at: datetime
     updated_at: datetime
 

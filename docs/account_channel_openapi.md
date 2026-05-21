@@ -74,7 +74,11 @@ POST /open-api/accounts/channel-reservations
       "account_handle": "sonny_winter_7days",
       "account_signature": "账号签名",
       "hashtags": ["fashioninspo", "outfitideas"],
-      "avatar_url": "https://example.com/avatar.jpg"
+      "avatar_url": "https://example.com/avatar.jpg",
+      "link_info": [{
+          "name": "",
+          "link": ""
+      }]
     }
   ],
   "requested_count": 1,

@@ -30,7 +30,15 @@ async def create_account(
     session: AsyncSession,
     payload: AccountCreate,
     owner_id: UUID | None = None,
+    *,
+    defer_kol_provision: bool = False,
 ) -> Account:
+    """创建账号；默认在 commit 后同步等待 KOL 创建。
+
+    AI 自动生成路径下 nickname/avatar/signature 还没填充完，需要传
+    ``defer_kol_provision=True``，由 ai_account_service 在生成完成节点自行调用
+    ``provision_kol_for_account``。
+    """
     account = Account(
         owner_id=owner_id,
         account_name=payload.account_name,
@@ -48,6 +56,11 @@ async def create_account(
     session.add(account)
     await session.commit()
     await session.refresh(account)
+    if not defer_kol_provision:
+        # 同步等待 KOL 创建；失败只更新 kol_provision_status，不抛回（service 内已吞掉异常）
+        from app.services.kol_service import provision_kol_for_account
+        await provision_kol_for_account(account.id)
+        await session.refresh(account)
     return account
 
 

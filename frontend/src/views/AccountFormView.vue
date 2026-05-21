@@ -450,6 +450,59 @@
         </div>
       </div>
 
+      <!-- KOL 链接卡片（仅编辑模式展示） -->
+      <div v-if="isEdit" class="vtfd-card vtfd-fw-card">
+        <div class="vtfd-section">
+          <div class="vtfd-section-header" style="justify-content: space-between; display: flex; align-items: center;">
+            <span class="vtfd-section-tag">KOL 链接</span>
+            <el-tag
+              :type="kolInfo.kol_provision_status === 'success' ? 'success' : (kolInfo.kol_provision_status === 'failed' ? 'danger' : 'info')"
+              size="small"
+            >
+              {{ kolInfo.kol_provision_status === 'success' ? '已生成' : (kolInfo.kol_provision_status === 'failed' ? '失败' : '生成中') }}
+            </el-tag>
+          </div>
+          <div v-if="kolInfo.kol_provision_status === 'pending'" class="vtfd-images-empty" style="padding: 20px;">
+            <div class="vtfd-images-empty-text">站内 KOL 创建中，稍后刷新查看…</div>
+          </div>
+          <div v-else-if="kolInfo.kol_provision_status === 'failed'" class="vtfd-images-empty" style="padding: 20px;">
+            <div class="vtfd-images-empty-text" style="color: #ef4444">
+              创建失败：{{ kolInfo.kol_provision_error || '未知错误' }}
+            </div>
+          </div>
+          <div v-else style="padding: 12px 16px;">
+            <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">
+              kol_id：<span style="color: #0f172a; font-family: monospace;">{{ kolInfo.kol_id }}</span>
+            </div>
+            <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">
+              kol_user_id：<span style="color: #0f172a; font-family: monospace;">{{ kolInfo.kol_user_id }}</span>
+            </div>
+            <template v-if="kolInfo.kol_links">
+              <div v-for="platform in ['tiktok', 'youtube', 'instagram']" :key="platform" class="kol-link-row">
+                <span class="kol-link-platform">{{ platform }}</span>
+                <a
+                  v-if="kolInfo.kol_links[platform] && kolInfo.kol_links[platform].short"
+                  :href="kolInfo.kol_links[platform].short"
+                  target="_blank"
+                  rel="noopener"
+                  class="kol-link-url"
+                >{{ kolInfo.kol_links[platform].short }}</a>
+                <span v-else class="kol-link-empty">未生成</span>
+                <el-button
+                  v-if="kolInfo.kol_links[platform] && kolInfo.kol_links[platform].short"
+                  size="small"
+                  link
+                  @click="copyKolShortLink(kolInfo.kol_links[platform].short)"
+                >复制</el-button>
+              </div>
+            </template>
+            <div v-else style="font-size: 12px; color: #94a3b8; padding: 4px 0;">
+              短链由后续流程按需生成
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 绑定标签卡片 -->
       <div class="vtfd-card vtfd-fw-card">
         <div class="vtfd-section">
@@ -666,6 +719,24 @@ const isEdit = computed(() => Boolean(route.params.id))
 const loading = ref(false)
 const saving = ref(false)
 const lockedReservations = ref([])  // confirmed/bound 状态，只读展示
+// 站内 KOL 创建结果（异步落库，只读展示）
+const kolInfo = ref({
+  kol_id: null,
+  kol_user_id: null,
+  kol_links: null,
+  kol_provision_status: 'pending',
+  kol_provision_error: null,
+})
+
+async function copyKolShortLink(url) {
+  if (!url) return
+  try {
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('短链已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择链接')
+  }
+}
 const deletingReservation = ref(null)  // 正在删除的 reservation id
 const uploadingAvatar = ref(false)
 const uploadingPhoto = ref(false)
@@ -985,6 +1056,13 @@ async function loadAccount() {
     // bound 状态通过 lockedReservations 展示（带删除按钮），不再放入可编辑的 social_bindings
     boundBloggers.value = data.tiktok_bloggers || []
     boundTags.value = data.bound_tags || []
+    kolInfo.value = {
+      kol_id: data.kol_id || null,
+      kol_user_id: data.kol_user_id || null,
+      kol_links: data.kol_links || null,
+      kol_provision_status: data.kol_provision_status || 'pending',
+      kol_provision_error: data.kol_provision_error || null,
+    }
 
     // 加载已绑定平台的频道列表
     for (const binding of form.social_bindings) {
@@ -2148,5 +2226,38 @@ onUnmounted(() => {
 }
 .ac-hashtag-input-row .el-input {
   flex: 1;
+}
+.kol-link-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #e2e8f0;
+  font-size: 13px;
+}
+.kol-link-row:last-child {
+  border-bottom: none;
+}
+.kol-link-platform {
+  display: inline-block;
+  min-width: 80px;
+  font-weight: 600;
+  color: #475569;
+  text-transform: capitalize;
+}
+.kol-link-url {
+  flex: 1;
+  font-family: monospace;
+  color: #2563eb;
+  word-break: break-all;
+  text-decoration: none;
+}
+.kol-link-url:hover {
+  text-decoration: underline;
+}
+.kol-link-empty {
+  flex: 1;
+  color: #94a3b8;
+  font-style: italic;
 }
 </style>

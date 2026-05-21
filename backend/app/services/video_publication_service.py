@@ -1,6 +1,4 @@
 import asyncio
-import hashlib
-import hmac
 import json
 import logging
 import uuid
@@ -27,6 +25,11 @@ from app.schemas.video_publication import (
     VideoPublicationStatsQuery,
 )
 from app.services.ext_product_service import build_ext_products_from_shots
+from app.services.open_api_signing import (
+    generate_signature as _shared_generate_signature,
+    sign_params as _shared_sign_params,
+    value_to_sign_str as _shared_value_to_sign_str,
+)
 from app.services.promotion_code_service import promotion_code_distributor
 
 logger = logging.getLogger("app.video_publication_service")
@@ -170,46 +173,13 @@ class OpenAPIClient:
 
     @staticmethod
     def _value_to_sign_str(v) -> str:
-        """将参数值规范序列化为签名字符串"""
-        if v is None:
-            return ""
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, (int, float)):
-            return str(v)
-        if isinstance(v, (datetime, date)):
-            return v.isoformat()
-        if isinstance(v, (list, dict)):
-            return json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        return str(v)
+        return _shared_value_to_sign_str(v)
 
     def _generate_signature(self, params: dict, timestamp: int) -> str:
-        """生成 HMAC-SHA256 签名"""
-        # 过滤掉 signature 和 None/空字符串
-        filtered = {k: v for k, v in params.items() if k != "signature" and v is not None and v != ""}
-        # 按字母排序，值规范序列化后拼接
-        param_str = "&".join(
-            f"{k}={self._value_to_sign_str(v)}" for k, v in sorted(filtered.items())
-        )
-        # 追加 timestamp
-        sign_str = f"{param_str}&timestamp={timestamp}"
-        return hmac.new(
-            self.client_secret.encode(),
-            sign_str.encode(),
-            hashlib.sha256,
-        ).hexdigest()
+        return _shared_generate_signature(params, self.client_secret, timestamp)
 
     def _sign_params(self, params: dict) -> dict:
-        """为请求参数添加签名"""
-        timestamp = int(utcnow().timestamp())
-        # 传入 timestamp 使其参与排序拼接，_generate_signature 末尾再追加一次（服务端规则）
-        signature = self._generate_signature({**params, "client_id": self.client_id, "timestamp": timestamp}, timestamp)
-        return {
-            **params,
-            "client_id": self.client_id,
-            "timestamp": timestamp,
-            "signature": signature,
-        }
+        return _shared_sign_params(params, self.client_id, self.client_secret)
 
     async def fetch_channels(
         self, platform: str, page: int = 1, page_size: int = 20, is_active: bool | None = None,

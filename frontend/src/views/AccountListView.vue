@@ -1248,6 +1248,34 @@
                 </span>
               </div>
               <div v-if="item.style_description" class="al-style-desc">{{ item.style_description }}</div>
+              <!-- KOL 短链 -->
+              <div class="ac-kol-row">
+                <span
+                  v-if="item.kol_provision_status === 'pending'"
+                  class="ac-kol-badge ac-kol-pending"
+                  title="站内 KOL 创建中"
+                >KOL 生成中</span>
+                <span
+                  v-else-if="item.kol_provision_status === 'failed'"
+                  class="ac-kol-badge ac-kol-failed"
+                  :title="item.kol_provision_error || '未知错误'"
+                >KOL 失败</span>
+                <template v-else>
+                  <a
+                    v-if="primaryKolShortLink(item)"
+                    class="ac-kol-link"
+                    :href="primaryKolShortLink(item)"
+                    target="_blank"
+                    rel="noopener"
+                    @click.stop
+                  >{{ primaryKolShortLink(item) }}</a>
+                  <span
+                    v-else-if="item.kol_id"
+                    class="ac-kol-badge ac-kol-success"
+                    :title="`kol_id=${item.kol_id} · kol_user_id=${item.kol_user_id || '—'}`"
+                  >KOL 已创建</span>
+                </template>
+              </div>
             </td>
 
             <!-- 平台绑定 -->
@@ -2511,6 +2539,16 @@ function reservationDisplayLabel(reservation) {
 function snapshotValue(item, key) {
   return item?.performance_snapshot?.[key]
 }
+function primaryKolShortLink(item) {
+  const links = item?.kol_links
+  if (!links) return ''
+  for (const platform of ['tiktok', 'youtube', 'instagram']) {
+    const entry = links[platform]
+    if (entry?.short) return entry.short
+  }
+  return ''
+}
+
 function aiGenerationStatusLabel(status) {
   const map = {
     pending: '排队中',
@@ -6134,4 +6172,29 @@ onMounted(() => {
   color: #94a3b8;
   padding: 24px;
 }
+
+.ac-kol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.ac-kol-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.ac-kol-pending { background: #fef3c7; color: #b45309; }
+.ac-kol-failed  { background: #fee2e2; color: #b91c1c; }
+.ac-kol-success { background: #dcfce7; color: #15803d; }
+.ac-kol-link {
+  color: #2563eb;
+  font-family: monospace;
+  text-decoration: none;
+  word-break: break-all;
+}
+.ac-kol-link:hover { text-decoration: underline; }
 </style>
