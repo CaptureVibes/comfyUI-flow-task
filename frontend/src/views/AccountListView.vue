@@ -1261,14 +1261,27 @@
                   :title="item.kol_provision_error || '未知错误'"
                 >KOL 失败</span>
                 <template v-else>
-                  <a
-                    v-if="primaryKolShortLink(item)"
-                    class="ac-kol-link"
-                    :href="primaryKolShortLink(item)"
-                    target="_blank"
-                    rel="noopener"
-                    @click.stop
-                  >{{ primaryKolShortLink(item) }}</a>
+                  <div v-if="kolReservationLinks(item).length" class="ac-kol-list">
+                    <div
+                      v-for="entry in kolReservationLinks(item)"
+                      :key="entry.id"
+                      class="ac-kol-platform-row"
+                    >
+                      <span
+                        class="ac-kol-platform-tag"
+                        :class="`ac-kol-platform-${entry.platform}`"
+                      >{{ kolPlatformShort(entry.platform) }}</span>
+                      <a
+                        v-if="entry.short"
+                        class="ac-kol-link"
+                        :href="entry.short"
+                        target="_blank"
+                        rel="noopener"
+                        @click.stop
+                      >{{ entry.short }}</a>
+                      <span v-else class="ac-kol-link-empty" :title="entry.long || ''">短链未生成</span>
+                    </div>
+                  </div>
                   <span
                     v-else-if="item.kol_user_id"
                     class="ac-kol-badge ac-kol-success"
@@ -2539,16 +2552,28 @@ function reservationDisplayLabel(reservation) {
 function snapshotValue(item, key) {
   return item?.performance_snapshot?.[key]
 }
-function primaryKolShortLink(item) {
-  const reservations = item?.channel_reservations || []
-  // 优先 youtube → tiktok → instagram → 任何带短链的 reservation
-  const preferenceOrder = ['youtube', 'tiktok', 'instagram']
-  for (const platform of preferenceOrder) {
-    const hit = reservations.find(r => r?.platform === platform && r?.kol_short_link)
-    if (hit) return hit.kol_short_link
-  }
-  const any = reservations.find(r => r?.kol_short_link)
-  return any ? any.kol_short_link : ''
+// 列表里 KOL 短链列：返回所有带 long_link/short_link 的 reservation
+// 排序优先 youtube → tiktok → instagram → 其它
+const _KOL_PLATFORM_ORDER = ['youtube', 'tiktok', 'instagram']
+function kolReservationLinks(item) {
+  const reservations = (item?.channel_reservations || []).filter(
+    r => r?.kol_short_link || r?.kol_long_link
+  )
+  reservations.sort((a, b) => {
+    const ia = _KOL_PLATFORM_ORDER.indexOf(a.platform)
+    const ib = _KOL_PLATFORM_ORDER.indexOf(b.platform)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  })
+  return reservations.map(r => ({
+    id: r.id,
+    platform: r.platform,
+    short: r.kol_short_link || '',
+    long: r.kol_long_link || '',
+  }))
+}
+
+function kolPlatformShort(platform) {
+  return { youtube: 'YT', tiktok: 'TT', instagram: 'IG' }[platform] || (platform || '').slice(0, 2).toUpperCase()
 }
 
 function aiGenerationStatusLabel(status) {
@@ -6199,4 +6224,37 @@ onMounted(() => {
   word-break: break-all;
 }
 .ac-kol-link:hover { text-decoration: underline; }
+.ac-kol-link-empty {
+  color: #94a3b8;
+  font-style: italic;
+  font-family: monospace;
+  font-size: 11px;
+}
+.ac-kol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+.ac-kol-platform-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ac-kol-platform-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #e2e8f0;
+  color: #334155;
+  text-transform: uppercase;
+  min-width: 24px;
+  text-align: center;
+  line-height: 1.4;
+}
+.ac-kol-platform-youtube   { background: #fee2e2; color: #b91c1c; }
+.ac-kol-platform-tiktok    { background: #1e293b; color: #f8fafc; }
+.ac-kol-platform-instagram { background: #fce7f3; color: #9d174d; }
 </style>
