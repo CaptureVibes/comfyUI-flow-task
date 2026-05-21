@@ -155,6 +155,64 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _build_open_api_request_payload(
+    data: "VideoPublicationCreate",
+    channels: list[dict],
+    promotion_code: str | None,
+    ext_products: list[dict],
+    account_tier: str | None,
+    kol_user_id: str | None,
+    callback_url: str | None,
+) -> dict:
+    """构造发到 Open API 的完整请求体。
+
+    返回结构与实际 HTTP body 一致（嵌套 ``ext_info``、含 ``callback_url`` /
+    ``video_tags.env``）。``channels`` 字段保留调用方传入的完整 dict（含
+    ``channel_source`` 等本地路由元数据），实际 HTTP 发送时由 adapter 裁成
+    ``[{"platform", "channel_id"}]``。签名相关字段（``client_id`` / ``timestamp`` /
+    ``signature``）由 ``OpenAPIClient`` 发送时再追加。
+
+    这份 payload 既用于实际发送，也用于持久化到 ``video_publications.request_payload``
+    作为审计 / retry 依据。
+    """
+    env = (account_tier or "test").lower()
+    if env not in {"test", "dev", "prod"}:
+        env = "test"
+    ext_info: dict = {
+        "promotion_code": promotion_code,
+        "ext_products": ext_products,
+        "video_tags": {"env": [env]},
+    }
+    if kol_user_id:
+        ext_info["kol_user_id"] = kol_user_id
+    payload: dict = {
+        "video_url": data.video_url,
+        "original_video_url": data.original_video_url or data.video_url,
+        "video_type": data.video_type or "traffic",
+        "title": data.title,
+        "description": data.description,
+        "tags": data.tags or [],
+        "ext_info": ext_info,
+        "channels": channels,
+        "external_id": str(data.sub_task_id),
+    }
+    if callback_url:
+        payload["callback_url"] = callback_url
+    return payload
+
+
+def _payload_ext_field(payload: dict, key: str):
+    """从 request_payload 里取 ``promotion_code`` / ``ext_products`` / ``kol_user_id``。
+
+    新格式（本次重构后）：嵌套在 ``ext_info`` 下；
+    老格式（DB 中历史行）：平铺在顶层。
+    """
+    ext_info = payload.get("ext_info") if isinstance(payload.get("ext_info"), dict) else None
+    if ext_info is not None and key in ext_info:
+        return ext_info[key]
+    return payload.get(key)
+
+
 class OpenAPIClient:
     """Open API 客户端"""
 
@@ -536,29 +594,15 @@ class OpenAPIAdapter(PublishAdapter):
         kol_user_id: str | None = None,
     ) -> tuple[str | None, list[dict]]:
         callback_url = data.callback_url or settings.open_api_callback_url or None
-        env = (account_tier or "test").lower()
-        if env not in {"test", "dev", "prod"}:
-            env = "test"
-        ext_info: dict = {
-            "promotion_code": promotion_code,
-            "ext_products": ext_products,
-            "video_tags": {"env": [env]},
-        }
-        if kol_user_id:
-            ext_info["kol_user_id"] = kol_user_id
-        api_payload: dict = {
-            "video_url": data.video_url,
-            "original_video_url": data.original_video_url or data.video_url,
-            "video_type": data.video_type or "traffic",
-            "title": data.title,
-            "description": data.description,
-            "tags": data.tags or [],
-            "ext_info": ext_info,
-            "channels": [{"platform": c["platform"], "channel_id": c["channel_id"]} for c in channels],
-            "external_id": str(data.sub_task_id),
-        }
-        if callback_url:
-            api_payload["callback_url"] = callback_url
+        api_payload = _build_open_api_request_payload(
+            data, channels, promotion_code, ext_products,
+            account_tier=account_tier,
+            kol_user_id=kol_user_id,
+            callback_url=callback_url,
+        )
+        # 实际发送时把 channels 裁成 platform + channel_id（Open API 规范），
+        # request_payload 里仍保留完整 dict 含 channel_source 供 retry/audit
+        api_payload["channels"] = [{"platform": c["platform"], "channel_id": c["channel_id"]} for c in channels]
 
         logger.info(
             "OpenAPIAdapter.submit payload: sub_task_id=%s payload=%s",
@@ -894,23 +938,18 @@ class VideoPublicationService:
             promotion_code_acquired_for_publication = False
         publication_committed = False
 
-        # 记录原始请求（用于 audit / 重试）
-        request_payload: dict = {
-            "video_url": data.video_url,
-            "original_video_url": data.original_video_url or data.video_url,
-            "video_type": data.video_type or "traffic",
-            "title": data.title,
-            "description": data.description,
-            "tags": data.tags or [],
-            "promotion_code": promotion_code,
-            "ext_products": ext_products,
-            "kol_user_id": kol_user_id,
-            "channels": data.channels,
-            "external_id": str(data.sub_task_id),
-            # 标记哪些来源被使用，供 sync_status 判断是否需要调用对应 adapter
-            "_has_openapi": bool(openapi_channels),
-            "_has_ext_pub": bool(ext_channels),
-        }
+        # 记录完整请求负载（用于 audit / 重试）：结构与发到 Open API 的实际 body 一致，
+        # 仅 channels 保留含 channel_source 的完整 dict 以便 retry 路由识别
+        callback_url_for_payload = data.callback_url or settings.open_api_callback_url or None
+        request_payload: dict = _build_open_api_request_payload(
+            data, data.channels, promotion_code, ext_products,
+            account_tier=account_tier,
+            kol_user_id=kol_user_id,
+            callback_url=callback_url_for_payload,
+        )
+        # 标记哪些来源被使用，供 sync_status 判断是否需要调用对应 adapter
+        request_payload["_has_openapi"] = bool(openapi_channels)
+        request_payload["_has_ext_pub"] = bool(ext_channels)
         logger.info(
             "create_publication request_payload: sub_task_id=%s payload=%s",
             data.sub_task_id,
@@ -1113,7 +1152,7 @@ class VideoPublicationService:
         ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
 
-        ext_products = payload.get("ext_products")
+        ext_products = _payload_ext_field(payload, "ext_products")
         if not isinstance(ext_products, list):
             ext_products = pub.ext_products if isinstance(pub.ext_products, list) else []
 
@@ -1130,7 +1169,7 @@ class VideoPublicationService:
                     retry_account_tier = row[0]
                 retry_kol_user_id = row[1] or None
 
-        payload_promotion_code = payload.get("promotion_code")
+        payload_promotion_code = _payload_ext_field(payload, "promotion_code")
         if (
             isinstance(payload_promotion_code, str)
             and len(payload_promotion_code) == 8
@@ -1147,15 +1186,16 @@ class VideoPublicationService:
             # 「无商品码」账号原本就没有 promotion_code，重试时也保持 None
             promotion_code = None
 
-        request_payload = dict(payload)
-        request_payload.update({
-            "channels": retry_channels,
-            "promotion_code": promotion_code,
-            "ext_products": ext_products,
-            "kol_user_id": retry_kol_user_id,
-            "_has_openapi": bool(openapi_channels),
-            "_has_ext_pub": bool(ext_channels),
-        })
+        # 重新构造完整 request_payload（与发到 Open API 的 body 同构）
+        callback_url_for_payload = data.callback_url or settings.open_api_callback_url or None
+        request_payload: dict = _build_open_api_request_payload(
+            data, retry_channels, promotion_code, ext_products,
+            account_tier=retry_account_tier,
+            kol_user_id=retry_kol_user_id,
+            callback_url=callback_url_for_payload,
+        )
+        request_payload["_has_openapi"] = bool(openapi_channels)
+        request_payload["_has_ext_pub"] = bool(ext_channels)
 
         logger.info(
             "retry_publication request_payload: publication_id=%s sub_task_id=%s payload=%s",
@@ -1348,7 +1388,7 @@ class VideoPublicationService:
                     retry_account_tier = row[0]
                 retry_kol_user_id = row[1] or None
 
-        payload_promotion_code = payload.get("promotion_code")
+        payload_promotion_code = _payload_ext_field(payload, "promotion_code")
         if (
             isinstance(payload_promotion_code, str)
             and len(payload_promotion_code) == 8
@@ -1364,7 +1404,7 @@ class VideoPublicationService:
         ):
             promotion_code = None
 
-        ext_products = payload.get("ext_products")
+        ext_products = _payload_ext_field(payload, "ext_products")
         if not isinstance(ext_products, list):
             ext_products = pub.ext_products if isinstance(pub.ext_products, list) else []
 
@@ -1464,8 +1504,25 @@ class VideoPublicationService:
         ]
         updated_payload = dict(payload)
         updated_payload["channels"] = existing_payload_channels + [retry_channel]
-        updated_payload["promotion_code"] = promotion_code
-        updated_payload["ext_products"] = ext_products
+        # 把 promotion_code / ext_products / kol_user_id 写回嵌套的 ext_info（与 Open API body 结构一致）
+        existing_ext_info = updated_payload.get("ext_info") if isinstance(updated_payload.get("ext_info"), dict) else {}
+        merged_ext_info = dict(existing_ext_info)
+        merged_ext_info["promotion_code"] = promotion_code
+        merged_ext_info["ext_products"] = ext_products
+        if retry_kol_user_id:
+            merged_ext_info["kol_user_id"] = retry_kol_user_id
+        elif "kol_user_id" in merged_ext_info and not retry_kol_user_id:
+            # 账号上 kol_user_id 已被清空，audit 字段同步清掉避免误导
+            merged_ext_info.pop("kol_user_id", None)
+        # video_tags.env 用最新的 retry_account_tier 刷新
+        env_for_tags = (retry_account_tier or "test").lower()
+        if env_for_tags not in {"test", "dev", "prod"}:
+            env_for_tags = "test"
+        merged_ext_info["video_tags"] = {"env": [env_for_tags]}
+        updated_payload["ext_info"] = merged_ext_info
+        # 清掉老格式平铺字段（如果是历史行）：避免新旧两份不一致
+        for legacy_key in ("promotion_code", "ext_products", "kol_user_id"):
+            updated_payload.pop(legacy_key, None)
         updated_payload["_has_openapi"] = bool(openapi_channels) or payload.get("_has_openapi", False)
         updated_payload["_has_ext_pub"] = bool(ext_channels) or payload.get("_has_ext_pub", False)
 
@@ -1759,8 +1816,8 @@ class VideoPublicationService:
             published_at=publication.completed_at,
             title=request_payload.get("title"),
             description=request_payload.get("description"),
-            promotion_code=publication.promotion_code or request_payload.get("promotion_code"),
-            ext_products=publication.ext_products or request_payload.get("ext_products"),
+            promotion_code=publication.promotion_code or _payload_ext_field(request_payload, "promotion_code"),
+            ext_products=publication.ext_products or _payload_ext_field(request_payload, "ext_products"),
             channels_status=publication.channels_status,
             metrics_snapshot=metrics_snapshot,
             metrics_channels=metrics_channels,
