@@ -18,6 +18,10 @@
           <svg v-if="!downloadingAll" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           下载全部视频
         </el-button>
+        <el-button class="vl-export-xlsx-btn" :loading="exportingExcel" @click="handleExportExcel">
+          <svg v-if="!exportingExcel" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+          导出 Excel
+        </el-button>
         <el-button type="primary" class="vl-add-btn" @click="$router.push('/dashboard/video-library/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           添加视频
@@ -449,7 +453,7 @@ import { computed, onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
+import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip, exportVideoUrlsExcel } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { fetchTags, createTag, updateTag, deleteTag } from '../api/tags'
 import { fetchBloggers } from '../api/tiktok_bloggers'
@@ -487,6 +491,7 @@ const templateMap = ref({})
 const playerVisible = ref(false)
 const playerItem = ref(null)
 const downloadingAll = ref(false)
+const exportingExcel = ref(false)
 
 // Tag manager state
 const tagMgrVisible = ref(false)
@@ -842,6 +847,30 @@ async function handleDownloadAll() {
     ElMessage.error(err?.message || '下载失败')
   } finally {
     downloadingAll.value = false
+  }
+}
+
+async function handleExportExcel() {
+  exportingExcel.value = true
+  try {
+    const params = {}
+    if (platform.value) params.platform = platform.value
+    if (selectedBloggerId.value) params.tiktok_blogger_id = selectedBloggerId.value
+    if (selectedTagFilterIds.value.length) params.tag_ids = selectedTagFilterIds.value.join(',')
+    const blob = await exportVideoUrlsExcel(params)
+    const blobUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = `video_urls_${new Date().toISOString().slice(0, 10)}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000)
+    ElMessage.success('已导出 Excel')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || err?.message || '导出失败')
+  } finally {
+    exportingExcel.value = false
   }
 }
 
@@ -1441,6 +1470,23 @@ onUnmounted(() => {
 .vl-create-tpl-btn:hover {
   background: #d1fae5;
   border-color: #34d399;
+}
+
+.vl-export-xlsx-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+  background: #f0f9ff;
+}
+
+.vl-export-xlsx-btn:hover {
+  background: #e0f2fe;
+  border-color: #38bdf8;
 }
 
 .vl-add-btn {

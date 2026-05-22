@@ -226,6 +226,78 @@ async def download_all_zip_endpoint(
     )
 
 
+@router.get("/export-excel")
+async def export_video_urls_excel(
+    platform: str | None = Query(None),
+    blogger_name: str | None = Query(None),
+    tiktok_blogger_id: uuid.UUID | None = Query(None),
+    tag_ids: str | None = Query(None),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """导出当前过滤条件下视频的 TikTok 博主主页 URL、原始链接、CDN/GCS 存储链接为 Excel。"""
+    import io
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    parsed_tag_ids: list[uuid.UUID] = []
+    if tag_ids:
+        parsed_tag_ids = [uuid.UUID(part.strip()) for part in tag_ids.split(",") if part.strip()]
+
+    rows, _ = await list_video_sources(
+        session,
+        page=1,
+        page_size=10000,
+        owner_id=owner_id,
+        platform=platform,
+        blogger_name=blogger_name,
+        tiktok_blogger_id=tiktok_blogger_id,
+        tag_ids=parsed_tag_ids,
+    )
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "视频链接导出"
+
+    header_fill = PatternFill("solid", fgColor="4F46E5")
+    header_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    wrap = Alignment(vertical="top", wrap_text=True)
+
+    headers = ["TikTok 博主", "博主主页 URL", "视频原始链接", "local_video_url", "local_gcs_video_url"]
+    ws.append(headers)
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 50
+    ws.column_dimensions["C"].width = 60
+    ws.column_dimensions["D"].width = 60
+    ws.column_dimensions["E"].width = 60
+    ws.row_dimensions[1].height = 22
+
+    for i, r in enumerate(rows, start=2):
+        blogger = r.tiktok_blogger
+        ws.cell(row=i, column=1, value=(blogger.blogger_name if blogger else r.blogger_name) or "").alignment = center
+        ws.cell(row=i, column=2, value=(blogger.blogger_url if blogger else "") or "").alignment = wrap
+        ws.cell(row=i, column=3, value=r.source_url or "").alignment = wrap
+        ws.cell(row=i, column=4, value=r.local_video_url or "").alignment = wrap
+        ws.cell(row=i, column=5, value=r.local_gcs_video_url or "").alignment = wrap
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="video_urls.xlsx"'},
+    )
+
+
 @router.get("/{vs_id}", response_model=VideoSourceRead)
 async def get_video_source_endpoint(
     vs_id: uuid.UUID,

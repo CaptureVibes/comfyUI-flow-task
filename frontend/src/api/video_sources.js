@@ -52,3 +52,11 @@ export async function downloadAllVideosZip(token) {
   if (!resp.ok) throw new Error(`下载失败: ${resp.status}`)
   return resp.blob()
 }
+
+export async function exportVideoUrlsExcel(params = {}) {
+  const resp = await http.get('/video-sources/export-excel', {
+    params,
+    responseType: 'blob',
+  })
+  return resp.data
+}
