@@ -73,6 +73,25 @@
             <span class="fl-video-count">{{ tag.video_count }} 个视频</span>
             <span v-if="tag.face_photo" class="fl-frame-index">第 {{ tag.face_photo.frame_index }} 帧</span>
           </div>
+          <div v-if="tag.face_photo" class="fl-classify">
+            <template v-if="tag.face_photo.classification_status === 'success'">
+              <span>{{ tag.face_photo.gender || '不确定' }}</span>
+              <span>{{ tag.face_photo.ethnicity || '不确定' }}</span>
+              <span>{{ tag.face_photo.age_range || '-' }}</span>
+              <span>{{ beautyLabel(tag.face_photo) }}</span>
+              <span :class="remixClass(tag.face_photo)">{{ remixLabel(tag.face_photo) }}</span>
+              <span v-if="tag.face_photo.notes" class="fl-note">{{ tag.face_photo.notes }}</span>
+            </template>
+            <template v-else-if="tag.face_photo.classification_status === 'running'">
+              <span class="fl-status">分类中</span>
+            </template>
+            <template v-else-if="tag.face_photo.classification_status === 'failed'">
+              <span class="fl-status fl-status-failed">分类失败</span>
+            </template>
+            <template v-else>
+              <span class="fl-status">待分类</span>
+            </template>
+          </div>
         </div>
 
         <!-- 操作按钮 -->
@@ -107,6 +126,25 @@
             placeholder="请输入人脸选择提示词，系统会自动在末尾追加 JSON 输出要求..."
           />
           <span class="cf-hint">AI 将根据此提示词从 10 张帧图片中选择最佳人脸（输出 selected: 1-10）</span>
+        </div>
+        <div class="cf-row">
+          <label class="cf-label">分类模型</label>
+          <el-input v-model="configForm.face_classify_model" placeholder="gemini-3-pro-preview" />
+          <span class="cf-hint">用于识别人脸性别、族裔、年龄、美貌和 remix 可用性</span>
+        </div>
+        <div class="cf-row">
+          <label class="cf-label">分类温度</label>
+          <el-input-number v-model="configForm.face_classify_temperature" :min="0" :max="2" :step="0.1" />
+        </div>
+        <div class="cf-row">
+          <label class="cf-label">分类提示词</label>
+          <el-input
+            v-model="configForm.face_classify_prompt"
+            type="textarea"
+            :rows="8"
+            placeholder="留空则使用系统内置的人脸五维分类 Prompt..."
+          />
+          <span class="cf-hint">输出 gender / ethnicity / age / beauty / memorability 等字段</span>
         </div>
       </div>
       <template #footer>
@@ -143,7 +181,30 @@ const savingConfig = ref(false)
 const configForm = ref({
   face_select_model: 'gemini-3.1-pro-preview',
   face_select_prompt: '',
+  face_classify_model: 'gemini-3-pro-preview',
+  face_classify_prompt: '',
+  face_classify_temperature: 0.5,
 })
+
+function beautyLabel(face) {
+  const level = face.beauty_level || '普通'
+  const score = Number.isFinite(face.beauty_percentile) ? face.beauty_percentile : null
+  return score === null ? level : `${level} ${score}`
+}
+
+function remixLabel(face) {
+  if (face.memorability_level === '独特' || Number(face.memorability_percentile || 0) >= 78) {
+    return '不进remix'
+  }
+  const score = Number.isFinite(face.memorability_percentile) ? face.memorability_percentile : null
+  return score === null ? '可remix' : `可remix ${score}`
+}
+
+function remixClass(face) {
+  return (face.memorability_level === '独特' || Number(face.memorability_percentile || 0) >= 78)
+    ? 'fl-remix-blocked'
+    : 'fl-remix-ok'
+}
 
 async function loadTags() {
   loading.value = true
@@ -161,12 +222,8 @@ async function handleSelectFace(tag) {
   loadingTags.value = new Set([...loadingTags.value, tag.id])
   try {
     const result = await triggerFaceSelection(tag.id)
-    // 更新对应 tag 的 face_photo
-    const idx = tags.value.findIndex(t => t.id === tag.id)
-    if (idx !== -1) {
-      tags.value[idx] = { ...tags.value[idx], face_photo: result }
-    }
-    ElMessage.success('人脸选择成功')
+    ElMessage.success(result?.status === 'submitted' ? '人脸选择与分类已启动' : '人脸选择成功')
+    await loadTags()
   } catch (err) {
     const msg = err?.response?.data?.detail || '人脸选择失败，请稍后重试'
     ElMessage.error(msg)
@@ -200,6 +257,9 @@ async function loadConfig() {
     const data = await fetchPipelineSettings()
     configForm.value.face_select_model = data.face_select_model || 'gemini-3.1-pro-preview'
     configForm.value.face_select_prompt = data.face_select_prompt || ''
+    configForm.value.face_classify_model = data.face_classify_model || 'gemini-3-pro-preview'
+    configForm.value.face_classify_prompt = data.face_classify_prompt || ''
+    configForm.value.face_classify_temperature = data.face_classify_temperature ?? 0.5
   } catch {
     ElMessage.error('加载配置失败')
   } finally {
@@ -375,6 +435,44 @@ onMounted(loadTags)
   gap: 8px;
   font-size: 12px;
   color: #94a3b8;
+}
+
+.fl-classify {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.fl-classify span {
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.fl-classify .fl-remix-ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.fl-classify .fl-remix-blocked,
+.fl-classify .fl-status-failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.fl-classify .fl-status {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.fl-classify .fl-note {
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .fl-actions {

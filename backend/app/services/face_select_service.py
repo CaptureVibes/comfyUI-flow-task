@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.face_photo import FacePhoto
 from app.models.tag import Tag, VideoSourceTag
 from app.models.video_source import VideoSource
+from app.services.face_classification_service import classify_face_photo
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
 from app.services.video_ai_service import _extract_frames, _upload_frame_to_cdn
 
@@ -151,5 +152,7 @@ async def select_face_for_tag(
     session.add(face_photo)
     await session.commit()
     await session.refresh(face_photo)
+
+    face_photo = await classify_face_photo(session, face_photo)
 
     return face_photo
