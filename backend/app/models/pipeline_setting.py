@@ -120,6 +120,9 @@ class PipelineSetting(Base):
     # 人脸选择配置
     face_select_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     face_select_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    face_classify_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3-pro-preview")
+    face_classify_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    face_classify_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
 
     # 视频分类配置
     video_classify_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")

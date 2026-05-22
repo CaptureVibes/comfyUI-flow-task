@@ -376,6 +376,57 @@ def _selected_photo_url(state: dict[str, Any]) -> str:
     return state.get("generated_photo_url", "")
 
 
+_AGE_RANGE_ORDER = ["18-", "18-25", "26-35", "36-50", "50+"]
+
+
+def _is_adjacent_age_range(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    try:
+        return abs(_AGE_RANGE_ORDER.index(left) - _AGE_RANGE_ORDER.index(right)) == 1
+    except ValueError:
+        return False
+
+
+def _is_remix_available(face: Any) -> bool:
+    return (
+        face.classification_status == "success"
+        and face.gender not in (None, "", "不确定")
+        and face.ethnicity not in (None, "", "不确定")
+        and face.memorability_level != "独特"
+        and (face.memorability_percentile is None or face.memorability_percentile < 78)
+    )
+
+
+def _pick_matching_remix_face(primary_face: Any, candidates: list[Any]) -> Any | None:
+    if not _is_remix_available(primary_face):
+        return None
+
+    hard_matches = [
+        face for face in candidates
+        if (
+            _is_remix_available(face)
+            and face.gender == primary_face.gender
+            and face.ethnicity == primary_face.ethnicity
+        )
+    ]
+    if not hard_matches:
+        return None
+
+    tiers = [
+        lambda face: face.age_range == primary_face.age_range and face.beauty_level == primary_face.beauty_level,
+        lambda face: _is_adjacent_age_range(face.age_range, primary_face.age_range) and face.beauty_level == primary_face.beauty_level,
+        lambda face: _is_adjacent_age_range(face.age_range, primary_face.age_range),
+    ]
+    for predicate in tiers:
+        tier_matches = [face for face in hard_matches if predicate(face)]
+        if tier_matches:
+            return random.choice(tier_matches)
+    return None
+
+
 # =============================================================================
 # Gemini REST API 调用（纯文本，无视频）
 # =============================================================================
@@ -628,7 +679,7 @@ async def _stage_photo_generation(
     avatar_quality: str,
 ) -> None:
     """基于人脸库生成照片候选：取当前标签人脸 + 另一个标签人脸，并发生成 5 张候选。"""
-    from sqlalchemy import func, select
+    from sqlalchemy import select
     from app.models.face_photo import FacePhoto
 
     state = _ensure_state_shape(ai_account_states.get(account_id), account_id)
@@ -653,15 +704,17 @@ async def _stage_photo_generation(
         if not primary_face or not primary_face.face_photo_url:
             raise ValueError("当前标签没有人脸照片，请先执行人脸选择")
 
-        # 2. 同一 owner 下、不同标签的随机一张人脸
+        # 2. 同一 owner 下、不同标签、分类匹配的一张可 remix 人脸
         other_face_stmt = (
             select(FacePhoto)
             .where(FacePhoto.tag_id != first_tag_id)
         )
         if owner_id is not None:
             other_face_stmt = other_face_stmt.where(FacePhoto.owner_id == owner_id)
-        other_face_stmt = other_face_stmt.order_by(func.random()).limit(1)
-        other_face = await session.scalar(other_face_stmt)
+        else:
+            other_face_stmt = other_face_stmt.where(FacePhoto.owner_id.is_(None))
+        other_face_rows = (await session.execute(other_face_stmt)).scalars().all()
+        other_face = _pick_matching_remix_face(primary_face, list(other_face_rows))
 
     primary_face_url = primary_face.face_photo_url
     other_face_url = other_face.face_photo_url if other_face else None
