@@ -1,7 +1,7 @@
 """add local_gcs_video_url to video_sources
 
-Revision ID: g032_add_local_gcs_video_url
-Revises: g031_fix_kol_status
+Revision ID: g033_add_local_gcs_video_url
+Revises: g032_face_photo_classification
 Create Date: 2026-05-22
 
 GCS 上传后端的链接落到独立字段 local_gcs_video_url，避免与旧 CDN 链接（仍存
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "g032_add_local_gcs_video_url"
-down_revision = "g031_fix_kol_status"
+revision = "g033_add_local_gcs_video_url"
+down_revision = "g032_face_photo_classification"
 branch_labels = None
 depends_on = None
 
