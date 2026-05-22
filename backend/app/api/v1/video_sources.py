@@ -6,7 +6,6 @@ import re
 import uuid
 import zipfile
 
-import httpx
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,23 +186,35 @@ async def download_all_zip_endpoint(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Download all videos with local_video_url as a single zip file."""
+    """Download all videos with a stored URL as a single zip file."""
     # Fetch all video sources (up to 1000)
     rows, _ = await list_video_sources(session, page=1, page_size=1000, owner_id=owner_id)
-    videos = [r for r in rows if r.local_video_url]
+    videos = [(r, r.local_video_url or r.local_gcs_video_url) for r in rows]
+    videos = [(r, url) for r, url in videos if url]
 
     async def generate_zip():
+        # GCS URL 走 SDK（私有桶可用），其它走 httpx；统一通过 download_url_to_local 到临时文件
+        import os as _os
+        import tempfile
+        from app.utils.gcs_download import download_url_to_local
+
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                for i, v in enumerate(videos, 1):
+            for i, (v, url) in enumerate(videos, 1):
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+                _os.close(tmp_fd)
+                try:
+                    await download_url_to_local(url, tmp_path, timeout=120.0)
+                    safe_title = re.sub(r'[\\/*?:"<>|]', "_", v.video_title or v.blogger_name or "video")
+                    filename = f"{i:03d}_{safe_title}.mp4"
+                    with open(tmp_path, "rb") as f:
+                        zf.writestr(filename, f.read())
+                except Exception:
+                    pass
+                finally:
                     try:
-                        resp = await client.get(v.local_video_url)
-                        resp.raise_for_status()
-                        safe_title = re.sub(r'[\\/*?:"<>|]', "_", v.video_title or v.blogger_name or "video")
-                        filename = f"{i:03d}_{safe_title}.mp4"
-                        zf.writestr(filename, resp.content)
-                    except Exception:
+                        _os.unlink(tmp_path)
+                    except FileNotFoundError:
                         pass
         buf.seek(0)
         yield buf.read()

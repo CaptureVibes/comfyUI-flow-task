@@ -100,8 +100,8 @@
         <div class="vtd-original-grid">
           <div class="vtd-original-player">
             <video
-              v-if="task.original_video.local_video_url || task.original_video.video_url"
-              :src="task.original_video.local_video_url || task.original_video.video_url"
+              v-if="task.original_video.local_video_url || task.original_video.local_gcs_video_url || task.original_video.video_url"
+              :src="task.original_video.local_video_url || task.original_video.local_gcs_video_url || task.original_video.video_url"
               controls
               class="vtd-original-video"
               preload="metadata"

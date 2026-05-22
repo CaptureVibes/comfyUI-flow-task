@@ -830,18 +830,18 @@
             </div>
             <div class="vc-group-list">
               <div v-for="v in group.items" :key="v.video_source_id" class="vc-item" :class="`is-${v.status}`">
-                <div class="vc-item-thumb" @click="v.local_video_url && openVcFullscreen(v)">
+                <div class="vc-item-thumb" @click="(v.local_video_url || v.local_gcs_video_url) && openVcFullscreen(v)">
                   <video
-                    v-if="v.local_video_url"
-                    :src="v.local_video_url"
+                    v-if="v.local_video_url || v.local_gcs_video_url"
+                    :src="v.local_video_url || v.local_gcs_video_url"
                     preload="metadata"
                     playsinline
                     class="vc-thumb-video"
                   />
-                  <div class="vc-item-thumb-expand" v-if="v.local_video_url">
+                  <div class="vc-item-thumb-expand" v-if="v.local_video_url || v.local_gcs_video_url">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                   </div>
-                  <div v-if="!v.local_video_url" class="vc-item-thumb-placeholder">无视频</div>
+                  <div v-if="!(v.local_video_url || v.local_gcs_video_url)" class="vc-item-thumb-placeholder">无视频</div>
                 </div>
                 <div class="vc-item-info">
                   <div class="vc-item-title">{{ v.video_title || '(无标题)' }}</div>
@@ -857,7 +857,7 @@
                   </div>
                   <div v-else-if="v.status === 'processing'" class="vc-item-status">分类中...</div>
                   <div v-else-if="v.status === 'pending'" class="vc-item-status">排队中</div>
-                  <div v-else-if="v.status === 'no_local_video'" class="vc-item-status is-warn">无 local_video_url，跳过</div>
+                  <div v-else-if="v.status === 'no_local_video'" class="vc-item-status is-warn">无 local_video_url / local_gcs_video_url，跳过</div>
                   <div v-else class="vc-item-status is-muted">未开始</div>
                 </div>
               </div>
@@ -878,7 +878,7 @@
         </button>
         <video
           v-if="vcFullscreenItem"
-          :src="vcFullscreenItem.local_video_url"
+          :src="vcFullscreenItem.local_video_url || vcFullscreenItem.local_gcs_video_url"
           class="vc-fullscreen-video"
           controls
           autoplay

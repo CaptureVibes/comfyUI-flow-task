@@ -598,11 +598,13 @@ async def _post_callback_pipeline(
 
             actual_path = await _compress_video_if_needed(actual_path, tmpdir)
             permanent_url = await upload_video_file(actual_path, filename)
+            from app.utils.video_upload import current_upload_backend
+            upload_backend = current_upload_backend()
     except Exception as exc:
         logger.exception("[ext_supp] 下载/上传失败 source_url=%s: %s", source_url, exc)
         return
 
-    logger.info("[ext_supp] uploaded → %s (source_url=%s)", permanent_url, source_url)
+    logger.info("[ext_supp] uploaded (%s) → %s (source_url=%s)", upload_backend, permanent_url, source_url)
 
     # 2. AI 审核（如启用）
     if ai_review_enabled:
@@ -692,7 +694,8 @@ async def _post_callback_pipeline(
                 height=video.get("height"),
                 aspect_ratio=video.get("aspect_ratio"),
                 extra=video.get("extra"),
-                local_video_url=permanent_url,
+                local_video_url=permanent_url if upload_backend != "gcs" else None,
+                local_gcs_video_url=permanent_url if upload_backend == "gcs" else None,
                 download_status="done",
                 tiktok_blogger_id=tiktok_blogger_id,
             )

@@ -876,7 +876,7 @@ async def _run_pipeline(account_id: str, semaphore: asyncio.Semaphore) -> None:
                     rows = (await session.execute(stmt)).scalars().all()
                     seen: set[str] = set()
                     for vs in rows:
-                        video_url = vs.local_video_url or vs.video_url
+                        video_url = vs.local_video_url or vs.local_gcs_video_url or vs.video_url
                         if not video_url:
                             continue
                         video_id = str(vs.id)

@@ -17,8 +17,8 @@
             <div class="vtfd-player-wrap" :class="{ 'vtfd-player-wrap-empty': !selectedVideoSource }">
               <template v-if="selectedVideoSource">
                 <video
-                  v-if="selectedVideoSource.local_video_url || selectedVideoSource.video_url"
-                  :src="selectedVideoSource.local_video_url || selectedVideoSource.video_url"
+                  v-if="selectedVideoSource.local_video_url || selectedVideoSource.local_gcs_video_url || selectedVideoSource.video_url"
+                  :src="selectedVideoSource.local_video_url || selectedVideoSource.local_gcs_video_url || selectedVideoSource.video_url"
                   controls
                   class="vtfd-video"
                 />

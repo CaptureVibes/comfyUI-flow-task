@@ -21,8 +21,8 @@
 
             <div class="vsd-player-wrap">
               <video
-                v-if="video.local_video_url || video.video_url"
-                :src="video.local_video_url || video.video_url"
+                v-if="video.local_video_url || video.local_gcs_video_url || video.video_url"
+                :src="video.local_video_url || video.local_gcs_video_url || video.video_url"
                 controls
                 autoplay
                 class="vsd-video"

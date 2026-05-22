@@ -280,33 +280,17 @@ async def _extract_frames_with_interval(video_url: str, template_id: str, *, int
     with disk_tempdir(prefix=f"vai_{template_id[:8]}_") as tmpdir:
         video_path = os.path.join(tmpdir, "video.mp4")
 
-        # 1. 下载视频（流式）—— 受 _VIDEO_DOWNLOAD_CONCURRENCY 限流，外层 wait_for 兜底
-        # httpx 自身的 timeout 是 per-IO，慢吐字节可以挂无限久；asyncio.wait_for 强制总时长。
+        # 1. 下载视频 —— 受 _VIDEO_DOWNLOAD_CONCURRENCY 限流，外层 wait_for 兜底强制总时长。
+        # GCS（gs:// 或 storage.googleapis.com）走 SDK（私有桶可用），其它走 httpx 流式下载。
         logger.info("[%s] Downloading video for frame extraction: %s", template_id, video_url[:80])
 
-        async def _do_download() -> int:
-            bytes_written = 0
-            last_log_t = asyncio.get_running_loop().time()
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                async with client.stream("GET", video_url) as resp:
-                    resp.raise_for_status()
-                    with open(video_path, "wb") as f:
-                        async for chunk in resp.aiter_bytes(65536):
-                            f.write(chunk)
-                            bytes_written += len(chunk)
-                            now = asyncio.get_running_loop().time()
-                            if now - last_log_t >= 10.0:
-                                logger.info(
-                                    "[%s] downloading: %.1f MB so far",
-                                    template_id, bytes_written / 1024 / 1024,
-                                )
-                                last_log_t = now
-            return bytes_written
+        from app.utils.gcs_download import download_url_to_local
 
         async with _get_video_download_semaphore():
             try:
                 downloaded_bytes = await asyncio.wait_for(
-                    _do_download(), timeout=_VIDEO_DOWNLOAD_TIMEOUT_SEC,
+                    download_url_to_local(video_url, video_path, timeout=30.0),
+                    timeout=_VIDEO_DOWNLOAD_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError as exc:
                 raise RuntimeError(
@@ -1444,10 +1428,13 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                             await _persist_states([template_id])
                             return
 
-                        # 优先使用 local_video_url（已上传到 CDN），回退到原始 video_url
+                        # 优先 local_video_url（CDN）→ 回退 local_gcs_video_url（GCS）→ 最后原始 video_url
                         if vs.local_video_url:
                             video_url = vs.local_video_url
                             logger.info("[%s] Using local_video_url (CDN): %s", template_id, video_url[:100] + "...")
+                        elif vs.local_gcs_video_url:
+                            video_url = vs.local_gcs_video_url
+                            logger.info("[%s] Using local_gcs_video_url (GCS): %s", template_id, video_url[:100] + "...")
                         elif vs.video_url:
                             video_url = vs.video_url
                             logger.warning("[%s] Using original video_url (platform) - may not work with Gemini: %s", template_id, video_url[:100] + "...")

@@ -679,16 +679,21 @@ async def _do_download_and_upload_inner(vs_id: UUID) -> None:
 
                 actual_path = await _compress_video_if_needed(actual_path, tmpdir)
                 permanent_url = await _upload_video_file(actual_path, filename)
+                from app.utils.video_upload import current_upload_backend
+                backend = current_upload_backend()
 
             # —— 阶段 3：写结果（短连接） ——
             async with SessionLocal() as session:
                 vs = await session.scalar(select(VideoSource).where(VideoSource.id == vs_id))
                 if vs is None:
                     return
-                vs.local_video_url = permanent_url
+                if backend == "gcs":
+                    vs.local_gcs_video_url = permanent_url
+                else:
+                    vs.local_video_url = permanent_url
                 vs.download_status = "done"
                 await session.commit()
-            logger.info("Video %s downloaded and uploaded: %s", vs_id, permanent_url)
+            logger.info("Video %s downloaded and uploaded (%s): %s", vs_id, backend, permanent_url)
             return
         except asyncio.CancelledError:
             raise
@@ -734,6 +739,7 @@ async def trigger_download_and_upload(
     vs = await get_video_source_or_404(session, vs_id, owner_id)
     vs.download_status = "downloading"
     vs.local_video_url = None
+    vs.local_gcs_video_url = None
     await session.commit()
     await session.refresh(vs)
     asyncio.create_task(_do_download_and_upload(vs_id))

@@ -26,6 +26,7 @@ class VideoSourceSummary(BaseModel):
     source_url: str
     thumbnail_url: str | None = None
     local_video_url: str | None = None
+    local_gcs_video_url: str | None = None
     video_url: str | None = None
     view_count: int | None = None
     duration: int | None = None

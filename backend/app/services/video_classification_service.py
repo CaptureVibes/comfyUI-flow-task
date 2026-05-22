@@ -209,16 +209,16 @@ async def _classify_one(video_source_id: str) -> None:
         if row is None or vs is None:
             logger.warning("classification row or video_source missing: %s", video_source_id)
             return
-        if not vs.local_video_url:
+        local_url = vs.local_video_url or vs.local_gcs_video_url
+        if not local_url:
             row.status = "failed"
-            row.error_message = "缺少 local_video_url"
+            row.error_message = "缺少 local_video_url / local_gcs_video_url"
             row.classified_at = _utcnow()
             await session.commit()
-            _set_state(video_source_id, "failed", error="缺少 local_video_url")
+            _set_state(video_source_id, "failed", error="缺少 local_video_url / local_gcs_video_url")
             await _trigger_summary_for_video(vs_uuid)
             return
         owner_id = vs.owner_id
-        local_url = vs.local_video_url
         row.status = "processing"
         row.error_message = None
         await session.commit()
@@ -566,7 +566,7 @@ async def enqueue_account_classification(
         to_queue: list[uuid.UUID] = []
         skipped = 0
         for vs in videos:
-            if not vs.local_video_url:
+            if not (vs.local_video_url or vs.local_gcs_video_url):
                 skipped += 1
                 continue
             existing = existing_by_vs.get(vs.id)
@@ -676,9 +676,10 @@ async def get_account_classification_view(
 
     items: list[dict[str, Any]] = []
     for vs in videos:
+        playable_url = vs.local_video_url or vs.local_gcs_video_url
         row = by_vs.get(vs.id)
         if row is None:
-            status = "not_started" if vs.local_video_url else "no_local_video"
+            status = "not_started" if playable_url else "no_local_video"
             category_index = None
             major = None
             error = None
@@ -694,9 +695,10 @@ async def get_account_classification_view(
             "video_source_id": str(vs.id),
             "video_title": vs.video_title,
             "local_video_url": vs.local_video_url,
+            "local_gcs_video_url": vs.local_gcs_video_url,
             "blogger_name": vs.blogger_name,
             "tiktok_blogger_id": str(vs.tiktok_blogger_id) if vs.tiktok_blogger_id else None,
-            "has_local_video": bool(vs.local_video_url),
+            "has_local_video": bool(playable_url),
             "status": status,
             "category_index": category_index,
             "category_label": CATEGORY_LABELS.get(category_index) if category_index is not None else None,

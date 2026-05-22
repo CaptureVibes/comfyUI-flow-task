@@ -29,12 +29,17 @@ def _today_prefix() -> str:
     return f"{base}/{date_str}"
 
 
+def current_upload_backend() -> str:
+    """返回 'gcs' / 'cdn'，由 VIDEO_UPLOAD_BACKEND 决定。"""
+    return (settings.video_upload_backend or "gcs").strip().lower()
+
+
 async def upload_video_file(file_path: str, filename: str) -> str:
     """上传本地视频文件并返回可访问的 URL。
 
     抛错前会重试，但 4xx 客户端错误直接抛（不可恢复）。
     """
-    backend = (settings.video_upload_backend or "gcs").strip().lower()
+    backend = current_upload_backend()
     if backend == "cdn":
         return await _upload_to_cdn_api(file_path, filename)
     if backend == "gcs":

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 from google import genai
 from google.genai import types
 
@@ -132,43 +131,27 @@ async def _download_media_to_temp_file(
     fallback_mime_type: str,
     timeout: float,
 ) -> _DownloadedMedia:
+    """下载远端媒体到本地临时文件。
+
+    GCS（gs:// 或 storage.googleapis.com 公网链）走 SDK，其它走 httpx。
+    """
     fallback_extension = mimetypes.guess_extension(fallback_mime_type) or ".bin"
     filename = _filename_from_url(url, fallback_extension)
     suffix = Path(filename).suffix or fallback_extension
 
+    from app.utils.gcs_download import download_url_to_local
     from app.utils.tmp_storage import disk_namedtempfile
     with disk_namedtempfile(suffix=suffix, delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
-    total = 0
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=30.0),
-            follow_redirects=True,
-            headers=_MEDIA_DOWNLOAD_HEADERS,
-            trust_env=False,
-        ) as client:
-            async with client.stream("GET", url) as response:
-                if response.status_code >= 400:
-                    body = await response.aread()
-                    preview = body[:500].decode("utf-8", errors="ignore")
-                    raise RuntimeError(
-                        f"download media failed: status={response.status_code}, "
-                        f"url={response.url}, body={preview}"
-                    )
-
-                mime_type = _normalize_mime_type(
-                    response.headers.get("content-type"),
-                    filename,
-                    fallback_mime_type,
-                )
-                with tmp_path.open("wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                        if not chunk:
-                            continue
-                        f.write(chunk)
-                        total += len(chunk)
-
+        total = await download_url_to_local(
+            url,
+            str(tmp_path),
+            http_headers=_MEDIA_DOWNLOAD_HEADERS,
+            timeout=timeout,
+        )
+        mime_type = _normalize_mime_type(None, filename, fallback_mime_type)
         return _DownloadedMedia(
             path=tmp_path,
             filename=filename,

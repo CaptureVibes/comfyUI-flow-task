@@ -211,7 +211,7 @@
             <span class="vc-date">{{ formatDate(item.publish_date || item.created_at) }}</span>
             <div class="vc-actions">
               <button
-                v-if="!item.local_video_url && item.download_status !== 'downloading'"
+                v-if="!(item.local_video_url || item.local_gcs_video_url) && item.download_status !== 'downloading'"
                 class="vc-btn vc-btn-dl"
                 :class="{ loading: downloading === item.id }"
                 @click.stop="handleDownload(item)"
@@ -289,8 +289,8 @@
   >
     <div class="player-wrap">
       <video
-        v-if="playerItem?.local_video_url || playerItem?.video_url"
-        :src="playerItem.local_video_url || playerItem.video_url"
+        v-if="playerItem?.local_video_url || playerItem?.local_gcs_video_url || playerItem?.video_url"
+        :src="playerItem.local_video_url || playerItem.local_gcs_video_url || playerItem.video_url"
         controls
         autoplay
         class="player-video"

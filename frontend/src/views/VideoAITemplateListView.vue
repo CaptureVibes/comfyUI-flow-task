@@ -573,8 +573,8 @@
     >
       <div class="player-wrap">
         <video
-          v-if="playerItem?.local_video_url || playerItem?.video_url"
-          :src="playerItem.local_video_url || playerItem.video_url"
+          v-if="playerItem?.local_video_url || playerItem?.local_gcs_video_url || playerItem?.video_url"
+          :src="playerItem.local_video_url || playerItem.local_gcs_video_url || playerItem.video_url"
           controls
           autoplay
           class="player-video"

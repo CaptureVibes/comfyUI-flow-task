@@ -97,6 +97,7 @@ class VideoSourceRead(BaseModel):
     video_url: str | None
     thumbnail_url: str | None
     local_video_url: str | None
+    local_gcs_video_url: str | None
     download_status: str | None
     view_count: int | None
     like_count: int | None
@@ -131,6 +132,7 @@ class VideoSourceListItem(BaseModel):
     video_url: str | None
     thumbnail_url: str | None
     local_video_url: str | None
+    local_gcs_video_url: str | None
     download_status: str | None
     view_count: int | None
     like_count: int | None

@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1989,16 +1989,20 @@ async def export_video_urls(
 
         for blogger in bloggers:
             vs_stmt = (
-                select(VideoSource.local_video_url)
+                select(VideoSource.local_video_url, VideoSource.local_gcs_video_url)
                 .where(VideoSource.tiktok_blogger_id == blogger.id)
-                .where(VideoSource.local_video_url.is_not(None))
-                .where(VideoSource.local_video_url != "")
+                .where(
+                    or_(
+                        and_(VideoSource.local_video_url.is_not(None), VideoSource.local_video_url != ""),
+                        and_(VideoSource.local_gcs_video_url.is_not(None), VideoSource.local_gcs_video_url != ""),
+                    )
+                )
                 .order_by(VideoSource.created_at.asc())
             )
-            urls = (await session.execute(vs_stmt)).scalars().all()
-            if urls:
-                for url in urls:
-                    rows.append((acc, blogger, url))
+            url_pairs = (await session.execute(vs_stmt)).all()
+            if url_pairs:
+                for cdn_url, gcs_url in url_pairs:
+                    rows.append((acc, blogger, cdn_url or gcs_url or ""))
             else:
                 rows.append((acc, blogger, ""))
 

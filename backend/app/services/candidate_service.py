@@ -1464,7 +1464,11 @@ async def supplement_templates_for_account(
 
                 if local_video_url:
                     # AI 审核时已下载好，直接写入，避免重复下载
-                    vs.local_video_url = local_video_url
+                    from app.utils.video_upload import current_upload_backend
+                    if current_upload_backend() == "gcs":
+                        vs.local_gcs_video_url = local_video_url
+                    else:
+                        vs.local_video_url = local_video_url
                     vs.download_status = "done"
                 else:
                     await trigger_download_and_upload(session, vs.id, owner_id)
@@ -1816,7 +1820,11 @@ async def auto_supplement_for_account(
                     skipped += 1
                     continue
                 # 直接写入已上传好的 URL，跳过重复下载
-                vs.local_video_url = local_video_url
+                from app.utils.video_upload import current_upload_backend
+                if current_upload_backend() == "gcs":
+                    vs.local_gcs_video_url = local_video_url
+                else:
+                    vs.local_video_url = local_video_url
                 vs.download_status = "done"
                 vs_id = vs.id
                 tiktok_blogger_id = vs.tiktok_blogger_id
