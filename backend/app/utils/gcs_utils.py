@@ -247,11 +247,43 @@ def generate_gcs_signed_url(
     project_id: str | None = None,
     expiration_minutes: int = 60,
 ) -> str:
+    """生成 V4 签名 URL。
+
+    - 凭证带私钥（service-account JSON 文件）→ 直接本地签
+    - GCE/Cloud Run/k8s 默认计算引擎凭证（只有 access token）→ 走 GCP IAM
+      signBlob API 帮签，需要凭证关联的服务账号具备 "Service Account Token
+      Creator"（roles/iam.serviceAccountTokenCreator）权限
+    """
     client = _storage_client(project_id)
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_key)
+
+    base_kwargs = {
+        "version": "v4",
+        "expiration": timedelta(minutes=expiration_minutes),
+        "method": "GET",
+    }
+    try:
+        return blob.generate_signed_url(**base_kwargs)
+    except AttributeError as exc:
+        # "you need a private key to sign credentials." → 退到 IAM signBlob
+        if "private key" not in str(exc).lower():
+            raise
+
+    import google.auth
+    from google.auth.transport import requests as auth_requests
+
+    credentials, _ = google.auth.default()
+    auth_request = auth_requests.Request()
+    credentials.refresh(auth_request)
+    service_account_email = getattr(credentials, "service_account_email", None)
+    if not service_account_email:
+        raise RuntimeError(
+            "ADC 凭证没有 service_account_email，无法走 IAM signBlob 兜底；"
+            "请确认运行环境是 GCE/Cloud Run/GKE 且绑定了服务账号"
+        )
     return blob.generate_signed_url(
-        version="v4",
-        expiration=timedelta(minutes=expiration_minutes),
-        method="GET",
+        **base_kwargs,
+        service_account_email=service_account_email,
+        access_token=credentials.token,
     )
