@@ -6,7 +6,7 @@ import re
 import uuid
 import zipfile
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -233,38 +233,60 @@ async def download_all_zip_endpoint(
     )
 
 
-@router.get("/export-excel")
-async def export_video_urls_excel(
-    platform: str | None = Query(None),
-    blogger_name: str | None = Query(None),
-    tiktok_blogger_id: uuid.UUID | None = Query(None),
-    tag_ids: str | None = Query(None),
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> Response:
-    """导出当前过滤条件下视频的 TikTok 博主主页 URL、原始链接、CDN/GCS 存储链接为 Excel。"""
+# ── 异步 Excel 导出：start → poll → download ──────────────────────────────────
+# 10k 条记录每条都要走 IAM signBlob（~100ms），同步导出会必然超时；
+# 改成后台任务 + 前端轮询。in-memory state 足够（单进程 + 短期任务）。
+
+_EXPORT_JOBS: dict[str, dict] = {}
+_EXPORT_JOB_TTL_SECONDS = 3600  # 1 小时后清理
+
+
+def _cleanup_expired_export_jobs() -> None:
+    import time as _time
+    now = _time.time()
+    expired = [jid for jid, j in _EXPORT_JOBS.items() if now - j.get("created_at", 0) > _EXPORT_JOB_TTL_SECONDS]
+    for jid in expired:
+        _EXPORT_JOBS.pop(jid, None)
+
+
+async def _build_export_excel_bytes(
+    owner_id: uuid.UUID | None,
+    platform: str | None,
+    blogger_name: str | None,
+    tiktok_blogger_id: uuid.UUID | None,
+    parsed_tag_ids: list[uuid.UUID],
+) -> bytes:
+    """跑在后台任务里：拉数据 + 并发签名 + 生成 xlsx，返回字节。"""
     import io
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
-
-    parsed_tag_ids: list[uuid.UUID] = []
-    if tag_ids:
-        parsed_tag_ids = [uuid.UUID(part.strip()) for part in tag_ids.split(",") if part.strip()]
-
-    rows, _ = await list_video_sources(
-        session,
-        page=1,
-        page_size=10000,
-        owner_id=owner_id,
-        platform=platform,
-        blogger_name=blogger_name,
-        tiktok_blogger_id=tiktok_blogger_id,
-        tag_ids=parsed_tag_ids,
-    )
-
-    # 导出前批量续签：拿到 Excel 的人短时间内（< 7 天）能直接点开播放
+    from app.db.session import SessionLocal
     from app.utils.gcs_signing import ensure_video_sources_signed_urls
-    await ensure_video_sources_signed_urls(session, rows)
+
+    async with SessionLocal() as session:
+        rows, _ = await list_video_sources(
+            session,
+            page=1,
+            page_size=10000,
+            owner_id=owner_id,
+            platform=platform,
+            blogger_name=blogger_name,
+            tiktok_blogger_id=tiktok_blogger_id,
+            tag_ids=parsed_tag_ids,
+        )
+        await ensure_video_sources_signed_urls(session, rows, concurrency=20)
+
+        # 数据 detach 到普通 dict 之后就可以放出 session（避免长持有）
+        export_rows: list[dict] = []
+        for r in rows:
+            blogger = r.tiktok_blogger
+            export_rows.append({
+                "blogger_name": (blogger.blogger_name if blogger else r.blogger_name) or "",
+                "blogger_url": (blogger.blogger_url if blogger else "") or "",
+                "source_url": r.source_url or "",
+                "local_video_url": r.local_video_url or "",
+                "local_gcs_video_url": r.local_gcs_video_url or "",
+            })
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -277,7 +299,7 @@ async def export_video_urls_excel(
 
     headers = ["TikTok 博主", "博主主页 URL", "视频原始链接", "local_video_url", "local_gcs_video_url"]
     ws.append(headers)
-    for col, h in enumerate(headers, 1):
+    for col, _ in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col)
         cell.fill = header_fill
         cell.font = header_font
@@ -290,20 +312,97 @@ async def export_video_urls_excel(
     ws.column_dimensions["E"].width = 60
     ws.row_dimensions[1].height = 22
 
-    for i, r in enumerate(rows, start=2):
-        blogger = r.tiktok_blogger
-        ws.cell(row=i, column=1, value=(blogger.blogger_name if blogger else r.blogger_name) or "").alignment = center
-        ws.cell(row=i, column=2, value=(blogger.blogger_url if blogger else "") or "").alignment = wrap
-        ws.cell(row=i, column=3, value=r.source_url or "").alignment = wrap
-        ws.cell(row=i, column=4, value=r.local_video_url or "").alignment = wrap
-        ws.cell(row=i, column=5, value=r.local_gcs_video_url or "").alignment = wrap
+    for i, r in enumerate(export_rows, start=2):
+        ws.cell(row=i, column=1, value=r["blogger_name"]).alignment = center
+        ws.cell(row=i, column=2, value=r["blogger_url"]).alignment = wrap
+        ws.cell(row=i, column=3, value=r["source_url"]).alignment = wrap
+        ws.cell(row=i, column=4, value=r["local_video_url"]).alignment = wrap
+        ws.cell(row=i, column=5, value=r["local_gcs_video_url"]).alignment = wrap
 
     buf = io.BytesIO()
     wb.save(buf)
-    buf.seek(0)
+    return buf.getvalue()
 
+
+async def _run_export_job(
+    job_id: str,
+    owner_id: uuid.UUID | None,
+    platform: str | None,
+    blogger_name: str | None,
+    tiktok_blogger_id: uuid.UUID | None,
+    parsed_tag_ids: list[uuid.UUID],
+) -> None:
+    import logging
+    log = logging.getLogger("app.export_excel")
+    try:
+        log.info("[export_excel] job=%s start", job_id)
+        data = await _build_export_excel_bytes(
+            owner_id, platform, blogger_name, tiktok_blogger_id, parsed_tag_ids,
+        )
+        _EXPORT_JOBS[job_id]["data"] = data
+        _EXPORT_JOBS[job_id]["status"] = "done"
+        log.info("[export_excel] job=%s done size=%dKB", job_id, len(data) // 1024)
+    except Exception as exc:
+        _EXPORT_JOBS[job_id]["status"] = "failed"
+        _EXPORT_JOBS[job_id]["error"] = str(exc)[:500]
+        log.exception("[export_excel] job=%s failed: %s", job_id, exc)
+
+
+@router.post("/export-excel")
+async def start_export_excel_async(
+    platform: str | None = Query(None),
+    blogger_name: str | None = Query(None),
+    tiktok_blogger_id: uuid.UUID | None = Query(None),
+    tag_ids: str | None = Query(None),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """启动 Excel 导出任务（后台跑，立即返回 job_id）。
+
+    数据量大时同步导出必然超时；改为后台并发签名 + 生成，前端轮询状态。
+    """
+    import time as _time
+
+    _cleanup_expired_export_jobs()
+
+    parsed_tag_ids: list[uuid.UUID] = []
+    if tag_ids:
+        parsed_tag_ids = [uuid.UUID(part.strip()) for part in tag_ids.split(",") if part.strip()]
+
+    job_id = uuid.uuid4().hex
+    _EXPORT_JOBS[job_id] = {"status": "running", "created_at": _time.time()}
+    asyncio.create_task(_run_export_job(
+        job_id, owner_id, platform, blogger_name, tiktok_blogger_id, parsed_tag_ids,
+    ))
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/export-excel/{job_id}/status")
+async def get_export_excel_status(job_id: str) -> dict:
+    job = _EXPORT_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="导出任务不存在或已过期")
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "error": job.get("error"),
+    }
+
+
+@router.get("/export-excel/{job_id}/download")
+async def download_export_excel(job_id: str) -> Response:
+    job = _EXPORT_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="导出任务不存在或已过期")
+    if job["status"] == "failed":
+        raise HTTPException(status_code=500, detail=job.get("error") or "导出失败")
+    if job["status"] != "done":
+        raise HTTPException(status_code=425, detail="导出尚未完成")  # 425 Too Early
+    data = job.get("data") or b""
+    # 下载成功后清理（节省内存）
+    _EXPORT_JOBS.pop(job_id, None)
     return Response(
-        content=buf.read(),
+        content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="video_urls.xlsx"'},
     )

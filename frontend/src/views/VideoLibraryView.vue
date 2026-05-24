@@ -454,7 +454,7 @@ import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoSources, fetchVideoSource, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip, exportVideoUrlsExcel } from '../api/video_sources'
+import { fetchVideoSources, fetchVideoSource, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip, startExportVideoUrlsExcel, fetchExportExcelStatus, downloadExportExcel } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { fetchTags, createTag, updateTag, deleteTag } from '../api/tags'
 import { fetchBloggers } from '../api/tiktok_bloggers'
@@ -873,12 +873,28 @@ async function handleDownloadAll() {
 
 async function handleExportExcel() {
   exportingExcel.value = true
+  ElMessage.info('正在后台生成 Excel，请稍候…')
   try {
     const params = {}
     if (platform.value) params.platform = platform.value
     if (selectedBloggerId.value) params.tiktok_blogger_id = selectedBloggerId.value
     if (selectedTagFilterIds.value.length) params.tag_ids = selectedTagFilterIds.value.join(',')
-    const blob = await exportVideoUrlsExcel(params)
+
+    const { job_id } = await startExportVideoUrlsExcel(params)
+
+    // 轮询：最多 10 分钟，每 2 秒查一次
+    const MAX_POLLS = 300
+    let polls = 0
+    while (polls < MAX_POLLS) {
+      await new Promise(r => setTimeout(r, 2000))
+      polls += 1
+      const { status, error } = await fetchExportExcelStatus(job_id)
+      if (status === 'done') break
+      if (status === 'failed') throw new Error(error || '导出失败')
+    }
+    if (polls >= MAX_POLLS) throw new Error('导出超时')
+
+    const blob = await downloadExportExcel(job_id)
     const blobUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = blobUrl

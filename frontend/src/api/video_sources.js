@@ -53,9 +53,18 @@ export async function downloadAllVideosZip(token) {
   return resp.blob()
 }
 
-export async function exportVideoUrlsExcel(params = {}) {
-  const resp = await http.get('/video-sources/export-excel', {
-    params,
+export async function startExportVideoUrlsExcel(params = {}) {
+  const resp = await http.post('/video-sources/export-excel', null, { params })
+  return resp.data  // { job_id, status }
+}
+
+export async function fetchExportExcelStatus(jobId) {
+  const resp = await http.get(`/video-sources/export-excel/${jobId}/status`)
+  return resp.data  // { job_id, status, error }
+}
+
+export async function downloadExportExcel(jobId) {
+  const resp = await http.get(`/video-sources/export-excel/${jobId}/download`, {
     responseType: 'blob',
   })
   return resp.data

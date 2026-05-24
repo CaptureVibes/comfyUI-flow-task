@@ -182,11 +182,21 @@ async def ensure_video_source_signed_urls(session: AsyncSession, vs) -> None:
             await session.rollback()
 
 
-async def ensure_video_sources_signed_urls(session: AsyncSession, video_sources: list) -> None:
-    """批量版：对一组 video_source 做相同处理，一次 commit。"""
+async def ensure_video_sources_signed_urls(
+    session: AsyncSession,
+    video_sources: list,
+    *,
+    concurrency: int = 20,
+) -> None:
+    """批量版：对一组 video_source 做"GCS 即续签"覆写，并发签名（默认 20 并发）。
+
+    单次签名是 IAM signBlob 网络调用，串行下 10k 条会几十分钟，必须并发；
+    asyncio.gather + Semaphore 限并发避免打满 IAM 配额。
+    """
+    import asyncio as _asyncio
     from app.utils.gcs_download import is_gcs_url
 
-    dirty = False
+    tasks: list[tuple] = []  # (vs, attr, url)
     for vs in video_sources:
         if vs is None:
             continue
@@ -194,13 +204,32 @@ async def ensure_video_sources_signed_urls(session: AsyncSession, video_sources:
             url = getattr(vs, attr, None)
             if not url or not is_gcs_url(url) or _is_signed_url_fresh(url):
                 continue
+            tasks.append((vs, attr, url))
+
+    if not tasks:
+        return
+
+    sem = _asyncio.Semaphore(max(1, concurrency))
+
+    async def _sign_one(idx: int) -> tuple[int, str] | None:
+        vs, _attr, url = tasks[idx]
+        async with sem:
             try:
-                new_signed = _sign_gcs_url(url)
+                return idx, await _asyncio.to_thread(_sign_gcs_url, url)
             except Exception as exc:
-                logger.error("签名 GCS URL 失败 video_source=%s attr=%s url=%s: %s", vs.id, attr, url[:120], exc)
-                continue
-            setattr(vs, attr, new_signed)
-            dirty = True
+                logger.error("签名 GCS URL 失败 video_source=%s attr=%s url=%s: %s", vs.id, _attr, url[:120], exc)
+                return None
+
+    results = await _asyncio.gather(*[_sign_one(i) for i in range(len(tasks))])
+
+    dirty = False
+    for r in results:
+        if r is None:
+            continue
+        idx, signed = r
+        vs, attr, _url = tasks[idx]
+        setattr(vs, attr, signed)
+        dirty = True
     if dirty:
         try:
             await session.commit()
