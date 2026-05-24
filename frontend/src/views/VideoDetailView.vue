@@ -26,6 +26,7 @@
                 controls
                 autoplay
                 class="vsd-video"
+                @error="handleVideoError"
               />
               <div v-else class="vsd-noplayer">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
@@ -457,6 +458,19 @@ async function loadData() {
     ElMessage.error(err?.response?.data?.detail || '加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+// GCS 签名 URL 过期等异常时，后端 lazy 续签——前端 <video> 报错就再拉一次最新数据
+let videoErrorRetried = false
+async function handleVideoError() {
+  if (videoErrorRetried) return
+  videoErrorRetried = true
+  try {
+    const fresh = await fetchVideoSource(videoId)
+    if (fresh) video.value = { ...video.value, ...fresh }
+  } catch {
+    ElMessage.warning('视频地址刷新失败，请稍后再试')
   }
 }
 

@@ -152,6 +152,63 @@ async def ensure_sub_tasks_signed_urls(
     return out
 
 
+async def ensure_video_source_signed_urls(session: AsyncSession, vs) -> None:
+    """对 video_source 的两个 URL 字段 (local_video_url / local_gcs_video_url)
+    做"GCS 即签名 + 续签"覆写。CDN 链原样跳过。一次 commit。
+
+    没有 vs 也安全（直接返回）。
+    """
+    if vs is None:
+        return
+    from app.utils.gcs_download import is_gcs_url
+
+    dirty = False
+    for attr in ("local_video_url", "local_gcs_video_url"):
+        url = getattr(vs, attr, None)
+        if not url or not is_gcs_url(url) or _is_signed_url_fresh(url):
+            continue
+        try:
+            new_signed = _sign_gcs_url(url)
+        except Exception as exc:
+            logger.error("签名 GCS URL 失败 video_source=%s attr=%s url=%s: %s", vs.id, attr, url[:120], exc)
+            continue
+        setattr(vs, attr, new_signed)
+        dirty = True
+    if dirty:
+        try:
+            await session.commit()
+        except Exception as exc:
+            logger.warning("回写 video_source 签名 URL 失败 vs=%s: %s", vs.id, exc)
+            await session.rollback()
+
+
+async def ensure_video_sources_signed_urls(session: AsyncSession, video_sources: list) -> None:
+    """批量版：对一组 video_source 做相同处理，一次 commit。"""
+    from app.utils.gcs_download import is_gcs_url
+
+    dirty = False
+    for vs in video_sources:
+        if vs is None:
+            continue
+        for attr in ("local_video_url", "local_gcs_video_url"):
+            url = getattr(vs, attr, None)
+            if not url or not is_gcs_url(url) or _is_signed_url_fresh(url):
+                continue
+            try:
+                new_signed = _sign_gcs_url(url)
+            except Exception as exc:
+                logger.error("签名 GCS URL 失败 video_source=%s attr=%s url=%s: %s", vs.id, attr, url[:120], exc)
+                continue
+            setattr(vs, attr, new_signed)
+            dirty = True
+    if dirty:
+        try:
+            await session.commit()
+        except Exception as exc:
+            logger.warning("批量回写 video_source 签名 URL 失败: %s", exc)
+            await session.rollback()
+
+
 async def serialize_sub_task(session: AsyncSession, sub_task) -> "VideoSubTaskRead":
     """构造 VideoSubTaskRead，确保 result_video_url 是对外可播的（GCS → 签名链）。"""
     from app.schemas.video_task import VideoSubTaskRead

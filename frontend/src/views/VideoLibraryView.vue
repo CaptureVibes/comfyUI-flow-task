@@ -298,6 +298,7 @@
         controls
         autoplay
         class="player-video"
+        @error="handlePlayerVideoError"
       />
       <div v-else class="player-nourl">
         <el-empty description="暂无可播放地址，请先点击「下载上传」" :image-size="80" />
@@ -449,11 +450,11 @@
 </template>
 
 <script setup>
-import { computed, onActivated, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip, exportVideoUrlsExcel } from '../api/video_sources'
+import { fetchVideoSources, fetchVideoSource, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip, exportVideoUrlsExcel } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { fetchTags, createTag, updateTag, deleteTag } from '../api/tags'
 import { fetchBloggers } from '../api/tiktok_bloggers'
@@ -770,6 +771,26 @@ function openPlayer(item) {
   playerItem.value = item
   playerVisible.value = true
 }
+
+// GCS 签名 URL 过期等异常时，后端 lazy 续签——前端 <video> 报错就再拉一次最新数据
+const playerRetried = ref(false)
+async function handlePlayerVideoError() {
+  if (!playerItem.value?.id || playerRetried.value) return
+  playerRetried.value = true
+  try {
+    const fresh = await fetchVideoSource(playerItem.value.id)
+    if (fresh) {
+      playerItem.value = { ...playerItem.value, ...fresh }
+      // 同步列表里的 URL，避免下次播放又走过期链
+      const idx = items.value.findIndex(it => it.id === fresh.id)
+      if (idx >= 0) items.value[idx] = { ...items.value[idx], ...fresh }
+    }
+  } catch (err) {
+    ElMessage.warning('视频地址刷新失败，请稍后再试')
+  }
+}
+// 每次重新打开播放器时清除"已重试"标记
+watch(playerVisible, (v) => { if (v) playerRetried.value = false })
 
 function goToDetail(item) {
   syncUrl()

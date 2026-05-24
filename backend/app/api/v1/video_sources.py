@@ -91,6 +91,9 @@ async def _vs_to_read(session: AsyncSession, vs: object) -> VideoSourceRead:
     """Build VideoSourceRead, querying tags from VideoSourceTag table."""
     from app.models.tag import Tag, VideoSourceTag
     from app.schemas.tiktok_blogger import TiktokBloggerRead
+    # GCS 视频链按需续签（CDN 跳过），覆写到 vs 的 local_*_url 字段
+    from app.utils.gcs_signing import ensure_video_source_signed_urls
+    await ensure_video_source_signed_urls(session, vs)
     tags_stmt = (
         select(Tag)
         .join(VideoSourceTag, VideoSourceTag.tag_id == Tag.id)
@@ -138,6 +141,10 @@ async def list_video_sources_endpoint(
         session, page=page, page_size=page_size, owner_id=owner_id,
         platform=platform, blogger_name=blogger_name, tiktok_blogger_id=tiktok_blogger_id, tag_ids=parsed_tag_ids,
     )
+
+    # GCS 视频链按需续签（CDN 跳过）。返回前覆写 local_*_url 字段
+    from app.utils.gcs_signing import ensure_video_sources_signed_urls
+    await ensure_video_sources_signed_urls(session, rows)
 
     # 批量查询创建者用户名
     owner_ids = list({r.owner_id for r in rows if r.owner_id is not None})
@@ -254,6 +261,10 @@ async def export_video_urls_excel(
         tiktok_blogger_id=tiktok_blogger_id,
         tag_ids=parsed_tag_ids,
     )
+
+    # 导出前批量续签：拿到 Excel 的人短时间内（< 7 天）能直接点开播放
+    from app.utils.gcs_signing import ensure_video_sources_signed_urls
+    await ensure_video_sources_signed_urls(session, rows)
 
     wb = openpyxl.Workbook()
     ws = wb.active
