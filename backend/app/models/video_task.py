@@ -66,7 +66,9 @@ class VideoSubTask(Base):
     # publish_failed: video was sent to publishing but the publication failed (can retry → stashed)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
 
-    # CDN URL written after fetch-results; sub-task UUID is used as video_id in GCS path
+    # 视频 URL：GCS 后端时存的是 V4 签名链（7 天）；旧 CDN 后端时是公开 CDN 链接。
+    # GCS 签名快过期前会被 app.utils.gcs_signing 自动续签并直接覆写本列。
+    # 详见 app.utils.gcs_signing.ensure_sub_task_signed_url。
     result_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Manual note written by the user

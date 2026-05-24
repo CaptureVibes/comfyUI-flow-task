@@ -119,12 +119,18 @@ async def list_video_tasks(
         page=page, page_size=page_size,
     )
     tags_map = await _load_template_tags_map(session, [item["task"].template_id for item in enriched])
+    # 一次性批量签 GCS URL（外部 API 给其它团队调用，必须返回可播链）
+    from app.utils.gcs_signing import serialize_sub_tasks
+    all_subs = [s for item in enriched for s in item["sub_tasks"]]
+    sub_reads = await serialize_sub_tasks(session, all_subs)
+    sub_reads_by_id = {r.id: r for r in sub_reads}
+
     items = []
     for item in enriched:
         task = item["task"]
         data = VideoTaskListItem.model_validate({
             **VideoTaskRead.model_validate(task).model_dump(),
-            "sub_tasks": [VideoSubTaskRead.model_validate(s) for s in item["sub_tasks"]],
+            "sub_tasks": [sub_reads_by_id[s.id] for s in item["sub_tasks"]],
             "sub_tasks_done": item["sub_tasks_done"],
             "account_name": item["account_name"],
             "template_title": item["template_title"],
@@ -289,8 +295,9 @@ async def list_reviewing_subtasks(
     """获取待决策（reviewing）状态的子任务分页列表"""
     svc = VideoTaskService(db=session)
     items, total = await svc.list_reviewing_subtasks(owner_id, page=page, page_size=page_size)
+    from app.utils.gcs_signing import serialize_sub_tasks
     return VideoSubTaskListPage(
-        items=[VideoSubTaskRead.model_validate(sub) for sub in items],
+        items=await serialize_sub_tasks(session, items),
         total=total,
         page=page,
         page_size=page_size,
@@ -359,6 +366,11 @@ async def list_subtasks_by_account(
             task_map[t.id] = t
             t._template_title = tpl_map.get(t.template_id)  # type: ignore[attr-defined]
 
+    # 一次性批量签 GCS URL
+    from app.utils.gcs_signing import serialize_sub_tasks
+    sub_reads = await serialize_sub_tasks(session, rows)
+    sub_reads_by_id = {r.id: r for r in sub_reads}
+
     items = []
     for sub in rows:
         task = task_map.get(sub.task_id)
@@ -371,7 +383,7 @@ async def list_subtasks_by_account(
         if task_summary is None:
             continue
         item = VideoSubTaskWithTaskRead(
-            **VideoSubTaskRead.model_validate(sub).model_dump(),
+            **sub_reads_by_id[sub.id].model_dump(),
             task=task_summary,
         )
         items.append(item)
@@ -495,13 +507,15 @@ async def patch_sub_task_status(
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     svc = VideoTaskService(db=session)
-    return await svc.patch_sub_task_status(
+    sub = await svc.patch_sub_task_status(
         sub_task_id=sub_task_id,
         owner_id=owner_id,
         new_status=payload.status,
         result_video_url=payload.result_video_url,
         selected=payload.selected,
     )
+    from app.utils.gcs_signing import serialize_sub_task
+    return await serialize_sub_task(session, sub)
 
 
 @router.patch("/subtasks/{sub_task_id}/note", response_model=VideoSubTaskRead)
@@ -529,7 +543,7 @@ async def update_sub_task_note(
         owner_id = None if current_user is None else (None if current_user.is_admin else current_user.user_id)
 
     svc = VideoTaskService(db=session)
-    return await svc.update_sub_task_note(
+    sub = await svc.update_sub_task_note(
         sub_task_id,
         owner_id,
         operator=operator,
@@ -539,6 +553,8 @@ async def update_sub_task_note(
         ng_timestamps=payload.ng_timestamps,
         dimension_scores=payload.dimension_scores,
     )
+    from app.utils.gcs_signing import serialize_sub_task
+    return await serialize_sub_task(session, sub)
 
 
 @router.delete("/subtasks/{sub_task_id}", status_code=status.HTTP_200_OK)
@@ -559,7 +575,9 @@ async def rollback_sub_task_status(
     session: AsyncSession = Depends(get_db),
 ) -> Any:
     svc = VideoTaskService(db=session)
-    return await svc.rollback_sub_task_status(sub_task_id, owner_id)
+    sub = await svc.rollback_sub_task_status(sub_task_id, owner_id)
+    from app.utils.gcs_signing import serialize_sub_task
+    return await serialize_sub_task(session, sub)
 
 
 @router.post("/subtasks/{sub_task_id}/enqueue", response_model=VideoSubTaskRead)
@@ -570,7 +588,9 @@ async def enqueue_sub_task(
 ) -> Any:
     """将子任务从 stashed 状态移到 queued 状态，进入发布队列"""
     svc = VideoTaskService(db=session)
-    return await svc.enqueue_sub_task(sub_task_id, owner_id)
+    sub = await svc.enqueue_sub_task(sub_task_id, owner_id)
+    from app.utils.gcs_signing import serialize_sub_task
+    return await serialize_sub_task(session, sub)
 
 
 @router.post("/subtasks/{sub_task_id}/dequeue", response_model=VideoSubTaskRead)
@@ -581,7 +601,9 @@ async def dequeue_sub_task(
 ) -> Any:
     """将子任务从 queued 状态移回 stashed 状态"""
     svc = VideoTaskService(db=session)
-    return await svc.dequeue_sub_task(sub_task_id, owner_id)
+    sub = await svc.dequeue_sub_task(sub_task_id, owner_id)
+    from app.utils.gcs_signing import serialize_sub_task
+    return await serialize_sub_task(session, sub)
 
 
 @router.post("/subtasks/{sub_task_id}/regenerate-publish-meta", response_model=VideoSubTaskRead)
@@ -620,7 +642,8 @@ async def regenerate_publish_meta(
     from app.services.publish_meta_service import _process_publish_meta
     asyncio.create_task(_process_publish_meta(sub.id))
 
-    return VideoSubTaskRead.model_validate(sub)
+    from app.utils.gcs_signing import serialize_sub_task
+    return await serialize_sub_task(session, sub)
 
 
 @router.patch("/subtasks/queue-order", status_code=status.HTTP_200_OK)
