@@ -256,37 +256,50 @@ async def _build_export_excel_bytes(
     tiktok_blogger_id: uuid.UUID | None,
     parsed_tag_ids: list[uuid.UUID],
 ) -> bytes:
-    """跑在后台任务里：拉数据 + 并发签名 + 生成 xlsx，返回字节。"""
+    """跑在后台任务里：分页拉全量 → 并发签名（每页）→ 累积 → 生成 xlsx。"""
     import io
+    import logging
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     from app.db.session import SessionLocal
     from app.utils.gcs_signing import ensure_video_sources_signed_urls
 
-    async with SessionLocal() as session:
-        rows, _ = await list_video_sources(
-            session,
-            page=1,
-            page_size=10000,
-            owner_id=owner_id,
-            platform=platform,
-            blogger_name=blogger_name,
-            tiktok_blogger_id=tiktok_blogger_id,
-            tag_ids=parsed_tag_ids,
-        )
-        await ensure_video_sources_signed_urls(session, rows, concurrency=20)
+    log = logging.getLogger("app.export_excel")
+    PAGE_SIZE = 5000
+    export_rows: list[dict] = []
 
-        # 数据 detach 到普通 dict 之后就可以放出 session（避免长持有）
-        export_rows: list[dict] = []
-        for r in rows:
-            blogger = r.tiktok_blogger
-            export_rows.append({
-                "blogger_name": (blogger.blogger_name if blogger else r.blogger_name) or "",
-                "blogger_url": (blogger.blogger_url if blogger else "") or "",
-                "source_url": r.source_url or "",
-                "local_video_url": r.local_video_url or "",
-                "local_gcs_video_url": r.local_gcs_video_url or "",
-            })
+    async with SessionLocal() as session:
+        page = 1
+        while True:
+            rows, total = await list_video_sources(
+                session,
+                page=page,
+                page_size=PAGE_SIZE,
+                owner_id=owner_id,
+                platform=platform,
+                blogger_name=blogger_name,
+                tiktok_blogger_id=tiktok_blogger_id,
+                tag_ids=parsed_tag_ids,
+            )
+            if not rows:
+                break
+
+            await ensure_video_sources_signed_urls(session, rows, concurrency=20)
+
+            for r in rows:
+                blogger = r.tiktok_blogger
+                export_rows.append({
+                    "blogger_name": (blogger.blogger_name if blogger else r.blogger_name) or "",
+                    "blogger_url": (blogger.blogger_url if blogger else "") or "",
+                    "source_url": r.source_url or "",
+                    "local_video_url": r.local_video_url or "",
+                    "local_gcs_video_url": r.local_gcs_video_url or "",
+                })
+
+            log.info("[export_excel] page=%d collected=%d/%d", page, len(export_rows), total)
+            if len(rows) < PAGE_SIZE:
+                break
+            page += 1
 
     wb = openpyxl.Workbook()
     ws = wb.active

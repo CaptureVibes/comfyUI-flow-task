@@ -882,8 +882,8 @@ async function handleExportExcel() {
 
     const { job_id } = await startExportVideoUrlsExcel(params)
 
-    // 轮询：最多 10 分钟，每 2 秒查一次
-    const MAX_POLLS = 300
+    // 轮询：最多 30 分钟，每 2 秒查一次（全量 + 并发签名足够覆盖）
+    const MAX_POLLS = 900
     let polls = 0
     while (polls < MAX_POLLS) {
       await new Promise(r => setTimeout(r, 2000))
