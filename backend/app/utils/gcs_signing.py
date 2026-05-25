@@ -238,13 +238,35 @@ async def ensure_video_sources_signed_urls(
             await session.rollback()
 
 
+def _append_extension_fragment(signed_url: str, original_url: str) -> str:
+    """给签名 URL 追加 ``#.<ext>`` fragment。
+
+    下游某些 API（如 Open API）会 ``url.endswith('.mp4')`` 校验扩展名，
+    但 V4 签名 URL 末尾是 ``&X-Goog-Signature=...``，naive 校验会拒收。
+    RFC 3986：fragment 由客户端使用，**不会随 HTTP 请求传给服务器**，
+    也不参与 GCS 签名计算，所以追加 ``#.mp4`` 既能骗过下游校验，又不影响
+    实际下载和签名验证。
+    """
+    from urllib.parse import urlparse
+
+    path = urlparse(original_url).path
+    if "." not in path.rsplit("/", 1)[-1]:
+        return signed_url
+    ext = "." + path.rsplit(".", 1)[-1].lower()
+    # 已有 fragment 就不重复
+    if "#" in signed_url:
+        return signed_url
+    return f"{signed_url}#{ext}"
+
+
 def sign_publish_url(url: str | None) -> str | None:
     """对一条用于发布的 URL：
 
     - 空 → None
     - 不是 GCS（旧 CDN） → 原样返回
     - 是 GCS 且已签且剩余 > 1 天 → 原样返回（外部平台拉视频通常很快，不必每次现签）
-    - 是 GCS 且未签 / 即将过期 → 现签 7 天返回；签名失败时退回原 URL（至少不阻塞发布）
+    - 是 GCS 且未签 / 即将过期 → 现签 7 天 + 追加 ``#.<ext>`` fragment；
+      签名失败时退回原 URL（至少不阻塞发布）
 
     同步函数（签名是 IAM signBlob 或本地私钥，单次 ~100ms 可接受），
     不写 DB；调用方拿到结果赋回去即可。
@@ -253,10 +275,14 @@ def sign_publish_url(url: str | None) -> str | None:
 
     if not url:
         return None
-    if not is_gcs_url(url) or _is_signed_url_fresh(url):
+    if not is_gcs_url(url):
         return url
+    if _is_signed_url_fresh(url):
+        # 已签新鲜：若缺扩展名 fragment 顺手补上（兼容历史已签数据）
+        return _append_extension_fragment(url, url)
     try:
-        return _sign_gcs_url(url)
+        signed = _sign_gcs_url(url)
+        return _append_extension_fragment(signed, url)
     except Exception as exc:
         logger.error("签名发布 URL 失败 url=%s: %s", url[:120], exc)
         return url
