@@ -48,15 +48,19 @@ logger = logging.getLogger("retry_failed_publications")
 
 
 async def _list_failed_publication_ids(target_date: date) -> list[uuid.UUID]:
-    """status='failed' 且 updated_at 落在 target_date (UTC) 当天的记录。"""
+    """status='failed' 且 created_at 落在 target_date (UTC) 当天的记录。
+
+    用 created_at 而不是 updated_at：retry_publication 会刷新 updated_at，
+    重跑后想找原始那批失败记录就找不到了。
+    """
     start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
     end = start + timedelta(days=1)
     async with SessionLocal() as session:
         stmt = (
             select(VideoPublication.id)
             .where(VideoPublication.status == "failed")
-            .where(VideoPublication.updated_at >= start)
-            .where(VideoPublication.updated_at < end)
+            .where(VideoPublication.created_at >= start)
+            .where(VideoPublication.created_at < end)
             .order_by(VideoPublication.created_at.asc())
         )
         return list((await session.execute(stmt)).scalars().all())
