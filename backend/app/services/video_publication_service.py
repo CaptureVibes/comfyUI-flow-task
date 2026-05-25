@@ -431,6 +431,37 @@ class ExtPubAPIClient:
 _SOURCE_OPENAPI = "openapi"
 _SOURCE_EXT_PUB = "ext_pub"
 
+# 下游限流：100 req/min。进程级 lock + 最小间隔 0.6s 保证：
+#   1. 同一时刻只有一个 publish HTTP 请求在飞
+#   2. 即使每个请求秒级返回，QPS 上限也是 ~1.67/s = 100/min
+# 注意：asyncio.Lock 只在单进程内生效；多 worker 部署需要 Redis / DB 锁。
+_PUBLISH_HTTP_LOCK = asyncio.Lock()
+_PUBLISH_MIN_INTERVAL_SEC = 0.6
+_last_publish_call_at: float = 0.0
+
+
+class _PublishSlot:
+    """``async with _PublishSlot():`` 拿到一个发布 HTTP 槽位：
+
+    入口阻塞直到拿到全局锁，再保证距离上次发布间隔 ≥ _PUBLISH_MIN_INTERVAL_SEC。
+    退出时记录"本次开始时间"作为下次的基准。
+    """
+
+    async def __aenter__(self) -> "_PublishSlot":
+        global _last_publish_call_at
+        import time as _time
+        await _PUBLISH_HTTP_LOCK.acquire()
+        elapsed = _time.monotonic() - _last_publish_call_at
+        if elapsed < _PUBLISH_MIN_INTERVAL_SEC:
+            wait = _PUBLISH_MIN_INTERVAL_SEC - elapsed
+            logger.debug("[publish-slot] pacing: sleep %.2fs", wait)
+            await asyncio.sleep(wait)
+        _last_publish_call_at = _time.monotonic()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        _PUBLISH_HTTP_LOCK.release()
+
 # 终态集合
 _TERMINAL_STATUSES = {"completed", "published", "failed"}
 _SUCCESS_STATUSES = {"completed", "published"}
@@ -682,7 +713,9 @@ class OpenAPIAdapter(PublishAdapter):
             data.sub_task_id,
             _payload_for_log(api_payload),
         )
-        response = await self.client.create_upload_task(api_payload)
+        # 进程级串行 + 节流，避免触发下游 100 req/min 限流
+        async with _PublishSlot():
+            response = await self.client.create_upload_task(api_payload)
         if response.get("code") != 0:
             raise ValueError(response.get("message", "Open API 返回错误"))
 
@@ -814,20 +847,22 @@ class ExtPubAdapter(PublishAdapter):
             data.sub_task_id, _payload_for_log(api_payload),
         )
 
-        try:
-            response = await self.client.create_post(api_payload)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 400:
-                raise
-            logger.info(
-                "ExtPubAdapter.submit: create_post 400, probing existing business_id=%s",
-                api_payload["business_id"],
-            )
+        # 进程级串行 + 节流，避免触发下游 100 req/min 限流（含 400 fallback 的两次调用）
+        async with _PublishSlot():
             try:
-                response = await self.client.fetch_post_detail(api_payload["business_id"])
-                logger.info("ExtPubAdapter.submit: found existing post for business_id=%s", api_payload["business_id"])
-            except Exception:
-                raise exc
+                response = await self.client.create_post(api_payload)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 400:
+                    raise
+                logger.info(
+                    "ExtPubAdapter.submit: create_post 400, probing existing business_id=%s",
+                    api_payload["business_id"],
+                )
+                try:
+                    response = await self.client.fetch_post_detail(api_payload["business_id"])
+                    logger.info("ExtPubAdapter.submit: found existing post for business_id=%s", api_payload["business_id"])
+                except Exception:
+                    raise exc
         logger.info("ExtPubAdapter.submit response: %s", response)
 
         response_data = response if isinstance(response, dict) else {}
