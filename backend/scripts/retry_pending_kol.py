@@ -138,30 +138,31 @@ async def _run(
     owner_id: uuid.UUID | None,
     dry_run: bool,
     send_lark: bool,
-    concurrency: int,
+    interval_sec: float,
 ) -> None:
-    logger.info("扫描 kol_provision_status='pending' 且 kol_user_id IS NULL 的账号 (dry_run=%s)", dry_run)
+    logger.info(
+        "扫描 kol_provision_status='pending' 且 kol_user_id IS NULL 的账号 "
+        "(dry_run=%s, interval=%.2fs)",
+        dry_run, interval_sec,
+    )
     account_ids = await _list_pending_accounts(owner_id)
-    logger.info("命中 %d 条", len(account_ids))
+    total = len(account_ids)
+    logger.info("命中 %d 条", total)
     if not account_ids:
         return
 
-    sem = asyncio.Semaphore(max(1, concurrency))
+    # 严格串行：下游 KOL 接口同样吃 100 req/min 共享 quota，
+    # 一次只发一个，加间隔留缓冲。
     results: list[dict] = []
-    done = [0]
-    total = len(account_ids)
-
-    async def _wrapped(aid: uuid.UUID) -> None:
-        async with sem:
-            try:
-                r = await _retry_one(aid, dry_run=dry_run)
-            except Exception as exc:
-                r = {"status": "failed", "account_id": str(aid), "reason": f"wrapper 异常: {str(exc)[:200]}"}
-            results.append(r)
-            done[0] += 1
-            logger.info("[%d/%d] %s → %s | %s", done[0], total, aid, r["status"], r.get("reason"))
-
-    await asyncio.gather(*[_wrapped(a) for a in account_ids])
+    for idx, aid in enumerate(account_ids, 1):
+        try:
+            r = await _retry_one(aid, dry_run=dry_run)
+        except Exception as exc:
+            r = {"status": "failed", "account_id": str(aid), "reason": f"wrapper 异常: {str(exc)[:200]}"}
+        results.append(r)
+        logger.info("[%d/%d] %s → %s | %s", idx, total, aid, r["status"], r.get("reason"))
+        if idx < total and interval_sec > 0:
+            await asyncio.sleep(interval_sec)
 
     success = sum(1 for r in results if r["status"] == "success")
     failed = sum(1 for r in results if r["status"] == "failed")
@@ -175,11 +176,16 @@ async def _run(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="重试所有 pending 状态的 KOL 创建")
+    parser = argparse.ArgumentParser(description="重试所有 pending 状态的 KOL 创建（严格串行）")
     parser.add_argument("--owner-id", help="只处理指定 owner 的账号（UUID）")
     parser.add_argument("--dry-run", action="store_true", help="只扫描，不调 KOL 接口")
     parser.add_argument("--no-lark", action="store_true", help="不发 Lark 通知")
-    parser.add_argument("--concurrency", type=int, default=5, help="并发数（默认 5；KOL 接口本身没限流，但下游 100 req/min 共享 quota）")
+    parser.add_argument(
+        "--interval-sec",
+        type=float,
+        default=1.0,
+        help="每条调用之间的间隔秒数（默认 1.0；下游限流 100 req/min，留缓冲）",
+    )
     args = parser.parse_args()
 
     owner_id = uuid.UUID(args.owner_id) if args.owner_id else None
@@ -187,7 +193,7 @@ def main() -> None:
         owner_id=owner_id,
         dry_run=args.dry_run,
         send_lark=not args.no_lark,
-        concurrency=args.concurrency,
+        interval_sec=args.interval_sec,
     ))
 
 
