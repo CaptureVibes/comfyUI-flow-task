@@ -93,6 +93,11 @@ export async function bulkRestartAIAccountGeneration(accountIds) {
   return res.data
 }
 
+export async function retryKolProvision(accountId) {
+  const { data } = await http.post(`/accounts/${accountId}/kol/retry`)
+  return data
+}
+
 // 账号-标签绑定
 export async function fetchAccountTags(accountId) {
   const { data } = await http.get(`/accounts/${accountId}/tags`)

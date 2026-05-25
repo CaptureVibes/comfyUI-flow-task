@@ -1252,6 +1252,47 @@ async def list_account_tags(
     return await _load_bound_tags(session, account_id)
 
 
+@router.post("/{account_id}/kol/retry", response_model=AccountRead)
+async def retry_kol_provision(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> AccountRead:
+    """重试 KOL 创建（仅当当前 status 不是 success 时允许）。
+
+    同步调 ``provision_kol_for_account``，成功后写入 ``kol_user_id`` 和
+    ``kol_provision_status='success'``；失败则把错误写到 ``kol_provision_error``。
+    """
+    from app.services.kol_service import provision_kol_for_account
+
+    account = await get_account_or_404(session, account_id, owner_id)
+    if account.kol_user_id:
+        # 已有 kol_user_id 直接校正状态返回（兼容历史脏数据）
+        if account.kol_provision_status != "success":
+            account.kol_provision_status = "success"
+            account.kol_provision_error = None
+            await session.commit()
+            await session.refresh(account)
+    else:
+        if account.kol_provision_status == "success":
+            raise HTTPException(status_code=409, detail="KOL 已成功创建，无需重试")
+        # 切回 pending，前端立刻看到"KOL 生成中"
+        account.kol_provision_status = "pending"
+        account.kol_provision_error = None
+        await session.commit()
+
+        # provision_kol_for_account 自带 session + try/except，不抛回
+        await provision_kol_for_account(account_id)
+
+        await session.refresh(account)
+
+    bloggers = await _load_bound_bloggers(session, account_id)
+    tags = await _load_bound_tags(session, account_id)
+    flags = await _load_bound_flags(session, account_id)
+    reservations = await _load_channel_reservations(session, account_id)
+    return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
+
+
 @router.post("/{account_id}/tags", status_code=201)
 async def bind_tag_to_account(
     account_id: uuid.UUID,

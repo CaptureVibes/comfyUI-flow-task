@@ -1255,11 +1255,18 @@
                   class="ac-kol-badge ac-kol-pending"
                   title="站内 KOL 创建中"
                 >KOL 生成中</span>
-                <span
-                  v-else-if="item.kol_provision_status === 'failed'"
-                  class="ac-kol-badge ac-kol-failed"
-                  :title="item.kol_provision_error || '未知错误'"
-                >KOL 失败</span>
+                <template v-else-if="item.kol_provision_status === 'failed'">
+                  <span
+                    class="ac-kol-badge ac-kol-failed"
+                    :title="item.kol_provision_error || '未知错误'"
+                  >KOL 失败</span>
+                  <button
+                    class="ac-kol-retry-btn"
+                    :disabled="retryingKolId === item.id"
+                    :title="`重试 KOL 创建${item.kol_provision_error ? '\n错误: ' + item.kol_provision_error : ''}`"
+                    @click.stop="handleRetryKol(item)"
+                  >{{ retryingKolId === item.id ? '重试中…' : '重试' }}</button>
+                </template>
                 <template v-else>
                   <div v-if="kolReservationLinks(item).length" class="ac-kol-list">
                     <div
@@ -1649,7 +1656,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1766,6 +1773,33 @@ const deleting = ref(null)
 
 // 下载视频
 const downloading = ref(false)
+
+// KOL 失败重试
+const retryingKolId = ref(null)
+async function handleRetryKol(item) {
+  retryingKolId.value = item.id
+  // 本地立刻把状态切到 pending，UI 即时反馈
+  item.kol_provision_status = 'pending'
+  item.kol_provision_error = null
+  try {
+    const updated = await retryKolProvision(item.id)
+    // 用后端返回的字段覆盖本地
+    Object.assign(item, updated)
+    if (updated.kol_provision_status === 'success') {
+      ElMessage.success('KOL 重新创建成功')
+    } else if (updated.kol_provision_status === 'failed') {
+      ElMessage.error(updated.kol_provision_error || 'KOL 重试失败')
+    } else {
+      ElMessage.info('KOL 重试已提交')
+    }
+  } catch (err) {
+    item.kol_provision_status = 'failed'
+    item.kol_provision_error = err?.response?.data?.detail || err?.message || '重试失败'
+    ElMessage.error(item.kol_provision_error)
+  } finally {
+    retryingKolId.value = null
+  }
+}
 
 async function handleDownload() {
   if (downloading.value) return
@@ -6217,6 +6251,26 @@ onMounted(() => {
 .ac-kol-pending { background: #fef3c7; color: #b45309; }
 .ac-kol-failed  { background: #fee2e2; color: #b91c1c; }
 .ac-kol-success { background: #dcfce7; color: #15803d; }
+.ac-kol-retry-btn {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid #fca5a5;
+  background: #fff;
+  color: #b91c1c;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.ac-kol-retry-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+.ac-kol-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .ac-kol-link {
   color: #2563eb;
   font-family: monospace;
