@@ -22,6 +22,7 @@ from app.models.face_photo import FacePhoto
 from app.models.video_classification import VideoClassification
 from app.models.formal_video_backfill import FormalVideoBackfill
 from app.models.external_supplement_request import ExternalSupplementRequest
+from app.models.external_supplement_request_item import ExternalSupplementRequestItem
 
 __all__ = [
     "VideoSource", "VideoSourceStat", "VideoAITemplate", "Account",
@@ -40,4 +41,5 @@ __all__ = [
     "VideoClassification",
     "FormalVideoBackfill",
     "ExternalSupplementRequest",
+    "ExternalSupplementRequestItem",
 ]
