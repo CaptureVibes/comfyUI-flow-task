@@ -1011,6 +1011,10 @@ class VideoPublicationService:
             promotion_code_acquired_for_publication = False
         publication_committed = False
 
+        # GCS 视频链发出去之前续签，给外部平台留足 7 天拉取窗口
+        from app.utils.gcs_signing import refresh_publish_data_urls
+        refresh_publish_data_urls(data)
+
         # 记录完整请求负载（用于 audit / 重试）：结构与发到 Open API 的实际 body 一致，
         # 仅 channels 保留含 channel_source 的完整 dict 以便 retry 路由识别
         callback_url_for_payload = data.callback_url or settings.open_api_callback_url or None
@@ -1226,6 +1230,9 @@ class VideoPublicationService:
             tags=payload.get("tags"),
             channels=retry_channels,
         )
+        # GCS 视频链发出去之前续签
+        from app.utils.gcs_signing import refresh_publish_data_urls
+        refresh_publish_data_urls(data)
         ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
 
@@ -1500,6 +1507,9 @@ class VideoPublicationService:
             tags=payload.get("tags"),
             channels=retry_channels,
         )
+        # GCS 视频链发出去之前续签
+        from app.utils.gcs_signing import refresh_publish_data_urls
+        refresh_publish_data_urls(data)
 
         logger.info(
             "retry_publication_channel start: publication_id=%s sub_task_id=%s "

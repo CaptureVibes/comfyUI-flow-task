@@ -238,6 +238,42 @@ async def ensure_video_sources_signed_urls(
             await session.rollback()
 
 
+def sign_publish_url(url: str | None) -> str | None:
+    """对一条用于发布的 URL：
+
+    - 空 → None
+    - 不是 GCS（旧 CDN） → 原样返回
+    - 是 GCS 且已签且剩余 > 1 天 → 原样返回（外部平台拉视频通常很快，不必每次现签）
+    - 是 GCS 且未签 / 即将过期 → 现签 7 天返回；签名失败时退回原 URL（至少不阻塞发布）
+
+    同步函数（签名是 IAM signBlob 或本地私钥，单次 ~100ms 可接受），
+    不写 DB；调用方拿到结果赋回去即可。
+    """
+    from app.utils.gcs_download import is_gcs_url
+
+    if not url:
+        return None
+    if not is_gcs_url(url) or _is_signed_url_fresh(url):
+        return url
+    try:
+        return _sign_gcs_url(url)
+    except Exception as exc:
+        logger.error("签名发布 URL 失败 url=%s: %s", url[:120], exc)
+        return url
+
+
+def refresh_publish_data_urls(data) -> None:
+    """在 VideoPublicationCreate 上原地刷新 video_url / original_video_url 的 GCS 签名。
+
+    Pydantic v2 模型默认可变，赋值即生效；CDN URL 完全跳过。
+    """
+    for attr in ("video_url", "original_video_url"):
+        current = getattr(data, attr, None)
+        new_url = sign_publish_url(current)
+        if new_url != current:
+            setattr(data, attr, new_url)
+
+
 async def serialize_sub_task(session: AsyncSession, sub_task) -> "VideoSubTaskRead":
     """构造 VideoSubTaskRead，确保 result_video_url 是对外可播的（GCS → 签名链）。"""
     from app.schemas.video_task import VideoSubTaskRead
