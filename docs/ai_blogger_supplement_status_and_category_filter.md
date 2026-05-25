@@ -6,7 +6,7 @@ AI 博主页面的「补充模板」原先只有请求级结果记录，前端�
 
 本次改动覆盖两个需求：
 
-1. 在 AI 博主列表中按行展示补充状态，并按 10 秒间隔轮询运行中的补充任务。
+1. 在 AI 博主列表中按行展示补充状态；状态更新依赖页面进入、筛选/翻页、发起补充后的列表重载或用户手动刷新，不做自动轮询。
 2. 在「补充人设」链路增加 14 个细分类可选过滤；不选择分类时保持原逻辑。
 
 ## 已完成工作
@@ -51,8 +51,6 @@ AI 博主页面的「补充模板」原先只有请求级结果记录，前端�
 
 - `GET /api/v1/accounts`
   - 每个 `AccountRead` 增加 `supplement_status`
-- `GET /api/v1/accounts/supplement-statuses?account_ids=...`
-  - 前端轮询当前页账号的最新补充状态
 - `POST /api/v1/accounts/supplement-templates`
   - `template_type=exclusive` 时支持 `filters.category_indices`
   - `category_indices` 校验范围为 `0-13`
@@ -97,7 +95,7 @@ AI 博主页面的「补充模板」原先只有请求级结果记录，前端�
   - `补充中`：已补充 x 个，还有 y 个需要补充
   - `补充完成`：已补充 x 个
   - `补充失败`：已补充 x 个，应该补充 y 个
-- 仅当前页存在 `running` 状态时，启动 10 秒一次轮询。
+- 不做自动轮询；页面进入、筛选/翻页、发起补充后会重新读取 `/accounts` 列表，用户也可通过手动刷新获取最新状态。
 - 「补充模板」弹窗中，选择「补充人设」后展示 14 个分类按钮。
 - 前端仅在 `templateType === 'exclusive'` 时提交 `category_indices`。
 - AI 博主列表视觉重新整理：

@@ -1698,7 +1698,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, fetchSupplementStatuses, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -2744,7 +2744,6 @@ async function loadData({ silent = false } = {}) {
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
-    scheduleSupplementPolling()
   } catch (err) {
     if (isDuplicateRequestError(err)) return
     ElMessage.error(err?.response?.data?.detail || '加载失败')
@@ -3021,7 +3020,6 @@ async function handleBulkSchedule() {
 
 const showSupplementDialog = ref(false)
 const supplementing = ref(false)
-const supplementPollTimer = ref(null)
 const supplementForm = ref({
   templateType: 'shared',
   targetVideoCount: 10,
@@ -3030,46 +3028,6 @@ const supplementForm = ref({
   maxDurationSeconds: 30,
   categoryIndices: [],
 })
-
-function hasRunningSupplement() {
-  return items.value.some(item => item.supplement_status?.status === 'running')
-}
-
-function clearSupplementPolling() {
-  if (supplementPollTimer.value) {
-    clearTimeout(supplementPollTimer.value)
-    supplementPollTimer.value = null
-  }
-}
-
-function scheduleSupplementPolling() {
-  clearSupplementPolling()
-  if (!hasRunningSupplement()) return
-  supplementPollTimer.value = setTimeout(async () => {
-    await refreshSupplementStatuses()
-  }, 10000)
-}
-
-async function refreshSupplementStatuses() {
-  const ids = items.value.map(item => item.id).filter(Boolean)
-  if (!ids.length) {
-    clearSupplementPolling()
-    return
-  }
-  try {
-    const data = await fetchSupplementStatuses(ids)
-    const statusMap = new Map((data.items || []).map(status => [status.account_id, status]))
-    items.value = items.value.map(item => ({
-      ...item,
-      supplement_status: statusMap.get(item.id) || null,
-    }))
-  } catch {
-    // 静默失败，避免后台进度轮询打断列表操作。
-  } finally {
-    scheduleSupplementPolling()
-  }
-}
-
 
 function openSupplementDialog() {
   supplementForm.value = {
@@ -3137,7 +3095,7 @@ async function handleSupplement() {
     }
     showSupplementDialog.value = false
     ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
-    await refreshSupplementStatuses()
+    await loadData({ silent: true })
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '启动补充模板失败')
   } finally {
@@ -3428,7 +3386,6 @@ async function handleRetryFailed() {
 
 onUnmounted(() => {
   clearClassificationPolling()
-  clearSupplementPolling()
 })
 
 const platformStats = ref([])

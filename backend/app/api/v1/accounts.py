@@ -788,32 +788,6 @@ async def bind_openapi_channel(
     return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
-class SupplementStatusesResponse(BaseModel):
-    items: list[SupplementStatusRead]
-
-
-@router.get("/supplement-statuses", response_model=SupplementStatusesResponse)
-async def get_supplement_statuses(
-    account_ids: str = Query(""),
-    owner_id: uuid.UUID | None = Depends(_get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> SupplementStatusesResponse:
-    ids: list[uuid.UUID] = []
-    for raw in account_ids.split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            ids.append(uuid.UUID(raw))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="account_ids 必须是逗号分隔的 UUID") from exc
-    from app.services.supplement_status_service import latest_statuses_for_accounts
-    status_map = await latest_statuses_for_accounts(session, account_ids=ids, owner_id=owner_id)
-    return SupplementStatusesResponse(
-        items=[SupplementStatusRead(**payload) for payload in status_map.values()],
-    )
-
-
 @router.get("/{account_id}", response_model=AccountRead)
 async def get_account_endpoint(
     account_id: uuid.UUID,
