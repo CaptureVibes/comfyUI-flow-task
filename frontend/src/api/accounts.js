@@ -150,6 +150,12 @@ export async function supplementTemplates(accountIds, templateType = 'shared', t
   return data
 }
 
+export async function fetchSupplementStatuses(accountIds = []) {
+  const params = accountIds.length ? { account_ids: accountIds.join(',') } : {}
+  const { data } = await http.get('/accounts/supplement-statuses', { params })
+  return data
+}
+
 export async function bulkGenerateVideoTasks(
   accountIds,
   mode = 'unused',

@@ -662,6 +662,32 @@
             未分类、混乱或样本不足的账号将跳过
           </div>
         </div>
+        <div v-if="supplementForm.templateType === 'exclusive'" class="al-supplement-config">
+          <div class="al-supplement-config-label">
+            视频分类
+            <span class="al-supplement-filter-hint">不选择 = 不启用分类过滤</span>
+          </div>
+          <div class="al-supplement-category-groups">
+            <div v-for="major in MAJOR_KEYS" :key="major" class="al-supplement-category-group">
+              <div class="al-supplement-category-major">
+                <span :class="`al-supplement-major-dot is-${major}`"></span>
+                <span>{{ MAJOR_LABEL_MAP[major] }}</span>
+              </div>
+              <div class="al-cat-filter-pills">
+                <button
+                  v-for="cat in CATEGORY_OPTIONS.filter(c => c.major === major)"
+                  :key="cat.index"
+                  type="button"
+                  class="al-cat-pill"
+                  :class="[`is-${cat.major}`, { active: supplementForm.categoryIndices.includes(cat.index) }]"
+                  @click="toggleSupplementCategory(cat.index)"
+                >
+                  {{ cat.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
         <!-- 数量配置 -->
         <div class="al-supplement-config">
           <div class="al-supplement-config-label">目标视频数量（每个博主）</div>
@@ -1184,19 +1210,24 @@
 
             <!-- 账号名称 -->
             <td class="al-td al-td-name">
-              <div class="al-name-main">{{ item.account_name }}</div>
-              <div v-if="item.account_handle || item.account_signature" class="al-name-handle">
-                <span v-if="item.account_handle" class="al-handle">@{{ item.account_handle }}</span>
-                <span v-if="item.account_signature" class="al-signature">{{ item.account_signature }}</span>
+              <div class="al-account-card">
+              <div class="al-account-head">
+                <div class="al-account-title-wrap">
+                  <div class="al-name-main">{{ item.account_name }}</div>
+                  <div v-if="item.account_handle" class="al-handle">@{{ item.account_handle }}</div>
+                </div>
+                <span class="ac-type-badge" :class="`ac-tier-${item.account_tier || 'test'}`">
+                  {{ { test: '实验号', dev: '常规号', prod: '正式号' }[item.account_tier || 'test'] }}
+                </span>
               </div>
-              <div class="al-name-meta">
+              <div v-if="item.account_signature" class="al-signature">{{ item.account_signature }}</div>
+              <div class="al-identity-grid">
                 <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'exclusive'}`">
                   {{ item.account_type === 'persona' ? '人设号' : item.account_type === 'exclusive' ? '独享号' : '共享号' }}
                 </span>
                 <span
                   class="ac-type-badge ac-face-badge"
                   :class="item.face_mode === 'no_face' ? 'ac-face-no' : 'ac-face-yes'"
-                  style="cursor:pointer"
                   @click.stop="toggleFaceMode(item)"
                 >
                   {{ item.face_mode === 'no_face' ? '非人脸' : '人脸' }}
@@ -1204,7 +1235,6 @@
                 <span
                   class="ac-type-badge"
                   :class="`ac-gender-${item.gender || 'female'}`"
-                  style="cursor:pointer"
                   @click.stop="cycleGender(item)"
                 >
                   {{ { male: '男', female: '女', unisex: '中性' }[item.gender || 'female'] }}
@@ -1215,15 +1245,26 @@
                 >
                   {{ item.product_code_mode === 'with_code' ? '带商品码' : '非商品码' }}
                 </span>
-                <span class="ac-type-badge" :class="`ac-tier-${item.account_tier || 'test'}`">
-                  {{ { test: '实验号', dev: '常规号', prod: '正式号' }[item.account_tier || 'test'] }}
-                </span>
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
                 </span>
               </div>
+
+              <div v-if="item.supplement_status" class="ac-supplement-row" :class="`is-${item.supplement_status.status}`">
+                <div class="ac-supplement-title">
+                  <span class="ac-supplement-dot"></span>
+                  <span>{{ supplementStatusLabel(item.supplement_status.status) }}</span>
+                  <span class="ac-supplement-mode">{{ supplementModeLabel(item.supplement_status.mode) }}</span>
+                </div>
+                <div class="ac-supplement-lines">
+                  <span>已补充 {{ item.supplement_status.completed_count || 0 }} 个</span>
+                  <span v-if="item.supplement_status.status === 'running'">还有 {{ item.supplement_status.remaining_count || 0 }} 个需要补充</span>
+                  <span v-else-if="item.supplement_status.status === 'failed'">应该补充 {{ item.supplement_status.target_count || 0 }} 个</span>
+                </div>
+              </div>
+
               <!-- 分类状态行 -->
-              <div class="ac-classify-row">
+              <div class="al-account-metrics">
                 <span v-if="item.classification_status === 'running'" class="ac-classify-badge is-running">分类中</span>
                 <template v-if="item.classification_summary">
                   <span class="ac-classify-badge" :class="`is-${item.classification_summary.type}`">
@@ -1233,15 +1274,15 @@
                     <template v-else-if="item.classification_summary.type === 'insufficient'">样本不足</template>
                     <template v-else>未分类</template>
                   </span>
-                  <span class="ac-classify-count">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}分类</span>
+                  <span class="ac-metric-item">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}分类</span>
                 </template>
-                <span class="ac-classify-count">{{ item.linked_video_count ?? 0 }}个视频</span>
-                <span class="ac-classify-count" :title="`未使用 ${item.unused_template_count ?? 0} / 已使用 ${item.used_template_count ?? 0} 模板`">
+                <span class="ac-metric-item">{{ item.linked_video_count ?? 0 }}个视频</span>
+                <span class="ac-metric-item" :title="`未使用 ${item.unused_template_count ?? 0} / 已使用 ${item.used_template_count ?? 0} 模板`">
                   {{ item.unused_template_count ?? 0 }}/{{ item.used_template_count ?? 0 }}模板
                 </span>
                 <span
                   v-if="(item.sub_task_success_denom ?? 0) > 0"
-                  class="ac-classify-count"
+                  class="ac-metric-item"
                   :title="`最近 ${item.sub_task_success_sample ?? 0} 条子任务中：成功（暂存/队列中/已发布）${item.sub_task_success_numer ?? 0} / 决策样本（含待决策、决策未通过）${item.sub_task_success_denom ?? 0}`"
                 >
                   成功率 {{ ((item.sub_task_success_rate ?? 0) * 100).toFixed(0) }}%
@@ -1295,6 +1336,7 @@
                     :title="`kol_user_id=${item.kol_user_id}`"
                   >KOL 已创建</span>
                 </template>
+              </div>
               </div>
             </td>
 
@@ -1656,7 +1698,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, fetchSupplementStatuses, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -2624,6 +2666,24 @@ function aiGenerationStatusLabel(status) {
   return map[status] || status
 }
 
+function supplementStatusLabel(status) {
+  const map = {
+    running: '补充中',
+    completed: '补充完成',
+    failed: '补充失败',
+  }
+  return map[status] || status
+}
+
+function supplementModeLabel(mode) {
+  const map = {
+    auto: '自动补充',
+    exclusive: '人设补充',
+    shared: '共享补充',
+  }
+  return map[mode] || mode
+}
+
 function formatCount(value) {
   if (value == null || value === '') return '-'
   const n = Number(value)
@@ -2684,6 +2744,7 @@ async function loadData({ silent = false } = {}) {
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
+    scheduleSupplementPolling()
   } catch (err) {
     if (isDuplicateRequestError(err)) return
     ElMessage.error(err?.response?.data?.detail || '加载失败')
@@ -2960,13 +3021,54 @@ async function handleBulkSchedule() {
 
 const showSupplementDialog = ref(false)
 const supplementing = ref(false)
+const supplementPollTimer = ref(null)
 const supplementForm = ref({
   templateType: 'shared',
   targetVideoCount: 10,
   minViewCount: 10000,
   publishedAfter: '2024-01-01',
   maxDurationSeconds: 30,
+  categoryIndices: [],
 })
+
+function hasRunningSupplement() {
+  return items.value.some(item => item.supplement_status?.status === 'running')
+}
+
+function clearSupplementPolling() {
+  if (supplementPollTimer.value) {
+    clearTimeout(supplementPollTimer.value)
+    supplementPollTimer.value = null
+  }
+}
+
+function scheduleSupplementPolling() {
+  clearSupplementPolling()
+  if (!hasRunningSupplement()) return
+  supplementPollTimer.value = setTimeout(async () => {
+    await refreshSupplementStatuses()
+  }, 10000)
+}
+
+async function refreshSupplementStatuses() {
+  const ids = items.value.map(item => item.id).filter(Boolean)
+  if (!ids.length) {
+    clearSupplementPolling()
+    return
+  }
+  try {
+    const data = await fetchSupplementStatuses(ids)
+    const statusMap = new Map((data.items || []).map(status => [status.account_id, status]))
+    items.value = items.value.map(item => ({
+      ...item,
+      supplement_status: statusMap.get(item.id) || null,
+    }))
+  } catch {
+    // 静默失败，避免后台进度轮询打断列表操作。
+  } finally {
+    scheduleSupplementPolling()
+  }
+}
 
 
 function openSupplementDialog() {
@@ -2976,8 +3078,18 @@ function openSupplementDialog() {
     minViewCount: 10000,
     publishedAfter: '2024-01-01',
     maxDurationSeconds: 30,
+    categoryIndices: [],
   }
   showSupplementDialog.value = true
+}
+
+function toggleSupplementCategory(index) {
+  const values = supplementForm.value.categoryIndices || []
+  if (values.includes(index)) {
+    supplementForm.value.categoryIndices = values.filter(v => v !== index)
+  } else {
+    supplementForm.value.categoryIndices = [...values, index]
+  }
 }
 
 async function handleSupplement() {
@@ -3006,6 +3118,9 @@ async function handleSupplement() {
         min_view_count: supplementForm.value.minViewCount,
         published_after: supplementForm.value.publishedAfter,
         max_duration_seconds: supplementForm.value.maxDurationSeconds,
+        category_indices: supplementForm.value.templateType === 'exclusive'
+          ? [...(supplementForm.value.categoryIndices || [])]
+          : [],
       }
   const target = supplementForm.value.targetVideoCount
   try {
@@ -3022,6 +3137,7 @@ async function handleSupplement() {
     }
     showSupplementDialog.value = false
     ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
+    await refreshSupplementStatuses()
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '启动补充模板失败')
   } finally {
@@ -3312,6 +3428,7 @@ async function handleRetryFailed() {
 
 onUnmounted(() => {
   clearClassificationPolling()
+  clearSupplementPolling()
 })
 
 const platformStats = ref([])
@@ -3855,7 +3972,7 @@ onMounted(() => {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  min-width: 1440px;
+  min-width: 1660px;
   table-layout: fixed;
 }
 
@@ -3884,10 +4001,10 @@ onMounted(() => {
 .al-th:last-child  { border-top-right-radius: 14px; }
 
 .al-th-check    { width: 44px; text-align: center; left: 0; border-right: 1px solid #e8edf5; }
-.al-th-media    { width: 110px; left: 44px; border-right: 1px solid #e8edf5; }
-.al-th-name     { width: 280px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
+.al-th-media    { width: 118px; left: 44px; border-right: 1px solid #e8edf5; }
+.al-th-name     { width: 420px; left: 162px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
 .al-th-platform { width: 180px; }
-.al-th-stat     { width: 90px; text-align: right; }
+.al-th-stat     { width: 100px; text-align: right; }
 .al-th-date     { width: 130px; }
 .al-th-flags    { width: 160px; }
 .al-th-tags     { width: 220px; }
@@ -4101,7 +4218,7 @@ onMounted(() => {
 .al-tr:hover { background: #f8faff; }
 
 .al-td {
-  padding: 10px 14px;
+  padding: 16px 14px;
   vertical-align: middle;
   font-size: 13px;
   color: #1e293b;
@@ -4117,21 +4234,31 @@ onMounted(() => {
 }
 
 .al-td-check  { text-align: center; width: 44px; left: 0; border-right: 1px solid #f1f5f9; }
-.al-td-media  { width: 110px; left: 44px; border-right: 1px solid #f1f5f9; }
-.al-td-name   { width: 280px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
+.al-td-media  { width: 118px; left: 44px; border-right: 1px solid #f1f5f9; }
+.al-td-name   { width: 420px; left: 162px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
 .al-td-flags   { width: 160px; }
 .al-td-actions { text-align: center; width: 160px; }
 
 /* Name cell adjustments for fixed layout */
-.al-name-main {
-  font-size: 14px;
-  font-weight: 700;
-  color: #0f172a;
-  margin-bottom: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
+.al-account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-width: 392px;
+}
+
+.al-account-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.al-account-title-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 .al-name-handle {
   display: flex;
@@ -4266,21 +4393,47 @@ onMounted(() => {
 
 /* Name cell */
 .al-name-main {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 750;
   color: #0f172a;
-  margin-bottom: 4px;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 200px;
+  max-width: 270px;
 }
 
-.al-name-meta {
+.al-handle {
+  font-size: 12px;
+  line-height: 1.2;
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+.al-signature {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.al-identity-grid {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
+}
+
+.al-account-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
 }
 
 .al-style-desc {
@@ -4292,7 +4445,7 @@ onMounted(() => {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  max-width: 200px;
+  max-width: 360px;
 }
 
 /* Platform cell */
@@ -4451,11 +4604,11 @@ onMounted(() => {
 .ac-type-badge {
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 20px;
-  letter-spacing: .02em;
+  padding: 4px 9px;
+  border-radius: 8px;
   flex-shrink: 0;
   white-space: nowrap;
+  line-height: 1.15;
 }
 
 .ac-type-persona {
@@ -4528,8 +4681,8 @@ onMounted(() => {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 4px 9px;
+  border-radius: 8px;
   background: #e2e8f0;
   color: #475569;
   white-space: nowrap;
@@ -4559,6 +4712,70 @@ onMounted(() => {
   color: #15803d;
 }
 
+.ac-supplement-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  max-width: 100%;
+}
+
+.ac-supplement-row.is-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.ac-supplement-row.is-completed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.ac-supplement-row.is-failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.ac-supplement-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.ac-supplement-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.ac-supplement-row.is-running .ac-supplement-dot { background: #2563eb; }
+.ac-supplement-row.is-completed .ac-supplement-dot { background: #16a34a; }
+.ac-supplement-row.is-failed .ac-supplement-dot { background: #dc2626; }
+
+.ac-supplement-mode {
+  font-weight: 600;
+  color: #64748b;
+}
+
+.ac-supplement-lines {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
 .ac-classify-row {
   display: flex;
   align-items: center;
@@ -4568,18 +4785,28 @@ onMounted(() => {
 }
 .ac-classify-badge {
   font-size: 11px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 8px;
   background: #f1f5f9;
   color: #64748b;
+  line-height: 1.15;
 }
 .ac-classify-badge.is-running { background: #ede9fe; color: #6d28d9; }
 .ac-classify-badge.is-single  { background: #dcfce7; color: #15803d; }
 .ac-classify-badge.is-dual    { background: #dbeafe; color: #1d4ed8; }
 .ac-classify-badge.is-chaos   { background: #fee2e2; color: #b91c1c; }
 .ac-classify-badge.is-insufficient { background: #fef3c7; color: #b45309; }
-.ac-classify-count { font-size: 11px; color: #94a3b8; }
+.ac-classify-count,
+.ac-metric-item {
+  font-size: 11px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 4px 8px;
+  line-height: 1.15;
+}
 
 /* 分类确认弹窗 */
 .al-classify-confirm-option {
@@ -5210,6 +5437,42 @@ onMounted(() => {
   color: #92400e;
 }
 .al-auto-supplement-tip-warn svg { flex-shrink: 0; color: #d97706; }
+
+.al-supplement-category-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.al-supplement-category-group {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.al-supplement-category-major {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.al-supplement-major-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.al-supplement-major-dot.is-display { background: #ec4899; }
+.al-supplement-major-dot.is-knowledge { background: #3b82f6; }
+.al-supplement-major-dot.is-persona { background: #f59e0b; }
+.al-supplement-major-dot.is-trending { background: #10b981; }
 
 .al-supplement-types {
   display: grid;
@@ -6238,8 +6501,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
   font-size: 12px;
+  min-width: 0;
 }
 .ac-kol-badge {
   display: inline-block;
@@ -6273,9 +6536,12 @@ onMounted(() => {
 }
 .ac-kol-link {
   color: #2563eb;
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
   text-decoration: none;
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ac-kol-link:hover { text-decoration: underline; }
 .ac-kol-link-empty {
@@ -6287,26 +6553,29 @@ onMounted(() => {
 .ac-kol-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
   flex: 1;
+  min-width: 0;
 }
 .ac-kol-platform-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  min-width: 0;
 }
 .ac-kol-platform-tag {
   display: inline-block;
   font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 3px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
   background: #e2e8f0;
   color: #334155;
   text-transform: uppercase;
   min-width: 24px;
   text-align: center;
-  line-height: 1.4;
+  line-height: 1.35;
+  flex-shrink: 0;
 }
 .ac-kol-platform-youtube   { background: #fee2e2; color: #b91c1c; }
 .ac-kol-platform-tiktok    { background: #1e293b; color: #f8fafc; }

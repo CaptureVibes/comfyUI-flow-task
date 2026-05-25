@@ -34,6 +34,7 @@ from app.schemas.account import (
     AccountChannelReservationRead, BindOpenAPIChannelBody, ConfirmChannelReservationsBody,
     ConfirmChannelReservationsResponse, ReserveAIAccountsBody, ReserveAIAccountsResponse,
     BulkUpdateAccountAttributesBody, BulkUpdateAccountAttributesResponse,
+    SupplementStatusRead,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -310,6 +311,7 @@ def _account_read(
     unused_template_count: int = 0,
     used_template_count: int = 0,
     sub_task_success: tuple[int, int, int] = (0, 0, 0),
+    supplement_status: dict | None = None,
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
@@ -325,6 +327,7 @@ def _account_read(
     data.sub_task_success_sample = sample
     data.sub_task_success_rate = (numer / denom) if denom > 0 else None
     data.channel_reservations = channel_reservations or []
+    data.supplement_status = SupplementStatusRead(**supplement_status) if supplement_status else None
     data.social_bindings = None
     return data
 
@@ -418,7 +421,15 @@ async def list_accounts_endpoint(
     reservation_map: dict[uuid.UUID, list[AccountChannelReservationRead]] = {aid: [] for aid in account_ids}
     pending_publish_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
     video_count_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
+    supplement_status_map: dict[uuid.UUID, dict] = {}
     if account_ids:
+        from app.services.supplement_status_service import latest_statuses_for_accounts
+        supplement_status_map = await latest_statuses_for_accounts(
+            session,
+            account_ids=account_ids,
+            owner_id=owner_id,
+        )
+
         blogger_stmt = (
             select(AccountBloggerBinding.account_id, TiktokBlogger)
             .join(TiktokBlogger, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
@@ -510,6 +521,7 @@ async def list_accounts_endpoint(
             unused_template_count=template_counts[a.id][0],
             used_template_count=template_counts[a.id][1],
             sub_task_success=success_rate_map.get(a.id, (0, 0, 0)),
+            supplement_status=supplement_status_map.get(a.id),
         )
         for a in items
     ]
@@ -774,6 +786,32 @@ async def bind_openapi_channel(
     flags = await _load_bound_flags(session, account_id)
     reservations = await _load_channel_reservations(session, account_id)
     return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
+
+
+class SupplementStatusesResponse(BaseModel):
+    items: list[SupplementStatusRead]
+
+
+@router.get("/supplement-statuses", response_model=SupplementStatusesResponse)
+async def get_supplement_statuses(
+    account_ids: str = Query(""),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> SupplementStatusesResponse:
+    ids: list[uuid.UUID] = []
+    for raw in account_ids.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ids.append(uuid.UUID(raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="account_ids 必须是逗号分隔的 UUID") from exc
+    from app.services.supplement_status_service import latest_statuses_for_accounts
+    status_map = await latest_statuses_for_accounts(session, account_ids=ids, owner_id=owner_id)
+    return SupplementStatusesResponse(
+        items=[SupplementStatusRead(**payload) for payload in status_map.values()],
+    )
 
 
 @router.get("/{account_id}", response_model=AccountRead)
@@ -1346,6 +1384,18 @@ class SupplementFiltersBody(BaseModel):
     min_view_count: int | None = None
     published_after: date | None = None
     max_duration_seconds: int | None = None
+    category_indices: list[int] | None = None
+
+    def normalized_category_indices(self) -> list[int]:
+        if not self.category_indices:
+            return []
+        values: list[int] = []
+        for idx in self.category_indices:
+            if idx < 0 or idx > 13:
+                raise ValueError("category_indices 必须是 0-13 的整数")
+            if idx not in values:
+                values.append(idx)
+        return values
 
 
 class SupplementTemplatesBody(BaseModel):
@@ -1813,6 +1863,15 @@ async def supplement_templates(
     target_count = _resolve_target_count(body)
     effective_owner = owner_id if owner_id is not None else creator_id
     filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
+    if body.filters and body.filters.category_indices is not None:
+        try:
+            category_indices = body.filters.normalized_category_indices()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if category_indices:
+            filters_dict["category_indices"] = category_indices
+        else:
+            filters_dict.pop("category_indices", None)
 
     # exclusive 模式：只走 vendor，失败/未配置直接报错
     if template_type == "exclusive":

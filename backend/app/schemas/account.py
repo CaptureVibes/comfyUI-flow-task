@@ -378,6 +378,22 @@ class ExternalBindOpenAPIChannelResponse(BaseModel):
     channel_reservations: list[ExternalChannelReservationRead]
 
 
+class SupplementStatusRead(BaseModel):
+    request_id: str
+    account_id: str
+    mode: str
+    status: str
+    target_count: int = 0
+    completed_count: int = 0
+    remaining_count: int = 0
+    failed_count: int = 0
+    rejected_count: int = 0
+    duplicated_count: int = 0
+    processing_count: int = 0
+    error_message: str | None = None
+    updated_at: datetime | None = None
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
@@ -424,6 +440,7 @@ class AccountRead(BaseModel):
     kol_user_id: str | None = None
     kol_provision_status: str = "pending"
     kol_provision_error: str | None = None
+    supplement_status: SupplementStatusRead | None = None
     created_at: datetime
     updated_at: datetime
 
