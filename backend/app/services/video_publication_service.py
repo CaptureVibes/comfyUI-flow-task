@@ -298,7 +298,11 @@ class OpenAPIClient:
             return response.json()
 
     async def fetch_upload_status(self, task_id: str | None = None, external_id: str | None = None) -> dict:
-        """查询上传任务状态"""
+        """查询上传任务状态。
+
+        优先访问 publish_base_url；若与 base_url 不同且请求失败（网络异常 / 非 2xx），
+        自动回退到 base_url 再试一次。
+        """
         params = {}
         if task_id:
             params["task_id"] = task_id
@@ -306,15 +310,35 @@ class OpenAPIClient:
             params["external_id"] = external_id
 
         signed_params = self._sign_params(params)
+        candidates = [self.publish_base_url]
+        if self.base_url and self.base_url != self.publish_base_url:
+            candidates.append(self.base_url)
 
-        # trust_env=False 禁用系统代理
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-            response = await client.get(
-                f"{self.publish_base_url}/open-api/v1/upload/status",
-                params=signed_params,
-            )
-            response.raise_for_status()
-            return response.json()
+        last_exc: Exception | None = None
+        for idx, base in enumerate(candidates):
+            try:
+                # trust_env=False 禁用系统代理
+                async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+                    response = await client.get(
+                        f"{base}/open-api/v1/upload/status",
+                        params=signed_params,
+                    )
+                    response.raise_for_status()
+                    return response.json()
+            except Exception as exc:
+                last_exc = exc
+                if idx < len(candidates) - 1:
+                    logger.warning(
+                        "fetch_upload_status via %s failed (%s)，回退到 %s 重试",
+                        base,
+                        exc,
+                        candidates[idx + 1],
+                    )
+                    continue
+                raise
+        # 理论上不会走到这里
+        assert last_exc is not None
+        raise last_exc
 
     async def fetch_upload_metrics(self, task_id: str | None = None, external_id: str | None = None) -> dict:
         """查询上传任务各渠道视频指标"""
