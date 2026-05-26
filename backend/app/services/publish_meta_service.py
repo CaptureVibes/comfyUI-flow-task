@@ -142,8 +142,8 @@ _PRODUCT_CODE_TITLE_PREFIX = "👆Outfit linked in bio"
 # 旧版本曾以下面文案做拼接，保留常量供清洗脚本识别历史数据
 _PRODUCT_CODE_TITLE_LEGACY_SUFFIX = "Get my exact look here 👀 👇"
 _PRODUCT_CODE_TITLE_LEGACY_PREFIX = "👇 👀 Get my exact look here 👀 👇"
-# description 统一引流文案（不管是否商品码，都拼接在结尾）
-_BIO_LINK_DESC_SUFFIX = "Outfits from my videos are available through the link below 💗"
+# description 第一段引流文案
+_BIO_LINK_DESC_HEADER = "You can find this outfit through the link in my bio💗"
 
 
 def _format_price_number(value: Any) -> str:
@@ -187,7 +187,7 @@ def _build_product_code_description(
     ext_products: list[dict],
 ) -> str:
     del promotion_code  # noqa: F841 — 新版不再拼接「Search code X on Alvin's Club」引流
-    lines: list[str] = []
+    lines: list[str] = [_BIO_LINK_DESC_HEADER]
 
     base = (base_description or "").strip()
     if base:
@@ -212,7 +212,6 @@ def _build_product_code_description(
 
     if product_lines:
         lines.append("\n".join(product_lines))
-    lines.append(_BIO_LINK_DESC_SUFFIX)
     return "\n\n".join(lines)
 
 
@@ -291,9 +290,6 @@ async def generate_publish_metadata(
                         promotion_code,
                         ext_products or [],
                     )
-                else:
-                    # 无商品码也统一拼接引流 suffix
-                    desc = (desc.rstrip() + "\n\n" + _BIO_LINK_DESC_SUFFIX) if desc.strip() else _BIO_LINK_DESC_SUFFIX
                 hashtags = [str(t).strip().lstrip("#") for t in data.get("hashtag", []) if t]
 
                 logger.info("【AI预生成标题】成功（第%d次，模型: %s） → %r", attempt, model_name, title)
