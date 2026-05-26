@@ -106,6 +106,9 @@ async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITempla
         tiktok_blogger_id=tpl.tiktok_blogger_id,
         tags=tags,
         extra=tpl.extra,
+        lookbooks=tpl.lookbooks,
+        remix_history=tpl.remix_history,
+        remix_count=tpl.remix_count or 0,
         created_at=tpl.created_at,
         updated_at=tpl.updated_at,
     )
