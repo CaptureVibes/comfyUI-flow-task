@@ -26,6 +26,19 @@ logger = logging.getLogger("app.name_handle_service")
 _CONCURRENCY = 5
 _MAX_ATTEMPTS = 3
 
+# 所有自动生成的 AI 博主签名末尾统一拼接此引流 suffix
+_SIGNATURE_BIO_SUFFIX = "Outfits from my videos are available through the link below 💗"
+
+
+def _ensure_signature_suffix(signature: str) -> str:
+    """确保签名末尾带有引流 suffix；已包含则原样返回（幂等）。"""
+    s = (signature or "").rstrip()
+    if _SIGNATURE_BIO_SUFFIX in s:
+        return s
+    if s:
+        return f"{s}\n\n{_SIGNATURE_BIO_SUFFIX}"
+    return _SIGNATURE_BIO_SUFFIX
+
 _queue: asyncio.Queue[str] = asyncio.Queue()
 _worker_task: asyncio.Task | None = None
 
@@ -376,7 +389,7 @@ async def _generate_for_account(
 
         new_name = str(result.get("name") or "").strip()
         new_handle = _normalize_handle(result.get("handle"))
-        new_signature = str(result.get("signature") or "").strip()
+        new_signature = _ensure_signature_suffix(str(result.get("signature") or "").strip())
         new_gender = _normalize_gender(result.get("gender"))
 
         # 重复检测：同 owner 下不允许相同 name 或 handle（排除自身），重复则自动追加后缀
