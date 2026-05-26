@@ -1779,8 +1779,8 @@ async def soft_retry_template(
         tpl.extra = extra
         await session.commit()
 
-    # 内存 state 同步刷新
-    video_ai_states[template_id] = _ensure_state_shape(state, template_id)
+    # 内存 state 同步刷新（state 已是 dict 形式，无需额外 normalize）
+    video_ai_states[template_id] = state
     _mark_dirty(template_id)
     _sync_shots_on_success.add(template_id)
     if abandon_task_ids_on_fail is not None:
