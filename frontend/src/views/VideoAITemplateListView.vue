@@ -70,6 +70,22 @@
         <div class="vai-stat-value">{{ templateStats.outfit_selecting || 0 }}</div>
         <div class="vai-stat-sub">outfit_selecting</div>
       </div>
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'lookbook_gen' }" style="--stat-color: #f59e0b; --stat-bg: #fef3c7;" @click="toggleFilter('lookbook_gen')">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">阶段2.5 八拼图生成</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.lookbook_gen || 0 }}</div>
+        <div class="vai-stat-sub">lookbook_gen</div>
+      </div>
+      <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'remixing' }" style="--stat-color: #d946ef; --stat-bg: #fae8ff;" @click="toggleFilter('remixing')">
+        <div class="vai-stat-top">
+          <span class="vai-stat-label">阶段2.5+ 重洗中</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d946ef" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </div>
+        <div class="vai-stat-value">{{ templateStats.remixing || 0 }}</div>
+        <div class="vai-stat-sub">remixing</div>
+      </div>
       <div class="vai-stat-card" :class="{ 'vai-stat-active': activeFilter === 'outfit_detailing' }" style="--stat-color: #a855f7; --stat-bg: #faf5ff;" @click="toggleFilter('outfit_detailing')">
         <div class="vai-stat-top">
           <span class="vai-stat-label">阶段3 单品理解</span>
@@ -305,6 +321,7 @@
               v-for="tab in [
                 { key: 'step_imagegen', label: '阶段1 抽帧上传' },
                 { key: 'step_outfit_select', label: '阶段2 穿搭识别' },
+                { key: 'step_lookbook', label: '阶段2.5 八拼图' },
                 { key: 'step_outfit_detail', label: '阶段3 单品理解' },
                 { key: 'step_intent', label: '阶段4 意图识别' },
                 { key: 'step_understand', label: '阶段5 视频理解' },
@@ -346,6 +363,86 @@
                 <div class="vt-form-item">
                   <label class="vt-label">温度 (Temperature)：{{ Number(cfg.outfit_select_temperature).toFixed(1) }}</label>
                   <input type="range" v-model.number="cfg.outfit_select_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 阶段2.5：八拼图生成与拆分 -->
+            <div v-if="configTab === 'step_lookbook'">
+              <div class="cfg-step-desc">
+                对阶段 2 识别出的每张 Unique 穿搭图，先用「分析 Prompt」让 Gemini 读图产出最终的图像生成 Prompt，
+                再调图像生成模型产出一张 4 列 × 2 行的 8 拼图（lookbook），最后切割成 8 张独立 panel。
+                panel_1 保留为参考图，panel_2~8 进入「重洗池」供后续多次重洗使用。
+              </div>
+              <div class="vt-form">
+                <h4 class="cfg-subhead">① 分析 Prompt（读 outfit_shot → 产生图 prompt）</h4>
+                <div class="vt-form-item">
+                  <label class="vt-label">分析模型</label>
+                  <input type="text" v-model="cfg.lookbook_analysis_model" class="vt-input" placeholder="gemini-3-pro-preview（留空使用默认）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">
+                    分析提示词 (Prompt)
+                    <button type="button" class="cfg-mini-btn" @click="cfg.lookbook_analysis_prompt = LOOKBOOK_ANALYSIS_PROMPT_DEFAULT">插入默认 Prompt</button>
+                  </label>
+                  <textarea
+                    v-model="cfg.lookbook_analysis_prompt"
+                    class="vt-textarea"
+                    rows="14"
+                    placeholder="留空使用内置默认 Prompt（资深时尚造型总监 + prompt 工程师身份，输出含 scene / subject / styling direction / color palette / 8 套 outfit variations / composition / lighting / style keywords 的最终图像生成 prompt）。可点上方「插入默认 Prompt」预填后再修改。"
+                  ></textarea>
+                  <div class="cfg-field-hint">输出直接作为下一步的 image-gen prompt 透传；composition 段要求 4×2 等宽 gutter，便于下游算法切割。</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">温度 (Temperature)：{{ Number(cfg.lookbook_analysis_temperature).toFixed(1) }}</label>
+                  <input type="range" v-model.number="cfg.lookbook_analysis_temperature" min="0" max="2" step="0.1" class="vt-range" />
+                </div>
+
+                <h4 class="cfg-subhead" style="margin-top:20px">② 4×2 八拼图生成</h4>
+                <div class="vt-form-item">
+                  <label class="vt-label">图像生成模型</label>
+                  <input type="text" v-model="cfg.lookbook_imagegen_model" class="vt-input" placeholder="gemini-3.1-flash-image-preview（留空使用默认；当前 Gemini 可用图像模型）" />
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">外层包装 Prompt（可选）</label>
+                  <textarea
+                    v-model="cfg.lookbook_imagegen_prompt"
+                    class="vt-textarea"
+                    rows="4"
+                    placeholder="默认透传 ① 的分析输出（分析 prompt 已经覆盖 composition / 单主角等所有约束，无需重复包装）。如要额外加约束，用 {analysis} 占位符引用分析结果。"
+                  ></textarea>
+                  <div class="cfg-field-hint">默认透传。可用 <code>{analysis}</code> 引用 ① 的分析输出做二次包装。</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">八拼图比例 (Aspect Ratio)</label>
+                  <div class="vt-select-wrapper" style="width: 320px">
+                    <select v-model="cfg.lookbook_imagegen_size" class="vt-select">
+                      <option value="4:3">4:3（推荐；每格切出 ≈2:3 竖版全身）</option>
+                      <option value="3:2">3:2（每格切出 3:4 竖版）</option>
+                      <option value="16:9">16:9（每格切出 ≈8:9）</option>
+                      <option value="21:9">21:9（更扁平）</option>
+                      <option value="3:4">3:4（每格更窄）</option>
+                      <option value="9:16">9:16（罕用，每格非常窄）</option>
+                      <option value="1:1">1:1（每格正方形偏扁）</option>
+                    </select>
+                    <div class="vt-select-arrow">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                  </div>
+                  <div class="cfg-field-hint">推荐 4:3，每格切出来 ≈2:3 竖版，全身时装场景最合适。</div>
+                </div>
+                <div class="vt-form-item">
+                  <label class="vt-label">八拼图分辨率 (Quality)</label>
+                  <div class="vt-radio-group">
+                    <label class="vt-radio-label"><input type="radio" value="0.5K" v-model="cfg.lookbook_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>0.5K</label>
+                    <label class="vt-radio-label"><input type="radio" value="1K" v-model="cfg.lookbook_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>1K</label>
+                    <label class="vt-radio-label"><input type="radio" value="2K" v-model="cfg.lookbook_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>2K（推荐）</label>
+                    <label class="vt-radio-label"><input type="radio" value="4K" v-model="cfg.lookbook_imagegen_quality" class="vt-radio-input" /><span class="vt-radio-circle"></span>4K</label>
+                  </div>
+                </div>
+
+                <div class="cfg-field-hint" style="margin-top:16px">
+                  💡 切割算法：优先按 panel 间白色 gutter 检测边界；识别失败 fallback 等分切割。无需配置。
                 </div>
               </div>
             </div>
@@ -650,11 +747,77 @@ function promptKey(name) {
   return configCtaMode.value ? `${name}_cta` : name
 }
 
+// 阶段 2.5 默认分析 Prompt（与后端 _DEFAULT_LOOKBOOK_ANALYSIS_PROMPT 同步）
+const LOOKBOOK_ANALYSIS_PROMPT_DEFAULT = `你是一名资深时尚造型总监 + prompt 工程师。请把这张参考图分析成一个可复用的"风格系统"，并直接输出一段可以用于图片生成模型的最终 Prompt（8 panel fashion lookbook collage）。重点不是复刻某一套衣服，而是稳定复现同一套"视觉宇宙 + 穿搭语法 + 社媒镜头语言"。
+
+输出要求（必须遵守）：
+- 只输出"最终可直接使用的 Prompt 文本"，不要输出分析过程、解释、标题、代码块或 JSON。
+- 以"固定层 vs 变化层"的方式组织：固定层保证同风格；变化层制造新鲜感。
+- 不要把参考图里最显眼的单一单品（尤其是某条下装）当作系列的固定标准配置；用"轮廓比例 + 镜头语言 + outfit variations"来锁定宇宙。
+- 你写的是"元素之间的关系"（色彩对比、廓形对比、镜头语言），而不是单品堆砌。
+- 目标是生成"短而强"的可用 Prompt：不要输出长清单式的单品池/语法池/avoid list；用少量高信号词 + 明确 outfit variations 来实现一致性与多样性。
+- 色彩不能"降饱和/变保守"：如果参考图存在高饱和或高对比点缀（例如荧光袜/亮色包/强烈格纹），必须在输出中保留其饱和度与对比策略，并在 8 套里多次出现（通过袜/包/内搭/图案点缀等），避免被替换成灰黑驼等低饱和替代品。
+- composition 段必须严格使用本模板里给定的版式约束（gutter + 等宽列 + 每格独立构图 + 禁跨界），不要简化、不要省略，便于下游算法等分切割。
+- 单人主角硬约束（最重要）：先识别参考图里最主要的时装主角（fashion protagonist，通常是占比最大、构图最聚焦、被造型表达驱动的那一个人）的性别（man / woman / non-binary 等）与基本外观；不要默认女性也不要默认男性。8 个 panel 必须只出现这一位主角，且性别与基本外观（发色发型、肤色、身材比例、年龄段、气质能量）与参考图主角保持一致。参考图里出现的同伴 / 路人 / 群众 / 其他模特，绝不能进入任何一个 panel。即使参考图是机场、街拍、商场、活动等多人场景，也必须把背景重写成只有这位主角一人的环境。
+
+你需要先在脑中完成这些提取（不要在输出里写步骤编号）：
+1) 视觉 archetype（社媒风格宇宙）：例如 pinterest girl vibe / tiktok try-on haul / zara lookbook / clean girl 等
+2) 轮廓规则（最关键）：用一句话描述上身 vs 下身的比例关系（例如 tiny top + huge bottom / 上部控制下部释放）
+3) 社交媒体镜头语言：iphone camera feeling、家居镜子试穿、自然光、构图与姿势能量
+4) 变化维度：上装/下装类别轮换、鞋与包的小变化、颜色点缀与图案变化（但人物、场景与镜头语言保持一致）
+
+最终输出格式（严格按此结构输出）：
+8 panel fashion lookbook collage, same single subject modeling 8 different outfits, strict single-subject lookbook (only one fashion protagonist appears anywhere across all 8 panels — the same person from panel to panel, with gender and basic appearance matching the reference image's main subject; no companions / no bystanders / no extra people), [一行风格核心：archetype + 情绪 + 时代参考 + 比例规则]
+
+scene:
+[用 1-2 行写清楚房间/背景关键物件/氛围。每格独立的同一类场景的不同机位/不同角落，不是把 8 格画成一张连续的房间/街道全景。背景必须是空场（empty of any other human figure）：明确写出 "no other people in frame, no companions, no bystanders, no crowd, no passersby, no partial bodies, no silhouettes or shadows of other people anywhere in the background"。如果参考图本身是机场/街拍/商场/活动等多人场景，请把场景重写成对应风格的同型空场（例如 quiet airport corridor with no other travelers / empty boutique mall corridor / deserted city sidewalk）]
+
+subject:
+[被识别为参考图主角的那个人的外观与气质，保持可复现。必须明确写出性别（man / woman / non-binary 等，与参考图一致，不要默认女性也不要默认男性），以及关键特征：发色发型、肤色、身材比例、年龄段、气质能量。明确写 "exactly one human subject is visible in every panel; this is the only person rendered anywhere in the collage; no friend, no partner, no model double, no bystander, no reflection of another person; the subject's gender and basic appearance must match the reference image's main fashion protagonist"]
+
+styling direction:
+[一句话写"穿搭语法/轮廓规则/气质能量"]
+
+color palette:
+[主色 + 点缀色（5-8 个）；如参考图出现"荧光/高饱和/高对比"颜色，必须明确写入并强调其作为视觉点缀的存在方式]
+
+color strategy:
+[一句话说明对比策略与饱和度策略：例如"中性底色 + 高饱和点缀（袜/包/内搭）"或"强烈格纹/印花作为色彩载体"，并要求在 8 套里重复出现点缀色]
+
+outfit variations:
+1. [上装] + [下装(类别轮换)] + [鞋] + [配饰/细节]
+2. ...
+8. ...
+
+accessories:
+[配饰方向与一致性锚点]
+
+poses:
+[与主角性别气质匹配的镜头语言与姿势能量（不要默认女性化的镜子自拍能量，请根据主角性别与 archetype 选择）。每格内主角必须完整在格内，脚到头都在 panel 边界以内，留有清晰边距，不要紧贴边缘。每格只有一人出现，不要出现第二个人物的手、肩、影子]
+
+composition:
+strict 2 rows × 4 columns grid collage of 8 fully independent panels separated by a clean solid white gutter approximately 10–14 px wide both horizontally and vertically, every column has equal width = canvas_width / 4 and every row has equal height = canvas_height / 2, full body framing strictly contained inside each panel with comfortable margin (no body parts, hair, bag straps, leashes, pets, furniture, mirror frames or scene props crossing the gutter into a neighboring panel), each panel is its own independent crop with its own background, camera framing and composition (do NOT render the 8 looks as one continuous room or street scene), consistent overall camera angle and lighting style across panels, vertical social media lookbook format, strict single-subject across the whole collage: exactly one human subject (matching the reference image's main fashion protagonist's gender and core appearance) appears in every panel and no other human figure exists anywhere in any panel (no friend, no partner, no bystander, no passerby, no crowd, no silhouette of another person, no model double)
+
+lighting:
+[自然光/真实阴影/手机质感]
+
+style keywords:
+[6-10 个关键词，尽量精炼且高信号；从参考图"真实语境"中提取，不要固定套用同一组词]
+`
+
 const cfg = reactive({
   // 阶段2：穿搭识别
   outfit_select_model: 'gemini-2.5-flash-preview-05-20',
   outfit_select_prompt: '',
   outfit_select_temperature: 0.3,
+  // 阶段2.5：八拼图分析 + 图像生成
+  lookbook_analysis_model: 'gemini-3-pro-preview',
+  lookbook_analysis_prompt: '',
+  lookbook_analysis_temperature: 0.3,
+  lookbook_imagegen_model: 'gemini-3.1-flash-image-preview',
+  lookbook_imagegen_prompt: '',
+  lookbook_imagegen_size: '4:3',
+  lookbook_imagegen_quality: '2K',
   // 阶段3：单品理解
   outfit_detail_model: 'gemini-2.5-flash-preview-05-20',
   outfit_detail_prompt: '',
@@ -704,6 +867,13 @@ async function openConfig() {
       outfit_select_model: data.outfit_select_model || 'gemini-2.5-flash-preview-05-20',
       outfit_select_prompt: data.outfit_select_prompt || '',
       outfit_select_temperature: data.outfit_select_temperature ?? 0.3,
+      lookbook_analysis_model: data.lookbook_analysis_model || 'gemini-3-pro-preview',
+      lookbook_analysis_prompt: data.lookbook_analysis_prompt || '',
+      lookbook_analysis_temperature: data.lookbook_analysis_temperature ?? 0.3,
+      lookbook_imagegen_model: data.lookbook_imagegen_model || 'gemini-3.1-flash-image-preview',
+      lookbook_imagegen_prompt: data.lookbook_imagegen_prompt || '',
+      lookbook_imagegen_size: data.lookbook_imagegen_size || '4:3',
+      lookbook_imagegen_quality: data.lookbook_imagegen_quality || '2K',
       outfit_detail_model: data.outfit_detail_model || 'gemini-2.5-flash-preview-05-20',
       outfit_detail_prompt: data.outfit_detail_prompt || '',
       outfit_detail_temperature: data.outfit_detail_temperature ?? 0.3,
@@ -763,6 +933,13 @@ async function saveConfig() {
       outfit_select_model: cfg.outfit_select_model,
       outfit_select_prompt: cfg.outfit_select_prompt,
       outfit_select_temperature: cfg.outfit_select_temperature,
+      lookbook_analysis_model: cfg.lookbook_analysis_model,
+      lookbook_analysis_prompt: cfg.lookbook_analysis_prompt,
+      lookbook_analysis_temperature: cfg.lookbook_analysis_temperature,
+      lookbook_imagegen_model: cfg.lookbook_imagegen_model,
+      lookbook_imagegen_prompt: cfg.lookbook_imagegen_prompt,
+      lookbook_imagegen_size: cfg.lookbook_imagegen_size,
+      lookbook_imagegen_quality: cfg.lookbook_imagegen_quality,
       outfit_detail_model: cfg.outfit_detail_model,
       outfit_detail_prompt: cfg.outfit_detail_prompt,
       outfit_detail_temperature: cfg.outfit_detail_temperature,
@@ -1291,6 +1468,33 @@ onActivated(() => {
   border-radius: 4px;
   font-family: monospace;
   color: #6366f1;
+}
+
+.cfg-subhead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.cfg-mini-btn {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.cfg-mini-btn:hover {
+  background: #eef2ff;
+  border-color: #6366f1;
+  color: #4338ca;
 }
 
 .cfg-code-input :deep(textarea) {

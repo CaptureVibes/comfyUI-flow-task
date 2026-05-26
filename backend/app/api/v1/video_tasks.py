@@ -442,16 +442,19 @@ async def retry_daily_task_templates(
 ) -> dict[str, str]:
     """daily-tasks 页「一键重试」专用端点。
 
+    **走 soft retry**：只从阶段 2.5 重挑 panel + 跑下游，不重抽帧/不重识别穿搭/不重生 lookbook；
+    池子耗尽或模板无 lookbook 时自动 fallback 到 hard restart。
+
     本端点是 task 层 → 模板层的单向注入：
       1) 查 video_tasks 当天关联的所有模板（可选按 status 过滤，仅 pending / generating）
       2) 构造 abandon_map（模板失败 → 关联 task 标 abandoned）
       3) 构造 cta_map（任一关联 task 是 cta=True 即视为 True）
-      4) 调 batch_restart_templates 把这两个 map 注入流水线 enqueue
+      4) 调 batch_soft_retry_templates 把这两个 map 注入流水线 enqueue
 
     AI 模板侧不会反查 task；cta / abandon 信息由本端点显式传入。
     """
     from app.models.video_task import VideoTask
-    from app.services.video_ai_service import batch_restart_templates
+    from app.services.video_ai_service import batch_soft_retry_templates
 
     if task_status is not None and task_status not in ("pending", "generating"):
         raise HTTPException(
@@ -479,9 +482,10 @@ async def retry_daily_task_templates(
         else:
             cta_map.setdefault(tpl_str, False)
 
-    asyncio.create_task(batch_restart_templates(
-        owner_id=str(owner_id) if owner_id else None,
-        template_ids=list(abandon_map.keys()) or None,
+    # 软重试：复用 lookbook + 重新挑下一个未用 panel + 跑下游；
+    # 池子耗尽 / 无 lookbook 的模板会 fallback 到 hard restart
+    asyncio.create_task(batch_soft_retry_templates(
+        template_ids=list(abandon_map.keys()),
         abandon_task_ids_on_fail=abandon_map or None,
         cta_map=cta_map or None,
     ))

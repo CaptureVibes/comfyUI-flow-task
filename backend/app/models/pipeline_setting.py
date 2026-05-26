@@ -57,6 +57,19 @@ class PipelineSetting(Base):
     outfit_select_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     outfit_select_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
 
+    # 步骤2.5a：分析 Prompt（读 outfit_shot 产出最终生图 Prompt）
+    lookbook_analysis_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3-pro-preview")
+    lookbook_analysis_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    lookbook_analysis_temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
+
+    # 步骤2.5b：4×2 八拼图生成
+    lookbook_imagegen_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-flash-image-preview")
+    lookbook_imagegen_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # size = aspect ratio (Google API 白名单：1:1 / 2:3 / 3:4 / 4:3 / 9:16 / 16:9 / ...)
+    # quality = 分辨率档（1K / 2K）
+    lookbook_imagegen_size: Mapped[str] = mapped_column(String(20), nullable=False, default="4:3")
+    lookbook_imagegen_quality: Mapped[str] = mapped_column(String(10), nullable=False, default="2K")
+
     # 步骤3a：对每个 unique 穿搭图理解单品
     outfit_detail_model: Mapped[str] = mapped_column(String(200), nullable=False, default="gemini-3.1-pro-preview")
     outfit_detail_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")

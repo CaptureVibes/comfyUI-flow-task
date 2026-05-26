@@ -7,9 +7,10 @@ import logging
 import os
 import tempfile
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.services.ai_api import call_gemini_api
@@ -1384,6 +1385,789 @@ async def _delete_template_and_video_source(template_id: str, uuid_val: UUID) ->
         logger.error("[%s] failed to delete template/video source: %s", template_id, exc)
 
 
+# ============================================================================
+# 阶段 2.5：8 拼图生成与拆分 + 重洗
+# ============================================================================
+
+_LOOKBOOK_GEN_CONCURRENCY = 3   # 单个模板内并发生成 lookbook 数（Gemini 限流）
+_PANEL_UPLOAD_CONCURRENCY = 8   # 单 lookbook 内并发上传 8 panel 数
+
+
+_DEFAULT_LOOKBOOK_ANALYSIS_PROMPT = """你是一名资深时尚造型总监 + prompt 工程师。请把这张参考图分析成一个可复用的"风格系统"，并直接输出一段可以用于图片生成模型的最终 Prompt（8 panel fashion lookbook collage）。重点不是复刻某一套衣服，而是稳定复现同一套"视觉宇宙 + 穿搭语法 + 社媒镜头语言"。
+
+输出要求（必须遵守）：
+- 只输出"最终可直接使用的 Prompt 文本"，不要输出分析过程、解释、标题、代码块或 JSON。
+- 以"固定层 vs 变化层"的方式组织：固定层保证同风格；变化层制造新鲜感。
+- 不要把参考图里最显眼的单一单品（尤其是某条下装）当作系列的固定标准配置；用"轮廓比例 + 镜头语言 + outfit variations"来锁定宇宙。
+- 你写的是"元素之间的关系"（色彩对比、廓形对比、镜头语言），而不是单品堆砌。
+- 目标是生成"短而强"的可用 Prompt：不要输出长清单式的单品池/语法池/avoid list；用少量高信号词 + 明确 outfit variations 来实现一致性与多样性。
+- 色彩不能"降饱和/变保守"：如果参考图存在高饱和或高对比点缀（例如荧光袜/亮色包/强烈格纹），必须在输出中保留其饱和度与对比策略，并在 8 套里多次出现（通过袜/包/内搭/图案点缀等），避免被替换成灰黑驼等低饱和替代品。
+- composition 段必须严格使用本模板里给定的版式约束（gutter + 等宽列 + 每格独立构图 + 禁跨界），不要简化、不要省略，便于下游算法等分切割。
+- 单人主角硬约束（最重要）：先识别参考图里最主要的时装主角（fashion protagonist，通常是占比最大、构图最聚焦、被造型表达驱动的那一个人）的性别（man / woman / non-binary 等）与基本外观；不要默认女性也不要默认男性。8 个 panel 必须只出现这一位主角，且性别与基本外观（发色发型、肤色、身材比例、年龄段、气质能量）与参考图主角保持一致。参考图里出现的同伴 / 路人 / 群众 / 其他模特，绝不能进入任何一个 panel。即使参考图是机场、街拍、商场、活动等多人场景，也必须把背景重写成只有这位主角一人的环境。
+
+你需要先在脑中完成这些提取（不要在输出里写步骤编号）：
+1) 视觉 archetype（社媒风格宇宙）：例如 pinterest girl vibe / tiktok try-on haul / zara lookbook / clean girl 等
+2) 轮廓规则（最关键）：用一句话描述上身 vs 下身的比例关系（例如 tiny top + huge bottom / 上部控制下部释放）
+3) 社交媒体镜头语言：iphone camera feeling、家居镜子试穿、自然光、构图与姿势能量
+4) 变化维度：上装/下装类别轮换、鞋与包的小变化、颜色点缀与图案变化（但人物、场景与镜头语言保持一致）
+
+最终输出格式（严格按此结构输出）：
+8 panel fashion lookbook collage, same single subject modeling 8 different outfits, strict single-subject lookbook (only one fashion protagonist appears anywhere across all 8 panels — the same person from panel to panel, with gender and basic appearance matching the reference image's main subject; no companions / no bystanders / no extra people), [一行风格核心：archetype + 情绪 + 时代参考 + 比例规则]
+
+scene:
+[用 1-2 行写清楚房间/背景关键物件/氛围。每格独立的同一类场景的不同机位/不同角落，不是把 8 格画成一张连续的房间/街道全景。背景必须是空场（empty of any other human figure）：明确写出 "no other people in frame, no companions, no bystanders, no crowd, no passersby, no partial bodies, no silhouettes or shadows of other people anywhere in the background"。如果参考图本身是机场/街拍/商场/活动等多人场景，请把场景重写成对应风格的同型空场（例如 quiet airport corridor with no other travelers / empty boutique mall corridor / deserted city sidewalk）]
+
+subject:
+[被识别为参考图主角的那个人的外观与气质，保持可复现。必须明确写出性别（man / woman / non-binary 等，与参考图一致，不要默认女性也不要默认男性），以及关键特征：发色发型、肤色、身材比例、年龄段、气质能量。明确写 "exactly one human subject is visible in every panel; this is the only person rendered anywhere in the collage; no friend, no partner, no model double, no bystander, no reflection of another person; the subject's gender and basic appearance must match the reference image's main fashion protagonist"]
+
+styling direction:
+[一句话写"穿搭语法/轮廓规则/气质能量"]
+
+color palette:
+[主色 + 点缀色（5-8 个）；如参考图出现"荧光/高饱和/高对比"颜色，必须明确写入并强调其作为视觉点缀的存在方式]
+
+color strategy:
+[一句话说明对比策略与饱和度策略：例如"中性底色 + 高饱和点缀（袜/包/内搭）"或"强烈格纹/印花作为色彩载体"，并要求在 8 套里重复出现点缀色]
+
+outfit variations:
+1. [上装] + [下装(类别轮换)] + [鞋] + [配饰/细节]
+2. ...
+8. ...
+
+accessories:
+[配饰方向与一致性锚点]
+
+poses:
+[与主角性别气质匹配的镜头语言与姿势能量（不要默认女性化的镜子自拍能量，请根据主角性别与 archetype 选择）。每格内主角必须完整在格内，脚到头都在 panel 边界以内，留有清晰边距，不要紧贴边缘。每格只有一人出现，不要出现第二个人物的手、肩、影子]
+
+composition:
+strict 2 rows × 4 columns grid collage of 8 fully independent panels separated by a clean solid white gutter approximately 10–14 px wide both horizontally and vertically, every column has equal width = canvas_width / 4 and every row has equal height = canvas_height / 2, full body framing strictly contained inside each panel with comfortable margin (no body parts, hair, bag straps, leashes, pets, furniture, mirror frames or scene props crossing the gutter into a neighboring panel), each panel is its own independent crop with its own background, camera framing and composition (do NOT render the 8 looks as one continuous room or street scene), consistent overall camera angle and lighting style across panels, vertical social media lookbook format, strict single-subject across the whole collage: exactly one human subject (matching the reference image's main fashion protagonist's gender and core appearance) appears in every panel and no other human figure exists anywhere in any panel (no friend, no partner, no bystander, no passerby, no crowd, no silhouette of another person, no model double)
+
+lighting:
+[自然光/真实阴影/手机质感]
+
+style keywords:
+[6-10 个关键词，尽量精炼且高信号；从参考图"真实语境"中提取，不要固定套用同一组词]
+"""
+
+
+def _default_lookbook_analysis_prompt() -> str:
+    return _DEFAULT_LOOKBOOK_ANALYSIS_PROMPT
+
+
+def _default_lookbook_imagegen_prompt() -> str:
+    """分析输出已经是完整可用的 image-gen prompt（含 composition / 单主角 / 等宽 gutter 等所有约束），
+    包装层默认透传，不再叠加冗余指令。
+    """
+    return "{analysis}"
+
+
+async def _run_lookbook_stage(
+    *,
+    template_id: str,
+    outfit_shots: list[dict],
+    analysis_model: str,
+    analysis_prompt: str,
+    analysis_temperature: float,
+    imagegen_model: str,
+    imagegen_prompt: str,
+    imagegen_size: str,
+    imagegen_quality: str,
+) -> list[dict]:
+    """对每个 outfit_shot 生成 4×2 lookbook，切割成 8 个 panel 后上传，返回 lookbooks 列表。
+
+    单个 outfit 失败不影响其它（吞异常 + log）；失败的不会出现在返回结果里。
+    """
+    from app.services.ai_api import call_gemini_api_with_images, generate_image
+    from app.utils.image_grid import split_4x2
+
+    actual_analysis_prompt = analysis_prompt.strip() or _default_lookbook_analysis_prompt()
+    imagegen_wrapper = imagegen_prompt.strip() or _default_lookbook_imagegen_prompt()
+
+    sem = asyncio.Semaphore(_LOOKBOOK_GEN_CONCURRENCY)
+    panel_upload_sem = asyncio.Semaphore(_PANEL_UPLOAD_CONCURRENCY)
+
+    async def _do_one(outfit_index: int, outfit_shot: dict) -> dict:
+        """生成单个 outfit 的 lookbook。**任何一步失败都 raise**——
+        外层 asyncio.gather + return_exceptions=False 会把异常抛出去，
+        最终在 _run_pipeline 的 try/except 翻 status=fail。"""
+        outfit_shot_url = outfit_shot.get("image_url")
+        if not outfit_shot_url:
+            raise ValueError(f"lookbook_gen outfit[{outfit_index}] 缺 image_url")
+
+        async with sem:
+            # 1. 分析 Prompt → image-gen prompt
+            generated_prompt = await call_gemini_api_with_images(
+                model_name=analysis_model,
+                prompt=actual_analysis_prompt,
+                image_urls=[outfit_shot_url],
+                temperature=analysis_temperature,
+            )
+            generated_prompt = (generated_prompt or "").strip()
+            if not generated_prompt:
+                raise ValueError(f"lookbook_gen outfit[{outfit_index}] analysis 返回空内容")
+
+            final_prompt = imagegen_wrapper.format(analysis=generated_prompt) \
+                if "{analysis}" in imagegen_wrapper else (imagegen_wrapper + "\n\n" + generated_prompt)
+
+            # 2. 生成 4×2 lookbook
+            valid_ratios = {"1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1",
+                            "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"}
+            aspect = imagegen_size if imagegen_size in valid_ratios else "4:3"
+            if imagegen_size and imagegen_size not in valid_ratios:
+                logger.warning(
+                    "[%s] lookbook_imagegen_size=%r 不在 Google API 白名单，fallback 4:3",
+                    template_id, imagegen_size,
+                )
+            lookbook_bytes = await generate_image(
+                model_name=imagegen_model,
+                prompt=final_prompt,
+                image_urls=[outfit_shot_url],   # 传 outfit_shot 做参考图保证主角一致
+                aspect_ratio=aspect,
+                image_size=imagegen_quality or "2K",
+            )
+
+            # 3. 上传整张 lookbook
+            lookbook_url = await _upload_image_bytes(
+                lookbook_bytes,
+                filename=f"lookbook_{template_id[:8]}_outfit{outfit_index}.png",
+            )
+
+            # 4. 切割成 8 panel
+            panel_bytes_list = await asyncio.to_thread(split_4x2, lookbook_bytes)
+            if len(panel_bytes_list) != 8:
+                raise ValueError(
+                    f"lookbook_gen outfit[{outfit_index}] 切割结果非 8（{len(panel_bytes_list)}）"
+                )
+
+            # 5. 并发上传 8 panel —— 任何一个失败也算整个 outfit 失败
+            async def _upload_panel(idx_zero_based: int) -> str:
+                async with panel_upload_sem:
+                    return await _upload_image_bytes(
+                        panel_bytes_list[idx_zero_based],
+                        filename=f"lookbook_{template_id[:8]}_o{outfit_index}_p{idx_zero_based + 1}.png",
+                    )
+
+            panel_urls = await asyncio.gather(*[_upload_panel(i) for i in range(8)])
+
+            return {
+                "outfit_index": outfit_index,
+                "outfit_shot_image_url": outfit_shot_url,
+                "generated_prompt": generated_prompt,
+                "lookbook_image_url": lookbook_url,
+                "panels": [
+                    {
+                        "index": i + 1,
+                        "image_url": panel_urls[i],
+                        "is_reference": (i == 0),  # panel_1 留作参考图
+                        "used_in_remix_id": None,
+                    }
+                    for i in range(8)
+                ],
+                "regenerated_count": 0,
+                "last_regenerated_at": None,
+            }
+
+    # 任一 outfit 失败就抛出（match _run_outfit_detail_analysis 的严格语义）
+    results = await asyncio.gather(
+        *[_do_one(i, o) for i, o in enumerate(outfit_shots)],
+        return_exceptions=True,
+    )
+    failures = [(i, r) for i, r in enumerate(results) if isinstance(r, Exception)]
+    if failures:
+        idx, exc = failures[0]
+        logger.error(
+            "[%s] lookbook_gen 整体失败：共 %d 个 outfit，其中 %d 个失败；首个错误 outfit[%d]: %s",
+            template_id, len(results), len(failures), idx, exc,
+        )
+        raise ValueError(
+            f"lookbook_gen 失败 {len(failures)}/{len(results)} 个 outfit；"
+            f"first error at outfit[{idx}]: {exc}"
+        ) from exc
+    return list(results)
+
+
+async def _upload_image_bytes(image_bytes: bytes, *, filename: str) -> str:
+    """走现有 CDN 上传通道，返回 url。"""
+    from app.services.upload_service import UpstreamImageUploadService, detect_image_content_type
+    content_type, _ext = detect_image_content_type(image_bytes)
+    svc = UpstreamImageUploadService()
+    result = await svc.upload_image(image_bytes, content_type, filename)
+    return result.url
+
+
+async def _ensure_each_outfit_has_unused_panel(
+    template_id: str, lookbooks: list[dict],
+) -> list[dict]:
+    """对每个 lookbook：panel_2~8 全部已用时自动重生成（用户不感知）。
+    返回更新后的 lookbooks（保持顺序）；内部调 _regenerate_outfit_lookbook 会写 DB。
+    """
+    updated = list(lookbooks)
+    regen_count = 0
+    for i, lb in enumerate(updated):
+        panels = lb.get("panels") or []
+        has_unused = any(
+            not p.get("is_reference") and not p.get("used_in_remix_id")
+            for p in panels
+        )
+        if has_unused:
+            continue
+        oi = lb.get("outfit_index")
+        logger.info(
+            "[%s] outfit[%s] lookbook 池子耗尽，自动重生成 8 拼图",
+            template_id, oi,
+        )
+        new_lookbooks = await _regenerate_outfit_lookbook(
+            template_id=template_id,
+            outfit_index=oi,
+        )
+        for new_lb in new_lookbooks:
+            if new_lb.get("outfit_index") == oi:
+                updated[i] = new_lb
+                break
+        regen_count += 1
+    if regen_count > 0:
+        logger.info("[%s] 自动重生 %d 个 lookbook 完成", template_id, regen_count)
+    return updated
+
+
+def _auto_pick_initial_panels_for_lookbooks(lookbooks: list[dict]) -> tuple[list[dict], list[dict]]:
+    """给每个 lookbook 选一个未用、非参考的 panel，标记为 used，并返回拾起信息。
+
+    返回 (lookbooks 原对象被原地修改, picked_entries)
+    picked_entries 每条形如 {remix_id, outfit_index, panel_index, panel_image_url}。
+    若某 lookbook 池子已全用完，跳过该 lookbook（这种情况只在断点续跑或异常时出现）。
+    """
+    picked: list[dict] = []
+    for lb in lookbooks:
+        target = None
+        for p in lb["panels"]:
+            if p.get("is_reference"):
+                continue
+            if p.get("used_in_remix_id"):
+                continue
+            target = p
+            break
+        if target is None:
+            continue
+        remix_id = str(uuid4())
+        target["used_in_remix_id"] = remix_id
+        picked.append({
+            "remix_id": remix_id,
+            "outfit_index": lb["outfit_index"],
+            "panel_index": target["index"],
+            "panel_image_url": target["image_url"],
+        })
+    return lookbooks, picked
+
+
+async def _finalize_initial_remixes(
+    template_id: str,
+    *,
+    success: bool,
+    error_message: str | None = None,
+) -> None:
+    """pipeline 结束时（success / fail），把本次 auto-initial remix_history 行 status 翻成最终状态。
+
+    成功时 downstream_result 用 state 里的 final_outfits / extracted_shots 摘录。
+    """
+    state = video_ai_states.get(template_id) or {}
+    initial_remix_ids = state.get("initial_remix_ids") or []
+    if not initial_remix_ids:
+        return
+    final_outfits = state.get("final_outfits") or []
+    extracted_shots = state.get("extracted_shots") or []
+    now_iso = _utcnow_iso()
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, UUID(template_id))
+        if tpl is None:
+            return
+        history = list(tpl.remix_history or [])
+        for h in history:
+            if h.get("remix_id") in initial_remix_ids and h.get("status") == "running":
+                h["completed_at"] = now_iso
+                if success:
+                    h["status"] = "success"
+                    # 用 outfit_index 找对应位置的最终造型图
+                    oi = h.get("outfit_index")
+                    matched = final_outfits[oi] if isinstance(oi, int) and 0 <= oi < len(final_outfits) else None
+                    h["downstream_result"] = {
+                        "final_outfit": matched,
+                        "extracted_shot": extracted_shots[oi] if isinstance(oi, int) and 0 <= oi < len(extracted_shots) else None,
+                    }
+                else:
+                    h["status"] = "failed"
+                    h["error_message"] = (error_message or "")[:500]
+        tpl.remix_history = history
+        await session.commit()
+    # 同步清掉 state.initial_remix_ids 防止下次断点续跑误判（视为完成）
+    if state:
+        state.pop("initial_remix_ids", None)
+
+
+# ----- Soft retry：从阶段 2.5 重新挑 panel + 跑下游（不重抽帧/不重识别穿搭/不重生 lookbook） -----
+
+
+async def soft_retry_template(
+    template_id: str,
+    *,
+    abandon_task_ids_on_fail: list[str] | None = None,
+    cta: bool | None = None,
+) -> None:
+    """从阶段 2.5 软重试：复用已有 lookbooks，给每个 outfit 重新挑下一个未用 panel + 跑下游。
+
+    跟 hard restart 区别：
+      - 不重跑 imagegen / outfit_selecting / lookbook_gen（这些 stages 标记为 completed）
+      - state.initial_remix_ids 和 outfit_shots 被清空，让 _run_pipeline 重新自动挑 panel
+      - 已使用过的 panel 保留 used_in_remix_id 标记，不会被重复挑
+      - **某 outfit 池子耗尽 → pipeline 内自动重生该 outfit 的 lookbook（用户不感知）**
+
+    若模板压根没有 lookbooks（老模板）→ raise ValueError，调用方应回退到 hard restart。
+    """
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, UUID(template_id))
+        if tpl is None:
+            raise ValueError(f"template {template_id} 不存在")
+        if not tpl.lookbooks:
+            # 完全没有 lookbook（老模板）→ 上层应该 fallback 到 hard restart
+            raise ValueError(f"template {template_id} 还没有 lookbook，无法 soft retry")
+        # 池子耗尽不报错；pipeline 会自动重生 lookbook（用户不感知）
+
+        # 解析现有 state，清掉本次要重做的部分
+        state: dict = {}
+        if tpl.process_state:
+            try:
+                state = json.loads(tpl.process_state) or {}
+            except Exception:
+                state = {}
+        # 保留 imagegen/outfit_selecting/lookbook_gen 已完成的标记，去掉下游
+        completed = list(state.get("completed_stages") or [])
+        preserve = {"imagegen", "outfit_selecting", "lookbook_gen"}
+        state["completed_stages"] = [s for s in completed if s in preserve]
+        # 确保三个上游阶段都标记完成（万一历史 state 缺）
+        for s in ("imagegen", "outfit_selecting", "lookbook_gen"):
+            if s not in state["completed_stages"]:
+                state["completed_stages"].append(s)
+        # 关键：清掉 initial_remix_ids 让 pipeline 重新挑 panel；清掉 outfit_shots 让 pipeline 用 panel 替代
+        state.pop("initial_remix_ids", None)
+        state.pop("outfit_shots", None)
+        # 清掉下游产物
+        for k in ("outfit_detailing_progress", "intent_json", "prompt_description",
+                  "product_gen_results", "product_search_results", "final_outfits", "extracted_shots"):
+            state.pop(k, None)
+        state["status"] = VideoAIProcessStatus.pending.value
+        state["error_message"] = ""
+        state["updated_at"] = _utcnow_iso()
+
+        # extra 字段也清掉对应中间产物
+        extra = dict(tpl.extra or {})
+        for k in ("outfit_detailing_progress", "intent_json", "product_gen_results",
+                  "product_search_results", "final_outfits"):
+            extra.pop(k, None)
+        # cta / abandon map 通过 extra 透传给 _run_pipeline（与 batch_restart 同款 protocol）
+        if abandon_task_ids_on_fail is not None:
+            extra["abandon_task_ids_on_fail"] = list(abandon_task_ids_on_fail)
+        # 关键：标记成功结束时把 final_outfits 同步回关联 video_tasks（同 hard restart）
+        extra["sync_shots_to_tasks"] = True
+        if cta is not None:
+            state["cta"] = bool(cta)
+
+        tpl.process_state = json.dumps(state, ensure_ascii=False)
+        tpl.process_status = VideoAIProcessStatus.pending
+        tpl.process_error = None
+        tpl.extracted_shots = None
+        tpl.extra = extra
+        await session.commit()
+
+    # 内存 state 同步刷新
+    video_ai_states[template_id] = _ensure_state_shape(state, template_id)
+    _mark_dirty(template_id)
+    _sync_shots_on_success.add(template_id)
+    if abandon_task_ids_on_fail is not None:
+        _abandon_task_ids_on_fail[template_id] = list(abandon_task_ids_on_fail)
+
+    # 入队
+    await enqueue_template(template_id)
+    logger.info("[%s] soft retry 已入队（从阶段 2.5 重挑 panel + 跑下游）", template_id)
+
+
+async def batch_soft_retry_templates(
+    *,
+    template_ids: list[str],
+    abandon_task_ids_on_fail: dict[str, list[str]] | None = None,
+    cta_map: dict[str, bool] | None = None,
+) -> dict:
+    """批量 soft retry。对每个模板：若有 lookbook 且至少一个 outfit 池子还有未用 panel 就 soft；
+    否则 fallback 到 hard restart。
+
+    返回 {soft: [...], hard_fallback: [...], skipped: [...]}（id 列表）
+    """
+    soft_ids: list[str] = []
+    hard_fallback_ids: list[str] = []
+    skipped: list[str] = []
+    for tpl_id in template_ids:
+        try:
+            await soft_retry_template(
+                tpl_id,
+                abandon_task_ids_on_fail=(abandon_task_ids_on_fail or {}).get(tpl_id),
+                cta=(cta_map or {}).get(tpl_id),
+            )
+            soft_ids.append(tpl_id)
+        except ValueError as exc:
+            # 没有 lookbook 或池子全耗尽 → 走 hard restart 兜底
+            logger.info("[%s] soft retry 不可用，fallback hard restart: %s", tpl_id, exc)
+            try:
+                await batch_restart_templates(
+                    owner_id=None,
+                    template_ids=[tpl_id],
+                    abandon_task_ids_on_fail={tpl_id: (abandon_task_ids_on_fail or {}).get(tpl_id, [])} if abandon_task_ids_on_fail else None,
+                    cta_map={tpl_id: (cta_map or {}).get(tpl_id, False)} if cta_map else None,
+                )
+                hard_fallback_ids.append(tpl_id)
+            except Exception as exc2:
+                logger.exception("[%s] hard restart 兜底也失败: %s", tpl_id, exc2)
+                skipped.append(tpl_id)
+        except Exception as exc:
+            logger.exception("[%s] soft retry 异常: %s", tpl_id, exc)
+            skipped.append(tpl_id)
+    logger.info(
+        "batch_soft_retry_templates 完成：soft=%d hard_fallback=%d skipped=%d",
+        len(soft_ids), len(hard_fallback_ids), len(skipped),
+    )
+    return {"soft": soft_ids, "hard_fallback": hard_fallback_ids, "skipped": skipped}
+
+
+# ----- Remix 触发 -----
+
+# 进程内锁：避免同一 template 并发 remix 时抢同一 panel
+_remix_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_remix_lock(template_id: str) -> asyncio.Lock:
+    lock = _remix_locks.get(template_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _remix_locks[template_id] = lock
+    return lock
+
+
+async def remix_template(
+    template_id: str,
+    *,
+    outfit_index: int | None = None,
+    panel_index: int | None = None,
+) -> dict:
+    """触发一次重洗。
+
+    1. 选 panel（指定/round-robin/池子耗尽时重生 lookbook）
+    2. 写 remix_history 一行（status=running）+ 标记 panel.used_in_remix_id + remix_count+=1
+    3. asyncio.create_task 后台跑下游 stages
+    4. 立即返回 {remix_id, outfit_index, panel_index, panel_image_url, status="running"}
+    """
+    from app.models.video_ai_template import VideoAITemplate
+
+    async with _get_remix_lock(template_id):
+        async with SessionLocal() as session:
+            tpl = await session.get(VideoAITemplate, UUID(template_id))
+            if tpl is None:
+                raise ValueError(f"template {template_id} 不存在")
+            if not tpl.lookbooks:
+                raise ValueError("该模板还没有 lookbook（阶段 2.5 未完成）")
+
+            lookbooks: list[dict] = list(tpl.lookbooks or [])
+            target_outfit, target_panel = _pick_panel_for_remix(lookbooks, outfit_index, panel_index)
+
+            if target_panel is None:
+                # 池子耗尽 → 重新生成该 outfit 的 lookbook
+                outfit_for_regen = target_outfit if target_outfit is not None else 0
+                logger.info("[%s] remix: outfit[%d] 池子耗尽，重新生成 lookbook", template_id, outfit_for_regen)
+                lookbooks = await _regenerate_outfit_lookbook(
+                    template_id=template_id, outfit_index=outfit_for_regen,
+                )
+                tpl.lookbooks = lookbooks
+                await session.commit()
+                target_outfit, target_panel = _pick_panel_for_remix(lookbooks, outfit_for_regen, None)
+                if target_panel is None:
+                    raise RuntimeError("lookbook 重生后仍无可用 panel（生成失败）")
+
+            remix_id = uuid4()
+            now = _utcnow_iso()
+
+            # 标记 panel.used_in_remix_id
+            for lb in lookbooks:
+                if lb["outfit_index"] == target_outfit:
+                    for p in lb["panels"]:
+                        if p["index"] == target_panel["index"]:
+                            p["used_in_remix_id"] = str(remix_id)
+                            break
+                    break
+
+            # remix_history 追加
+            history = list(tpl.remix_history or [])
+            history.append({
+                "remix_id": str(remix_id),
+                "outfit_index": target_outfit,
+                "panel_index": target_panel["index"],
+                "panel_image_url": target_panel["image_url"],
+                "started_at": now,
+                "completed_at": None,
+                "status": "running",
+                "error_message": None,
+                "downstream_result": None,
+            })
+
+            tpl.lookbooks = lookbooks
+            tpl.remix_history = history
+            tpl.remix_count = (tpl.remix_count or 0) + 1
+            await session.commit()
+
+    # 异步触发下游
+    asyncio.create_task(_run_downstream_for_remix(
+        template_id=template_id,
+        remix_id=str(remix_id),
+        outfit_index=target_outfit,
+        panel=target_panel,
+    ))
+
+    return {
+        "remix_id": remix_id,
+        "outfit_index": target_outfit,
+        "panel_index": target_panel["index"],
+        "panel_image_url": target_panel["image_url"],
+        "status": "running",
+    }
+
+
+def _pick_panel_for_remix(
+    lookbooks: list[dict],
+    requested_outfit: int | None,
+    requested_panel: int | None,
+) -> tuple[int | None, dict | None]:
+    """从 lookbooks 里挑下一个未用 panel。
+
+    - 指定 outfit + panel → 必须精确匹配且未用
+    - 仅指定 outfit → 该 outfit 池子里下一个 is_reference=False 且 used_in_remix_id=None
+    - 都不指定 → 跨 outfit round-robin（先用 outfit_0 panel_2，再 outfit_1 panel_2，依次...）
+
+    返回 (outfit_index, panel_dict)；选不到时 panel=None。
+    """
+    if not lookbooks:
+        return None, None
+
+    if requested_outfit is not None and requested_panel is not None:
+        for lb in lookbooks:
+            if lb["outfit_index"] != requested_outfit:
+                continue
+            for p in lb["panels"]:
+                if p["index"] == requested_panel:
+                    if p.get("is_reference"):
+                        return requested_outfit, None
+                    if p.get("used_in_remix_id"):
+                        return requested_outfit, None
+                    return requested_outfit, p
+            return requested_outfit, None
+        return requested_outfit, None
+
+    if requested_outfit is not None:
+        for lb in lookbooks:
+            if lb["outfit_index"] != requested_outfit:
+                continue
+            for p in lb["panels"]:
+                if p.get("is_reference"):
+                    continue
+                if p.get("used_in_remix_id"):
+                    continue
+                return requested_outfit, p
+        return requested_outfit, None
+
+    # round-robin：按 panel_index 优先，遍历 panels[2..8] × outfits
+    max_panels = max((len(lb["panels"]) for lb in lookbooks), default=0)
+    for panel_i in range(2, max_panels + 1):
+        for lb in lookbooks:
+            for p in lb["panels"]:
+                if p["index"] != panel_i:
+                    continue
+                if p.get("is_reference") or p.get("used_in_remix_id"):
+                    continue
+                return lb["outfit_index"], p
+    return None, None
+
+
+async def _regenerate_outfit_lookbook(*, template_id: str, outfit_index: int) -> list[dict]:
+    """重生某 outfit 的 lookbook（panels 池子重置）。返回更新后的 lookbooks 列表。"""
+    from app.models.video_ai_template import VideoAITemplate
+
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, UUID(template_id))
+        if tpl is None:
+            raise ValueError(f"template {template_id} 不存在")
+        lookbooks = list(tpl.lookbooks or [])
+        target = next((lb for lb in lookbooks if lb["outfit_index"] == outfit_index), None)
+        if target is None:
+            raise ValueError(f"outfit_index={outfit_index} 不存在")
+
+        cfg = await _load_pipeline_settings_for_template(session, tpl)
+
+    # 用原来的 outfit_shot_image_url 当 reference 重新走一遍 _run_lookbook_stage 的单条逻辑
+    single = await _run_lookbook_stage(
+        template_id=template_id,
+        outfit_shots=[{
+            "image_url": target["outfit_shot_image_url"],
+            "frame_index": None,
+            "group_frame_indices": [],
+        }],
+        analysis_model=cfg["lookbook_analysis_model"],
+        analysis_prompt=cfg["lookbook_analysis_prompt"],
+        analysis_temperature=cfg["lookbook_analysis_temperature"],
+        imagegen_model=cfg["lookbook_imagegen_model"],
+        imagegen_prompt=cfg["lookbook_imagegen_prompt"],
+        imagegen_size=cfg["lookbook_imagegen_size"],
+        imagegen_quality=cfg["lookbook_imagegen_quality"],
+    )
+    if not single:
+        raise RuntimeError("lookbook 重生失败")
+
+    new_lb = single[0]
+    new_lb["outfit_index"] = outfit_index
+    new_lb["regenerated_count"] = (target.get("regenerated_count") or 0) + 1
+    new_lb["last_regenerated_at"] = _utcnow_iso()
+
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, UUID(template_id))
+        lookbooks = list(tpl.lookbooks or [])
+        for i, lb in enumerate(lookbooks):
+            if lb["outfit_index"] == outfit_index:
+                lookbooks[i] = new_lb
+                break
+        tpl.lookbooks = lookbooks
+        await session.commit()
+    return lookbooks
+
+
+async def _load_pipeline_settings_for_template(session: AsyncSession, tpl) -> dict:
+    from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+    cfg_owner = tpl.owner_id if tpl.owner_id is not None else UUID(int=0)
+    ps = await get_or_create_pipeline_settings(session, owner_id=cfg_owner)
+    return {
+        "lookbook_analysis_model": ps.lookbook_analysis_model,
+        "lookbook_analysis_prompt": ps.lookbook_analysis_prompt,
+        "lookbook_analysis_temperature": ps.lookbook_analysis_temperature,
+        "lookbook_imagegen_model": ps.lookbook_imagegen_model,
+        "lookbook_imagegen_prompt": ps.lookbook_imagegen_prompt,
+        "lookbook_imagegen_size": ps.lookbook_imagegen_size,
+        "lookbook_imagegen_quality": ps.lookbook_imagegen_quality,
+    }
+
+
+async def _run_downstream_for_remix(
+    *,
+    template_id: str,
+    remix_id: str,
+    outfit_index: int,
+    panel: dict,
+) -> None:
+    """后台跑 outfit_detailing → product_imagegen → outfit_regen，对选中的 panel 当 outfit reference。
+
+    完成后写回 remix_history 那一行的 status / completed_at / downstream_result。
+    """
+    from app.models.video_ai_template import VideoAITemplate
+
+    panel_url = panel["image_url"]
+    panel_idx = panel["index"]
+    single_outfit_shot = [{
+        "image_url": panel_url,
+        "frame_index": None,
+        "group_frame_indices": [],
+    }]
+
+    error_msg: str | None = None
+    downstream_result: dict | None = None
+
+    try:
+        # 取 pipeline settings
+        async with SessionLocal() as session:
+            tpl = await session.get(VideoAITemplate, UUID(template_id))
+            if tpl is None:
+                raise ValueError(f"template {template_id} 不存在")
+            from app.services.pipeline_settings_service import get_or_create_pipeline_settings
+            cfg_owner = tpl.owner_id if tpl.owner_id is not None else UUID(int=0)
+            ps = await get_or_create_pipeline_settings(session, owner_id=cfg_owner)
+            outfit_detail_model = ps.outfit_detail_model
+            outfit_detail_prompt = ps.outfit_detail_prompt
+            outfit_detail_temperature = ps.outfit_detail_temperature
+            product_imagegen_model = ps.product_imagegen_model
+            product_imagegen_prompt = ps.product_imagegen_prompt
+            product_imagegen_size = ps.product_imagegen_size
+            product_imagegen_quality = ps.product_imagegen_quality
+            outfit_regen_model = ps.outfit_regen_model
+            outfit_regen_prompt = ps.outfit_regen_prompt
+            outfit_regen_size = ps.outfit_regen_size
+            outfit_regen_quality = ps.outfit_regen_quality
+
+        _set_status(template_id, VideoAIProcessStatus.remixing)
+
+        # 1. 单 outfit 单品理解
+        outfit_details = await _run_outfit_detail_analysis(
+            template_id=template_id,
+            outfit_shots=single_outfit_shot,
+            model=outfit_detail_model,
+            prompt=outfit_detail_prompt,
+            temperature=outfit_detail_temperature,
+        )
+
+        # 2. 单品生图
+        product_gen_results = await _run_product_imagegen(
+            template_id=template_id,
+            outfit_details=outfit_details,
+            outfit_shots=single_outfit_shot,
+            model=product_imagegen_model,
+            prompt=product_imagegen_prompt,
+            size=product_imagegen_size,
+            quality=product_imagegen_quality,
+        )
+
+        # 3. 新造型生图
+        final_outfits = await _run_outfit_regen(
+            template_id=template_id,
+            outfit_details=outfit_details,
+            product_gen_results=product_gen_results,
+            outfit_shots=single_outfit_shot,
+            model=outfit_regen_model,
+            prompt=outfit_regen_prompt,
+            size=outfit_regen_size,
+            quality=outfit_regen_quality,
+        )
+
+        downstream_result = {
+            "outfit_details": outfit_details,
+            "product_gen_results": product_gen_results,
+            "final_outfits": final_outfits,
+        }
+        logger.info("[%s] remix %s downstream 完成 (outfit_idx=%d panel_idx=%d)",
+                    template_id, remix_id, outfit_index, panel_idx)
+    except Exception as exc:
+        logger.exception("[%s] remix %s downstream 失败: %s", template_id, remix_id, exc)
+        error_msg = str(exc)[:500]
+
+    # 写回 remix_history 这一行
+    async with SessionLocal() as session:
+        tpl = await session.get(VideoAITemplate, UUID(template_id))
+        if tpl is None:
+            return
+        history = list(tpl.remix_history or [])
+        for h in history:
+            if h["remix_id"] == remix_id:
+                h["completed_at"] = _utcnow_iso()
+                h["status"] = "success" if error_msg is None else "failed"
+                h["error_message"] = error_msg
+                h["downstream_result"] = downstream_result
+                break
+        tpl.remix_history = history
+        await session.commit()
+    _set_status(template_id, VideoAIProcessStatus.success)
+    await _persist_states([template_id])
+
+
 async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
     """
     执行视频 AI 处理管道
@@ -1682,6 +2466,118 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
                         await session.commit()
                 logger.info("[%s] outfit_selecting stage completed, %d unique outfits", template_id, len(outfit_shots))
 
+            # ========== 步骤 2.5: 8 拼图生成与拆分（每个 outfit_shot → 4×2 lookbook → 8 panel）==========
+            if "lookbook_gen" in completed_stages:
+                # 断点续跑 / soft retry：从 DB 读现成 lookbooks，跳过生成
+                async with SessionLocal() as session:
+                    _tpl_for_lb = await session.get(VideoAITemplate, uuid_val)
+                    lookbooks = list(_tpl_for_lb.lookbooks or []) if _tpl_for_lb else []
+                state["lookbooks"] = lookbooks
+                logger.info("[%s] lookbook_gen skipped (already completed), %d lookbooks restored", template_id, len(lookbooks))
+            else:
+                _set_status(template_id, VideoAIProcessStatus.lookbook_gen)
+                logger.info("[%s] lookbook_gen stage started, %d outfit_shots", template_id, len(outfit_shots))
+                try:
+                    lookbooks = await _run_lookbook_stage(
+                        template_id=template_id,
+                        outfit_shots=outfit_shots,
+                        analysis_model=pipeline_cfg.lookbook_analysis_model,
+                        analysis_prompt=pipeline_cfg.lookbook_analysis_prompt,
+                        analysis_temperature=pipeline_cfg.lookbook_analysis_temperature,
+                        imagegen_model=pipeline_cfg.lookbook_imagegen_model,
+                        imagegen_prompt=pipeline_cfg.lookbook_imagegen_prompt,
+                        imagegen_size=pipeline_cfg.lookbook_imagegen_size,
+                        imagegen_quality=pipeline_cfg.lookbook_imagegen_quality,
+                    )
+                except Exception as exc:
+                    logger.exception("[%s] lookbook_gen stage failed: %s", template_id, exc)
+                    raise
+                state["lookbooks"] = lookbooks
+                state["updated_at"] = _utcnow_iso()
+                if "lookbook_gen" not in state.get("completed_stages", []):
+                    state.setdefault("completed_stages", []).append("lookbook_gen")
+                _mark_dirty(template_id)
+                async with SessionLocal() as session:
+                    tpl = await session.get(VideoAITemplate, uuid_val)
+                    if tpl:
+                        tpl.lookbooks = lookbooks
+                        tpl.process_state = json.dumps(state, ensure_ascii=False)
+                        await session.commit()
+                logger.info(
+                    "[%s] lookbook_gen completed, %d lookbooks (each w/ 7-panel pool)",
+                    template_id, len(lookbooks),
+                )
+
+            # ========== 阶段 2.5 完成后：自动给每个 outfit 挑一个未用 panel 作为下游 outfit reference ==========
+            # 若已经有 auto-initial 标记的 remix（如断点续跑场景），就不重复挑；否则挑 panel_2~8 中第一个未用。
+            # 任一 outfit 池子耗尽 → 透明地自动重生 lookbook（用户不感知）
+            initial_remix_ids: list[str] = state.get("initial_remix_ids") or []
+            if not initial_remix_ids and lookbooks:
+                lookbooks = await _ensure_each_outfit_has_unused_panel(template_id, lookbooks)
+                state["lookbooks"] = lookbooks
+                _, picked = _auto_pick_initial_panels_for_lookbooks(lookbooks)
+                if not picked:
+                    # 兜底：重生成后仍挑不到（生成失败的极少数情况）
+                    logger.error("[%s] 自动重生 lookbook 后仍无可用 panel，pipeline 失败", template_id)
+                    raise RuntimeError("阶段 2.5 重生 lookbook 后仍无可用 panel")
+                else:
+                    panel_outfit_shots: list[dict] = []
+                    history = list(state.get("remix_history") or [])
+                    now_iso = _utcnow_iso()
+                    for entry in picked:
+                        initial_remix_ids.append(entry["remix_id"])
+                        history.append({
+                            "remix_id": entry["remix_id"],
+                            "outfit_index": entry["outfit_index"],
+                            "panel_index": entry["panel_index"],
+                            "panel_image_url": entry["panel_image_url"],
+                            "started_at": now_iso,
+                            "completed_at": None,
+                            "status": "running",
+                            "error_message": None,
+                            "downstream_result": None,
+                            "is_initial": True,
+                        })
+                        panel_outfit_shots.append({
+                            "image_url": entry["panel_image_url"],
+                            "frame_index": None,
+                            "group_frame_indices": [],
+                        })
+                    state["initial_remix_ids"] = initial_remix_ids
+                    state["remix_history"] = history
+                    # 用 panel 替换 outfit_shots 喂给下游（不破坏 stage 2 的原数据，原数据在 lookbooks[].outfit_shot_image_url 里）
+                    outfit_shots = panel_outfit_shots
+                    state["outfit_shots"] = panel_outfit_shots
+                    async with SessionLocal() as session:
+                        tpl = await session.get(VideoAITemplate, uuid_val)
+                        if tpl:
+                            tpl.lookbooks = lookbooks
+                            tpl.remix_history = history
+                            tpl.remix_count = (tpl.remix_count or 0) + len(picked)
+                            tpl.process_state = json.dumps(state, ensure_ascii=False)
+                            await session.commit()
+                    logger.info(
+                        "[%s] auto-picked %d initial panels for downstream (outfits=%s)",
+                        template_id, len(picked), [e["outfit_index"] for e in picked],
+                    )
+            elif initial_remix_ids and lookbooks:
+                # 断点续跑：从 lookbooks 里反查这些 remix_id 对应的 panel，重建 outfit_shots
+                picked_urls: list[dict] = []
+                for rid in initial_remix_ids:
+                    for lb in lookbooks:
+                        match = next((p for p in lb["panels"] if p.get("used_in_remix_id") == rid), None)
+                        if match:
+                            picked_urls.append({
+                                "image_url": match["image_url"],
+                                "frame_index": None,
+                                "group_frame_indices": [],
+                            })
+                            break
+                if picked_urls:
+                    outfit_shots = picked_urls
+                    state["outfit_shots"] = picked_urls
+                    logger.info("[%s] resumed: %d panels restored for downstream", template_id, len(picked_urls))
+
             # ========== 步骤 3: 穿搭单品理解（每个穿搭 → outfit_style + solo_products）==========
             if "outfit_detailing" in completed_stages:
                 outfit_details = state.get("outfit_detailing_progress") or []
@@ -1876,6 +2772,9 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             _set_status(template_id, VideoAIProcessStatus.success)
             logger.info("[%s] pipeline completed", template_id)
 
+            # 阶段 2.5 auto-initial remix_history 行翻 status=success
+            await _finalize_initial_remixes(template_id, success=True)
+
             # 最终持久化
             await _persist_states([template_id])
 
@@ -1927,6 +2826,11 @@ async def _run_pipeline(template_id: str, semaphore: asyncio.Semaphore) -> None:
             # 任务失败，记录错误
             logger.exception("[%s] pipeline failed: %s", template_id, exc)
             _set_status(template_id, VideoAIProcessStatus.fail, error=str(exc))
+            # 阶段 2.5 auto-initial remix_history 行翻 status=failed
+            try:
+                await _finalize_initial_remixes(template_id, success=False, error_message=str(exc))
+            except Exception:
+                logger.exception("[%s] _finalize_initial_remixes failed", template_id)
             await _persist_states([template_id])
             await _abandon_linked_tasks_if_marked(template_id)
         finally:
@@ -2328,6 +3232,8 @@ async def recover_stuck_templates_on_startup() -> None:
         VideoAIProcessStatus.understanding,
         VideoAIProcessStatus.imagegen,
         VideoAIProcessStatus.outfit_selecting,
+        VideoAIProcessStatus.lookbook_gen,   # 阶段 2.5
+        VideoAIProcessStatus.remixing,        # 阶段 2.5 后的下游
         VideoAIProcessStatus.outfit_detailing,
         VideoAIProcessStatus.product_imagegen,
         VideoAIProcessStatus.outfit_regen,

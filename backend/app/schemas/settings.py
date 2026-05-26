@@ -87,6 +87,15 @@ class PipelineSettingsPayload(BaseModel):
     outfit_select_model: str = "gemini-3.1-pro-preview"
     outfit_select_prompt: str = ""
     outfit_select_temperature: float = 0.3
+    # 步骤2.5a：分析 Prompt（读 outfit_shot → 产出最终生图 Prompt）
+    lookbook_analysis_model: str = "gemini-3-pro-preview"
+    lookbook_analysis_prompt: str = ""
+    lookbook_analysis_temperature: float = 0.3
+    # 步骤2.5b：4×2 八拼图生成（size=aspect ratio，quality=分辨率档）
+    lookbook_imagegen_model: str = "gemini-3.1-flash-image-preview"
+    lookbook_imagegen_prompt: str = ""
+    lookbook_imagegen_size: str = "4:3"
+    lookbook_imagegen_quality: str = "2K"
     # 步骤3a：对每个 unique 穿搭图理解单品
     outfit_detail_model: str = "gemini-3.1-pro-preview"
     outfit_detail_prompt: str = ""

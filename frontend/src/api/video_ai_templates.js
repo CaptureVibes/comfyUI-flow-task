@@ -144,3 +144,20 @@ export async function fetchTemplatesByTags(tagIds) {
   })
   return data
 }
+
+// ── 阶段 2.5 lookbook / 重洗 ──────────────────────────────────────────────────
+
+export async function fetchTemplateLookbooks(templateId) {
+  const { data } = await http.get(`/video-ai-templates/${templateId}/lookbooks`)
+  return data
+}
+
+export async function remixTemplate(templateId, payload = {}) {
+  const { data } = await http.post(`/video-ai-templates/${templateId}/remix`, payload)
+  return data
+}
+
+export async function regenerateOutfitLookbook(templateId, outfitIndex) {
+  const { data } = await http.post(`/video-ai-templates/${templateId}/lookbooks/${outfitIndex}/regenerate`)
+  return data
+}

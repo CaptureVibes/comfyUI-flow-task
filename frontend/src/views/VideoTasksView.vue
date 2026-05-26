@@ -775,8 +775,8 @@ async function handleBatchReanalyze() {
   const status = retryFilterStatus.value
   const count = status ? (taskStats.value[status] || 0) : null
   const tip = status
-    ? `确定对 ${targetDate.value} 当天「${STATUS_LABELS[status]}」状态的 ${count} 个任务关联的模板从头重跑？现有中间产物会被清空。`
-    : `确定对 ${targetDate.value} 当天所有任务关联的模板从头重跑整条 AI 流水线（抽帧 → 穿搭识别 → 单品理解 → 视频理解 → 生图 → 造型重生）？现有 prompt_description / 单品图 / 造型图等中间产物会被清空。`
+    ? `确定对 ${targetDate.value} 当天「${STATUS_LABELS[status]}」状态的 ${count} 个任务关联的模板从阶段 2.5 重试？\n\n- 复用已有的 lookbook，每个 outfit 重新挑一张未用 panel 跑下游\n- 池子用完会自动重生成 lookbook\n- 没有 lookbook 的旧模板会自动 fallback 到从头重跑`
+    : `确定对 ${targetDate.value} 当天所有任务关联的模板从阶段 2.5 重试？\n\n- 复用已有的 lookbook，每个 outfit 重新挑一张未用 panel 跑下游\n- 池子用完会自动重生成 lookbook\n- 没有 lookbook 的旧模板会自动 fallback 到从头重跑`
   try {
     await ElMessageBox.confirm(
       tip,
