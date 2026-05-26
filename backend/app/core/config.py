@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     # Open API 配置
     open_api_base_url: str = "http://192.168.199.28:8080"
+    # 发布视频 + 轮询发布状态用的 BaseUrl（独立于 open_api_base_url）
+    # 仅作用于 /open-api/v1/upload/task 与 /open-api/v1/upload/status；
+    # 其余端点（metrics / channels / health / channel authorization / kol）仍走 open_api_base_url
+    publish_api_base_url: str = ""
     open_api_client_id: str = "default_client"
     open_api_client_secret: str = ""
     open_api_callback_url: str | None = None  # 回调地址，由外部注入

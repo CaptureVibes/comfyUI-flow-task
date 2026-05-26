@@ -221,8 +221,12 @@ class OpenAPIClient:
         base_url: str | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
+        publish_base_url: str | None = None,
     ):
         self.base_url = base_url or getattr(settings, "open_api_base_url", "http://192.168.199.28:8080")
+        # 发布视频 + 轮询发布状态走独立 base_url；未配置时回退到主 base_url
+        _publish = publish_base_url or getattr(settings, "publish_api_base_url", "")
+        self.publish_base_url = (_publish.rstrip("/") if _publish else self.base_url)
         self.client_id = client_id or getattr(settings, "open_api_client_id", "default_client")
         self.client_secret = client_secret or getattr(
             settings, "open_api_client_secret", ""
@@ -287,7 +291,7 @@ class OpenAPIClient:
         # trust_env=False 禁用系统代理
         async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
             response = await client.post(
-                f"{self.base_url}/open-api/v1/upload/task",
+                f"{self.publish_base_url}/open-api/v1/upload/task",
                 json=signed_payload,
             )
             response.raise_for_status()
@@ -306,7 +310,7 @@ class OpenAPIClient:
         # trust_env=False 禁用系统代理
         async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
             response = await client.get(
-                f"{self.base_url}/open-api/v1/upload/status",
+                f"{self.publish_base_url}/open-api/v1/upload/status",
                 params=signed_params,
             )
             response.raise_for_status()
