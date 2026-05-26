@@ -60,8 +60,8 @@ _PREVIEW_SQL = text(
     JOIN account_tiktok_bloggers abb ON vs.tiktok_blogger_id = abb.tiktok_blogger_id
     JOIN account_tags at ON at.account_id = abb.account_id
     JOIN tags t ON t.id = at.tag_id
-    WHERE (:account_id IS NULL OR abb.account_id = :account_id)
-      AND (:owner_id IS NULL OR COALESCE(tpl.owner_id, vs.owner_id) = :owner_id)
+    WHERE (CAST(:account_id AS uuid) IS NULL OR abb.account_id = CAST(:account_id AS uuid))
+      AND (CAST(:owner_id AS uuid) IS NULL OR COALESCE(tpl.owner_id, vs.owner_id) = CAST(:owner_id AS uuid))
       AND NOT EXISTS (
         SELECT 1 FROM video_source_tags vst
         WHERE vst.video_ai_template_id = tpl.id
@@ -86,8 +86,8 @@ _INSERT_SQL = text(
     JOIN video_sources vs ON vs.id = tpl.video_source_id
     JOIN account_tiktok_bloggers abb ON vs.tiktok_blogger_id = abb.tiktok_blogger_id
     JOIN account_tags at ON at.account_id = abb.account_id
-    WHERE (:account_id IS NULL OR abb.account_id = :account_id)
-      AND (:owner_id IS NULL OR COALESCE(tpl.owner_id, vs.owner_id) = :owner_id)
+    WHERE (CAST(:account_id AS uuid) IS NULL OR abb.account_id = CAST(:account_id AS uuid))
+      AND (CAST(:owner_id AS uuid) IS NULL OR COALESCE(tpl.owner_id, vs.owner_id) = CAST(:owner_id AS uuid))
       AND NOT EXISTS (
         SELECT 1 FROM video_source_tags vst
         WHERE vst.video_ai_template_id = tpl.id
