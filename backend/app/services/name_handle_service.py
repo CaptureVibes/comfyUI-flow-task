@@ -26,18 +26,24 @@ logger = logging.getLogger("app.name_handle_service")
 _CONCURRENCY = 5
 _MAX_ATTEMPTS = 3
 
-# 所有自动生成的 AI 博主签名末尾统一拼接此引流 suffix
-_SIGNATURE_BIO_SUFFIX = "Outfits from my videos are available through the link below 💗"
+# 所有自动生成的 AI 博主签名开头统一拼接此引流 prefix
+_SIGNATURE_BIO_PREFIX = "Outfits from my videos are available through the link below 💗"
 
 
-def _ensure_signature_suffix(signature: str) -> str:
-    """确保签名末尾带有引流 suffix；已包含则原样返回（幂等）。"""
-    s = (signature or "").rstrip()
-    if _SIGNATURE_BIO_SUFFIX in s:
+def _ensure_signature_prefix(signature: str) -> str:
+    """确保签名开头带有引流 prefix；已包含则原样返回（幂等）。
+
+    兼容历史脏数据：若 prefix 文案错误地出现在末尾（曾被旧版 suffix 脚本写过），
+    先剥掉末尾再前置，避免重复。
+    """
+    s = (signature or "").strip()
+    if s.endswith(_SIGNATURE_BIO_PREFIX):
+        s = s[: -len(_SIGNATURE_BIO_PREFIX)].rstrip()
+    if s.startswith(_SIGNATURE_BIO_PREFIX):
         return s
     if s:
-        return f"{s}\n\n{_SIGNATURE_BIO_SUFFIX}"
-    return _SIGNATURE_BIO_SUFFIX
+        return f"{_SIGNATURE_BIO_PREFIX}\n\n{s}"
+    return _SIGNATURE_BIO_PREFIX
 
 _queue: asyncio.Queue[str] = asyncio.Queue()
 _worker_task: asyncio.Task | None = None
@@ -389,7 +395,7 @@ async def _generate_for_account(
 
         new_name = str(result.get("name") or "").strip()
         new_handle = _normalize_handle(result.get("handle"))
-        new_signature = _ensure_signature_suffix(str(result.get("signature") or "").strip())
+        new_signature = _ensure_signature_prefix(str(result.get("signature") or "").strip())
         new_gender = _normalize_gender(result.get("gender"))
 
         # 重复检测：同 owner 下不允许相同 name 或 handle（排除自身），重复则自动追加后缀
