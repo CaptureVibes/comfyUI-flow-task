@@ -43,6 +43,11 @@ class ExternalSupplementRequest(Base):
     videos_accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     videos_duplicated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     videos_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 发起方写入的业务上下文，callback 时由对应业务域读取；不传给 vendor
+    # 结构示例（候选库）：{"source_domain": "candidate", "keyword_id": "...", "keyword_text": "..."}
+    # 结构示例（AI博主）：{"source_domain": "ai_blogger"}
+    business_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # AI 审核 / 分类未通过的视频明细，便于这次请求事后查看；元素结构见 _append_rejected_video
     rejected_videos: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # vendor 每次回调的明细：received_at / mode / final / items / videos / scheduled / dup / rej + 每个 account 的 status & video_urls

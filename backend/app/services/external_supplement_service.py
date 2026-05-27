@@ -147,15 +147,25 @@ async def submit_supplement_request(
     mode: str,                        # "exclusive" | "auto"
     target_video_count: int,
     filters: dict | None = None,
+    business_context: dict | None = None,
 ) -> dict:
     """构造 outbound payload → POST 给 vendor → 写一条 external_supplement_requests。
 
     返回 vendor 响应 + 我们生成的 request_id（便于 UI 显示）。
+
+    business_context: 调用方写入的业务元数据，不传给 vendor，仅用于 callback 时的 dispatch。
+      示例（候选库）：{"source_domain": "candidate", "keyword_id": "...", "keyword_text": "..."}
+      示例（AI博主）：{"source_domain": "ai_blogger"}
+      若未传入，默认补充 source_domain="ai_blogger" 以兼容存量逻辑。
     """
     if mode not in ("exclusive", "auto"):
         raise ValueError(f"mode 必须是 exclusive 或 auto，收到: {mode}")
     if not _vendor_configured():
         raise RuntimeError("VENDOR_SUPPLEMENT_API_URL / VENDOR_SUPPLEMENT_API_KEY 未配置")
+
+    # 补充默认 source_domain，确保 callback dispatch 始终有据可查
+    ctx = dict(business_context or {})
+    ctx.setdefault("source_domain", "ai_blogger")
 
     request_id = uuid.uuid4()
     callback_secret = f"ec_cb_{secrets.token_urlsafe(24)}"
@@ -187,6 +197,7 @@ async def submit_supplement_request(
             callback_secret=callback_secret,
             status="pending",
             vendor_request_payload=payload,
+            business_context=ctx,
         )
         session.add(row)
         from app.services.supplement_status_service import create_request_items
@@ -463,17 +474,39 @@ async def handle_supplement_callback(
         req.callbacks_received, req.videos_accepted, req.videos_duplicated, req.videos_rejected,
     )
 
-    # 异步：每条 video 单独跑 AI 审核 + 可能的分类过滤 + 写库 + enqueue
-    for entry in to_process:
+    # 按 source_domain 分发给对应业务域处理
+    business_context = req.business_context or {}
+    source_domain = business_context.get("source_domain", "ai_blogger")
+
+    logger.info(
+        "[ext_supp][callback] dispatch: request_id=%s source_domain=%s entries=%d",
+        request_id, source_domain, len(to_process),
+    )
+
+    if source_domain == "candidate":
+        # 候选库：整批交给 candidate_service 统一处理（内含共享/独享判断）
+        from app.services.candidate_service import on_vendor_callback as _candidate_on_vendor_callback
         asyncio.create_task(
-            _post_callback_pipeline(
-                account_id=entry["account_id"],
-                video=entry["video"],
-                owner_id=owner_id,
+            _candidate_on_vendor_callback(
+                to_process=to_process,
                 mode=mode,
+                owner_id=owner_id,
                 request_id=request_id,
+                business_context=business_context,
             )
         )
+    else:
+        # AI博主补充（默认）：每条 video 单独跑 AI 审核 + 分类过滤 + 写库 + enqueue
+        for entry in to_process:
+            asyncio.create_task(
+                _post_callback_pipeline(
+                    account_id=entry["account_id"],
+                    video=entry["video"],
+                    owner_id=owner_id,
+                    mode=mode,
+                    request_id=request_id,
+                )
+            )
 
     return {
         "request_id": str(request_id),

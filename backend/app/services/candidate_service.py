@@ -432,6 +432,331 @@ async def _trim_shared_top_n(
 
 
 # ---------------------------------------------------------------------------
+# Vendor 集成：候选库使用 external_supplement_service 发请求 + 接收回调
+# ---------------------------------------------------------------------------
+
+async def submit_candidate_supplement_request(
+    *,
+    owner_id: uuid.UUID | None,
+    bloggers: list[dict[str, Any]],   # [{"unique_id", "nickname", "follower_count", ...}]
+    keyword_id: uuid.UUID | None,
+    keyword_text: str,
+    cfg: _SearchConfig,
+) -> str:
+    """将候选库博主列表打包，以 vendor supplement 请求的形式发出。
+
+    每个博主虚拟为一个 account_id（UUID），映射关系存入 business_context.blogger_by_account_id，
+    callback 时 on_vendor_callback 用它还原博主信息。
+
+    返回 request_id（str）。
+    """
+    from app.core.config import settings
+    from app.db.session import SessionLocal
+    from app.models.candidate_video import CandidateVideo
+    from app.models.external_supplement_request import ExternalSupplementRequest
+    from app.models.video_source import VideoSource
+
+    if not bloggers:
+        raise ValueError("blogger 列表为空，无法发起 vendor 请求")
+
+    # 为每个博主生成一个虚拟 account_id，并记录映射
+    blogger_by_account_id: dict[str, dict[str, Any]] = {}
+    items: list[dict] = []
+
+    # 查询每个博主在候选库下已有的视频 URL（dedup 用）
+    existing_by_blogger: dict[str, list[str]] = {}
+    if keyword_id is not None:
+        async with SessionLocal() as session:
+            rows = (await session.execute(
+                select(CandidateVideo.blogger_unique_id, CandidateVideo.video_url)
+                .where(
+                    CandidateVideo.keyword_id == keyword_id,
+                    CandidateVideo.owner_id == owner_id,
+                    CandidateVideo.video_url.is_not(None),
+                )
+            )).all()
+            for uid, url in rows:
+                if uid and url:
+                    existing_by_blogger.setdefault(uid, []).append(url)
+
+    for b in bloggers:
+        virtual_account_id = str(uuid.uuid4())
+        unique_id = b["unique_id"]
+        blogger_by_account_id[virtual_account_id] = {
+            "unique_id": unique_id,
+            "nickname": b.get("nickname") or unique_id,
+            "follower_count": b.get("follower_count"),
+        }
+        items.append({
+            "account_id": virtual_account_id,
+            "blogger": {
+                "handle": unique_id,
+                "profile_url": f"https://www.tiktok.com/@{unique_id}",
+                "tiktok_blogger_id": "",
+            },
+            "existing_video_urls": existing_by_blogger.get(unique_id, []),
+        })
+
+    # 构造 business_context（callback 时还原博主信息 + keyword 上下文）
+    business_context = {
+        "source_domain": "candidate",
+        "keyword_id": str(keyword_id) if keyword_id else None,
+        "keyword_text": keyword_text,
+        "blogger_by_account_id": blogger_by_account_id,
+        "exclusive_threshold": cfg.exclusive_threshold,
+        "shared_top_n": cfg.shared_top_n,
+    }
+
+    # 组装 vendor payload（不走 _build_outbound_payload，因为这里博主不来自 AccountBloggerBinding）
+    import secrets as _secrets
+    from app.core.config import settings as _settings
+
+    if not (_settings.vendor_supplement_api_url and _settings.vendor_supplement_api_key):
+        raise RuntimeError("VENDOR_SUPPLEMENT_API_URL / VENDOR_SUPPLEMENT_API_KEY 未配置")
+
+    request_id = uuid.uuid4()
+    callback_secret = f"ec_cb_{_secrets.token_urlsafe(24)}"
+    callback_url = ((_settings.vendor_callback_public_base or "").rstrip("/")
+                    + "/api/v1/external/supplement-callback")
+
+    filters: dict = {}
+    if cfg.max_duration_seconds:
+        filters["max_duration_seconds"] = cfg.max_duration_seconds
+    if cfg.min_play_count:
+        filters["min_view_count"] = cfg.min_play_count
+    if cfg.publish_after_date:
+        filters["published_after"] = cfg.publish_after_date
+
+    payload = {
+        "request_id": str(request_id),
+        "callback_url": callback_url,
+        "callback_auth": {
+            "header_name": "X-API-Key",
+            "header_value": callback_secret,
+        },
+        "mode": "exclusive",   # 候选库让 vendor 按 exclusive 模式抓，独享/共享由我们在 callback 里判断
+        "platform": "tiktok",
+        "target_video_count": cfg.max_videos_per_blogger,
+        "filters": filters,
+        "items": items,
+    }
+
+    # 持久化请求记录
+    async with SessionLocal() as session:
+        row = ExternalSupplementRequest(
+            request_id=request_id,
+            owner_id=owner_id,
+            mode="exclusive",
+            target_video_count=cfg.max_videos_per_blogger,
+            filters=filters,
+            account_ids=[it["account_id"] for it in items],
+            callback_secret=callback_secret,
+            status="pending",
+            vendor_request_payload=payload,
+            business_context=business_context,
+        )
+        session.add(row)
+        await session.commit()
+
+    # 调 vendor
+    import httpx as _httpx
+    import json as _json
+
+    url = _settings.vendor_supplement_api_url.rstrip("/") + "/supplement-requests"
+    api_key = (_settings.vendor_supplement_api_key or "").strip()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    logger.info(
+        "【候选库→vendor】发起请求 request_id=%s keyword=%s bloggers=%d",
+        request_id, keyword_text, len(bloggers),
+    )
+    try:
+        async with _httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+        try:
+            vendor_body = resp.json()
+        except Exception:
+            vendor_body = resp.text
+        logger.info(
+            "【候选库→vendor】vendor 响应 request_id=%s http=%s body=%s",
+            request_id, resp.status_code,
+            (_json.dumps(vendor_body, ensure_ascii=False)[:500]
+             if isinstance(vendor_body, (dict, list)) else str(vendor_body)[:500]),
+        )
+        if resp.status_code != 200:
+            async with SessionLocal() as session:
+                r = await session.get(ExternalSupplementRequest, row.id)
+                if r is not None:
+                    r.status = "failed"
+                    r.vendor_response = {"http_status": resp.status_code, "body": vendor_body}
+                    await session.commit()
+            raise RuntimeError(f"vendor 返回非 200: {resp.status_code} {vendor_body}")
+        async with SessionLocal() as session:
+            r = await session.get(ExternalSupplementRequest, row.id)
+            if r is not None:
+                r.vendor_response = {"http_status": resp.status_code, "body": vendor_body}
+                await session.commit()
+    except Exception as exc:
+        logger.error("【候选库→vendor】请求失败 request_id=%s: %s", request_id, exc)
+        raise
+
+    return str(request_id)
+
+
+async def on_vendor_callback(
+    *,
+    to_process: list[dict],            # [{"account_id": uuid, "video": {...}}]
+    mode: str,
+    owner_id: uuid.UUID | None,
+    request_id: uuid.UUID,
+    business_context: dict,
+) -> None:
+    """候选库 vendor callback 处理器。
+
+    从 business_context 还原博主信息和 keyword 上下文，
+    将 vendor 返回的视频按博主分组后写入 candidate_videos，
+    并执行独享/共享阈值判断（逻辑与原 _search_blogger_videos 阶段一致）。
+    """
+    keyword_id_str: str | None = business_context.get("keyword_id")
+    keyword_id: uuid.UUID | None = uuid.UUID(keyword_id_str) if keyword_id_str else None
+    keyword_text: str = business_context.get("keyword_text") or ""
+    blogger_by_account_id: dict[str, dict[str, Any]] = business_context.get("blogger_by_account_id") or {}
+    exclusive_threshold: int = int(business_context.get("exclusive_threshold") or 10)
+    shared_top_n: int = int(business_context.get("shared_top_n") or 50)
+
+    logger.info(
+        "【候选库callback】开始处理 request_id=%s keyword=%s entries=%d",
+        request_id, keyword_text, len(to_process),
+    )
+
+    # 按 account_id（→ blogger）分组视频
+    videos_by_account: dict[str, list[dict]] = {}
+    for entry in to_process:
+        aid = str(entry["account_id"])
+        videos_by_account.setdefault(aid, []).append(entry["video"])
+
+    # 按粉丝数排序（还原 blogger 列表顺序，高粉丝优先）
+    ordered_accounts = sorted(
+        videos_by_account.keys(),
+        key=lambda aid: (blogger_by_account_id.get(aid) or {}).get("follower_count") or 0,
+        reverse=True,
+    )
+
+    shared_videos: list[dict[str, Any]] = []   # 暂存已写入的共享视频（独享触发时清除）
+    now = _utcnow()
+
+    async with SessionLocal() as session:
+        for aid in ordered_accounts:
+            blogger_info = blogger_by_account_id.get(aid) or {}
+            unique_id = blogger_info.get("unique_id") or aid
+            nickname = blogger_info.get("nickname") or unique_id
+            follower_count = blogger_info.get("follower_count")
+            videos = videos_by_account[aid]
+
+            logger.info(
+                "【候选库callback】博主=%s videos=%d threshold=%d",
+                unique_id, len(videos), exclusive_threshold,
+            )
+
+            if len(videos) >= exclusive_threshold:
+                # 独享：清除已写入的共享记录，写独享，停止
+                if shared_videos:
+                    await session.execute(
+                        sa_delete(CandidateVideo).where(
+                            CandidateVideo.keyword_id == keyword_id,
+                            CandidateVideo.owner_id == owner_id,
+                            CandidateVideo.template_type == "shared",
+                        )
+                    )
+                    await session.flush()
+                    logger.info("【候选库callback】已清除共享记录，写入独享 blogger=%s", unique_id)
+
+                rows_to_insert = [
+                    dict(
+                        id=uuid.uuid4(),
+                        owner_id=owner_id,
+                        keyword_id=keyword_id,
+                        keyword_text=keyword_text,
+                        template_type="exclusive",
+                        blogger_unique_id=unique_id,
+                        blogger_nickname=nickname,
+                        blogger_follower_count=follower_count,
+                        video_id=v.get("extra", {}).get("video_id") or v.get("source_url", "").split("/")[-1],
+                        video_url=v.get("source_url"),
+                        video_title=v.get("video_title"),
+                        duration=v.get("duration"),
+                        cover_url=v.get("thumbnail_url"),
+                        play_count=v.get("view_count"),
+                        like_count=v.get("like_count"),
+                        created_at=now,
+                    )
+                    for v in videos
+                ]
+                await _upload_covers_batch(rows_to_insert)
+                if rows_to_insert:
+                    stmt = pg_insert(CandidateVideo).values(rows_to_insert).on_conflict_do_nothing(
+                        index_elements=["keyword_id", "blogger_unique_id", "video_id"]
+                    )
+                    await session.execute(stmt)
+                await session.commit()
+
+                logger.info(
+                    "【候选库callback】keyword=%s 结果=独享 blogger=%s videos=%d",
+                    keyword_text, unique_id, len(videos),
+                )
+                return
+
+            else:
+                # 共享：写入，继续下一个博主
+                rows_to_insert = [
+                    dict(
+                        id=uuid.uuid4(),
+                        owner_id=owner_id,
+                        keyword_id=keyword_id,
+                        keyword_text=keyword_text,
+                        template_type="shared",
+                        blogger_unique_id=unique_id,
+                        blogger_nickname=nickname,
+                        blogger_follower_count=follower_count,
+                        video_id=v.get("extra", {}).get("video_id") or v.get("source_url", "").split("/")[-1],
+                        video_url=v.get("source_url"),
+                        video_title=v.get("video_title"),
+                        duration=v.get("duration"),
+                        cover_url=v.get("thumbnail_url"),
+                        play_count=v.get("view_count"),
+                        like_count=v.get("like_count"),
+                        created_at=now,
+                    )
+                    for v in videos
+                ]
+                await _upload_covers_batch(rows_to_insert)
+                if rows_to_insert:
+                    stmt = pg_insert(CandidateVideo).values(rows_to_insert).on_conflict_do_nothing(
+                        index_elements=["keyword_id", "blogger_unique_id", "video_id"]
+                    )
+                    await session.execute(stmt)
+                shared_videos.extend(rows_to_insert)
+                await session.commit()
+                logger.info(
+                    "【候选库callback】博主=%s 进入共享（%d < %d），继续",
+                    unique_id, len(videos), exclusive_threshold,
+                )
+
+        # 全部博主处理完仍是共享：按播放量裁剪
+        if shared_top_n > 0 and keyword_id is not None:
+            await _trim_shared_top_n(session, keyword_id, owner_id, shared_top_n)
+
+        total_shared = len(shared_videos)
+        logger.info(
+            "【候选库callback】keyword=%s 结果=共享 videos=%d",
+            keyword_text, total_shared,
+        )
+
+
+# ---------------------------------------------------------------------------
 # 导入视频库
 # ---------------------------------------------------------------------------
 
@@ -696,108 +1021,24 @@ async def run_candidate_search(
     # 第二阶段：补全粉丝数并排序
     bloggers = await _enrich_and_sort_bloggers(bloggers, cfg.retry_delay)
 
-    # 第三阶段：依次精搜，判断共享/独享
-    shared_videos: list[dict[str, Any]] = []  # 暂存已分类为 shared 的视频（可能被清除）
-    final_type: str = "shared"
+    # 第三阶段：将所有博主打包发给 vendor，独享/共享判断在 callback 中处理
+    if not bloggers:
+        logger.info("【候选库】博主列表为空，搜索结束")
+        return {"template_type": "shared", "video_count": 0}
 
-    for blogger in bloggers:
-        videos = await _search_blogger_videos(keyword_text, blogger, cfg)
-
-        if len(videos) >= cfg.exclusive_threshold:
-            # 独享：清除已存共享，写入独享，停止
-            logger.info("【候选库】博主 %s 命中独享阈值（%d >= %d），清除共享记录，写入独享",
-                        blogger["unique_id"], len(videos), cfg.exclusive_threshold)
-
-            # 删除本轮已写入数据库的共享记录
-            if shared_videos:
-                await session.execute(
-                    sa_delete(CandidateVideo).where(
-                        CandidateVideo.keyword_id == keyword_id,
-                        CandidateVideo.owner_id == owner_id,
-                        CandidateVideo.template_type == "shared",
-                    )
-                )
-                await session.flush()
-
-            # 写入独享视频（跳过已存在的重复记录）
-            now = _utcnow()
-            rows_to_insert = [
-                dict(
-                    id=uuid.uuid4(),
-                    owner_id=owner_id,
-                    keyword_id=keyword_id,
-                    keyword_text=keyword_text,
-                    template_type="exclusive",
-                    blogger_unique_id=blogger["unique_id"],
-                    blogger_nickname=blogger.get("nickname"),
-                    blogger_follower_count=blogger.get("follower_count"),
-                    video_id=v["video_id"],
-                    video_url=v["video_url"],
-                    video_title=v.get("video_title"),
-                    duration=v["duration"],
-                    cover_url=v.get("cover_url"),
-                    play_count=v.get("play_count"),
-                    like_count=v.get("like_count"),
-                    created_at=now,
-                )
-                for v in videos
-            ]
-            await _upload_covers_batch(rows_to_insert)
-            if rows_to_insert:
-                stmt = pg_insert(CandidateVideo).values(rows_to_insert).on_conflict_do_nothing(
-                    index_elements=["keyword_id", "blogger_unique_id", "video_id"]
-                )
-                await session.execute(stmt)
-
-            await session.commit()
-            final_type = "exclusive"
-            logger.info("【候选库】搜索完成，结果=独享，视频数=%d", len(videos))
-            return {"template_type": "exclusive", "video_count": len(videos)}
-
-        else:
-            # 共享：写入，继续
-            logger.info("【候选库】博主 %s 进入共享（%d < %d），继续下一个博主",
-                        blogger["unique_id"], len(videos), cfg.exclusive_threshold)
-            now = _utcnow()
-            rows_to_insert = [
-                dict(
-                    id=uuid.uuid4(),
-                    owner_id=owner_id,
-                    keyword_id=keyword_id,
-                    keyword_text=keyword_text,
-                    template_type="shared",
-                    blogger_unique_id=blogger["unique_id"],
-                    blogger_nickname=blogger.get("nickname"),
-                    blogger_follower_count=blogger.get("follower_count"),
-                    video_id=v["video_id"],
-                    video_url=v["video_url"],
-                    video_title=v.get("video_title"),
-                    duration=v["duration"],
-                    cover_url=v.get("cover_url"),
-                    play_count=v.get("play_count"),
-                    like_count=v.get("like_count"),
-                    created_at=now,
-                )
-                for v in videos
-            ]
-            await _upload_covers_batch(rows_to_insert)
-            if rows_to_insert:
-                stmt = pg_insert(CandidateVideo).values(rows_to_insert).on_conflict_do_nothing(
-                    index_elements=["keyword_id", "blogger_unique_id", "video_id"]
-                )
-                await session.execute(stmt)
-            shared_videos.extend(videos)
-
-            await session.commit()
-
-    total_shared = len(shared_videos)
-
-    # 共享结果按播放量保留前 N 条，删除多余记录
-    if cfg.shared_top_n > 0 and keyword_id is not None:
-        await _trim_shared_top_n(session, keyword_id, owner_id, cfg.shared_top_n)
-
-    logger.info("【候选库】搜索完成，结果=共享，视频数=%d", total_shared)
-    return {"template_type": "shared", "video_count": total_shared}
+    request_id = await submit_candidate_supplement_request(
+        owner_id=owner_id,
+        bloggers=bloggers,
+        keyword_id=keyword_id,
+        keyword_text=keyword_text,
+        cfg=cfg,
+    )
+    logger.info(
+        "【候选库】已发起 vendor 请求 request_id=%s，等待 callback 回填候选视频",
+        request_id,
+    )
+    # 返回 pending 状态，实际写入由 on_vendor_callback 完成
+    return {"template_type": "pending", "video_count": 0, "request_id": request_id}
 
 
 # ---------------------------------------------------------------------------
