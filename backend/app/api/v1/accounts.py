@@ -988,6 +988,34 @@ async def trigger_ai_generation(
         )
         if not existing:
             session.add(AccountTag(account_id=account_id, tag_id=tag_id))
+
+    # 自动绑定 TikTok 博主：从每个标签关联的视频里找 tiktok_blogger_id，
+    # 与批量一键生成 (bulk_generate_ai_bloggers) 保持一致。
+    # 已绑定的不重复添加（幂等）。
+    for tag_id in body.tag_ids:
+        blogger_id_row = (
+            await session.execute(
+                select(VideoSource.tiktok_blogger_id)
+                .join(VideoSourceTag, VideoSourceTag.video_source_id == VideoSource.id)
+                .where(VideoSourceTag.tag_id == tag_id)
+                .where(VideoSource.tiktok_blogger_id.is_not(None))
+                .limit(1)
+            )
+        ).first()
+        if not blogger_id_row:
+            continue
+        tiktok_blogger_id = blogger_id_row[0]
+        already_bound = await session.scalar(
+            select(AccountBloggerBinding)
+            .where(AccountBloggerBinding.account_id == account_id)
+            .where(AccountBloggerBinding.tiktok_blogger_id == tiktok_blogger_id)
+        )
+        if not already_bound:
+            session.add(AccountBloggerBinding(
+                account_id=account_id,
+                tiktok_blogger_id=tiktok_blogger_id,
+            ))
+
     await session.commit()
 
     await enqueue_ai_account_generation(str(account_id), tag_ids_str)
