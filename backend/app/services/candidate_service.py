@@ -648,6 +648,13 @@ async def on_vendor_callback(
     shared_videos: list[dict[str, Any]] = []   # 暂存已写入的共享视频（独享触发时清除）
     now = _utcnow()
 
+    def _extract_video_id(v: dict) -> str:
+        """从 vendor callback video dict 提取 video_id。
+        extra 字段可能为 None，source_url 末尾即为视频 ID。
+        """
+        extra = v.get("extra") or {}
+        return extra.get("video_id") or (v.get("source_url") or "").rstrip("/").split("/")[-1]
+
     from app.db.session import SessionLocal
     async with SessionLocal() as session:
         for aid in ordered_accounts:
@@ -685,7 +692,7 @@ async def on_vendor_callback(
                         blogger_unique_id=unique_id,
                         blogger_nickname=nickname,
                         blogger_follower_count=follower_count,
-                        video_id=v.get("extra", {}).get("video_id") or v.get("source_url", "").split("/")[-1],
+                        video_id=_extract_video_id(v),
                         video_url=v.get("source_url"),
                         video_title=v.get("video_title"),
                         duration=v.get("duration"),
@@ -722,7 +729,7 @@ async def on_vendor_callback(
                         blogger_unique_id=unique_id,
                         blogger_nickname=nickname,
                         blogger_follower_count=follower_count,
-                        video_id=v.get("extra", {}).get("video_id") or v.get("source_url", "").split("/")[-1],
+                        video_id=_extract_video_id(v),
                         video_url=v.get("source_url"),
                         video_title=v.get("video_title"),
                         duration=v.get("duration"),
