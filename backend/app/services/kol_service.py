@@ -66,8 +66,21 @@ async def create_kol_via_open_api(account: Account) -> dict[str, Any]:
 
     signed_body = sign_params(body, client_id, client_secret)
     url = f"{settings.open_api_base_url.rstrip('/')}/open-api/v1/internal-platform/kol"
+    # 日志里 signature 截断展示
+    log_body = dict(signed_body)
+    if "signature" in log_body:
+        sig = str(log_body["signature"])
+        log_body["signature"] = f"{sig[:8]}...{sig[-6:]}" if len(sig) > 14 else "***"
+    logger.info(
+        "[KOL create] outbound POST %s account=%s body=%s",
+        url, account.id, log_body,
+    )
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SEC, trust_env=False) as client:
         resp = await client.post(url, json=signed_body)
+    logger.info(
+        "[KOL create] inbound  account=%s status=%s body=%s",
+        account.id, resp.status_code, resp.text[:1000],
+    )
     if resp.status_code >= 400:
         raise RuntimeError(
             f"KOL create failed: HTTP {resp.status_code} body={resp.text[:500]}"
@@ -89,8 +102,13 @@ async def encode_short_link(long_link: str) -> dict[str, str]:
     """
     encoded = quote(long_link, safe="")
     url = f"{settings.short_link_encode_api}?link={encoded}"
+    logger.info("[KOL short-link] outbound GET %s long_link=%s", url, long_link)
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SEC, trust_env=False) as client:
         resp = await client.get(url)
+    logger.info(
+        "[KOL short-link] inbound  status=%s body=%s",
+        resp.status_code, resp.text[:1000],
+    )
     if resp.status_code >= 400:
         raise RuntimeError(
             f"Short link encode failed: HTTP {resp.status_code} body={resp.text[:500]}"
