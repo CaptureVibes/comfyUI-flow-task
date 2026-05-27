@@ -1,7 +1,13 @@
-"""把所有 kol_provision_status='pending' 且 kol_user_id 为空的账号统一重试 KOL 创建。
+"""把所有 kol_provision_status='pending' 且 kol_user_id 为空且已就绪的账号统一重试 KOL 创建。
 
-实际场景：原本的 provision 在 Account 创建那一瞬同步调，进程崩了 / 超时 / 网络抖动等
+实际场景：provision 在 Account 创建后调用，因进程崩溃 / 超时 / 网络抖动等
 导致状态卡在 ``pending``。这个脚本兜底一次性重新调站内平台 KOL 创建接口。
+
+筛选条件（避免用占位符名称创建 KOL）：
+  - ai_generation_status='completed'：AI 自动生成已完成，名称/头像/签名已就绪
+  - ai_generation_status='idle' + 名称不含「AI博主生成中」前缀：手动创建账号
+
+跳过 ai_generation_status='running'（AI 生成进行中）和 'idle' 带占位符名称的账号。
 
 用法（默认全量）：
     cd backend
@@ -28,7 +34,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -43,12 +49,32 @@ logger = logging.getLogger("retry_pending_kol")
 
 
 async def _list_pending_accounts(owner_id: uuid.UUID | None) -> list[uuid.UUID]:
-    """kol_provision_status='pending' 且 kol_user_id 为空的账号。"""
+    """kol_provision_status='pending' 且 kol_user_id 为空且已完成 AI 生成的账号。
+
+    只重试以下两类账号：
+    1. ai_generation_status='completed' —— AI 自动生成已完成，名称/头像/签名已就绪
+    2. ai_generation_status='idle' 且名称不含占位符前缀 —— 手动创建账号（从未触发 AI 生成），
+       provision 因进程崩溃等原因卡在 pending
+
+    跳过 ai_generation_status='running'（AI 生成进行中）或 'idle' 带占位符名称
+    （AI 账号尚未开始生成），避免用未完成的 placeholder 名称调 KOL 接口。
+    """
     async with SessionLocal() as session:
         stmt = (
             select(Account.id)
             .where(Account.kol_provision_status == "pending")
             .where(Account.kol_user_id.is_(None))
+            .where(
+                or_(
+                    # AI 生成完毕，名称/头像已就绪
+                    Account.ai_generation_status == "completed",
+                    # 手动创建的账号（从未触发 AI 生成），名称不含占位符前缀
+                    and_(
+                        Account.ai_generation_status == "idle",
+                        ~Account.account_name.like("AI博主生成中%"),
+                    ),
+                )
+            )
             .order_by(Account.created_at.asc())
         )
         if owner_id is not None:
@@ -141,8 +167,8 @@ async def _run(
     interval_sec: float,
 ) -> None:
     logger.info(
-        "扫描 kol_provision_status='pending' 且 kol_user_id IS NULL 的账号 "
-        "(dry_run=%s, interval=%.2fs)",
+        "扫描 kol_provision_status='pending' 且 kol_user_id IS NULL 且已就绪的账号 "
+        "(ai_gen=completed 或 idle 且无占位符名称, dry_run=%s, interval=%.2fs)",
         dry_run, interval_sec,
     )
     account_ids = await _list_pending_accounts(owner_id)

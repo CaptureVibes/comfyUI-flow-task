@@ -1278,6 +1278,20 @@ async def retry_kol_provision(
     from app.services.kol_service import provision_kol_for_account
 
     account = await get_account_or_404(session, account_id, owner_id)
+
+    # 若 AI 自动生成尚未完成，名称/头像/签名可能仍是占位符，不允许重试
+    ai_status = account.ai_generation_status or "idle"
+    if ai_status == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="AI 博主生成仍在进行中，请等待生成完成后再重试 KOL 创建",
+        )
+    if ai_status == "idle" and (account.account_name or "").startswith("AI博主生成中"):
+        raise HTTPException(
+            status_code=409,
+            detail="AI 博主尚未生成完成（名称仍为占位符），KOL 创建将在生成完成后自动触发",
+        )
+
     if account.kol_user_id:
         # 已有 kol_user_id 直接校正状态返回（兼容历史脏数据）
         if account.kol_provision_status != "success":
