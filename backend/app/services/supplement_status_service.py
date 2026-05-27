@@ -21,12 +21,22 @@ def resolve_item_status(
     final_received: bool,
     force_failed: bool = False,
 ) -> str:
+    """推算单个 item 的状态。
+
+    设计原则：
+    - completed_count >= target_count → completed（达到目标数）
+    - final 已收到 且 processing 已清零 → 所有异步任务都已结案
+        - 有任何视频成功入库 → completed（AI 审核/分类过滤掉部分是正常业务行为）
+        - 一条都没入库 → failed
+    - 其余情况 → running（仍在处理中）
+    """
     if force_failed:
         return "failed"
-    if completed_count >= target_count:
+    if completed_count >= target_count > 0:
         return "completed"
     if final_received and processing_count <= 0:
-        return "failed"
+        # 所有异步任务已结案：有任何成功入库视为正常完成
+        return "completed" if completed_count > 0 else "failed"
     return "running"
 
 
@@ -239,8 +249,10 @@ async def refresh_request_rollup(
         return
     if active_items and all(i.status == "completed" for i in active_items):
         req.status = "completed"
-    elif active_items and all(i.status in TERMINAL_STATUSES for i in active_items) and completed < expected:
-        req.status = "failed"
+    elif active_items and all(i.status in TERMINAL_STATUSES for i in active_items):
+        # 所有 item 都已结案：只要有任何一条视频成功入库，整体视为 completed
+        # （部分 item failed 是因为 AI 审核/分类全部未通过，属于正常业务损耗）
+        req.status = "completed" if completed > 0 else "failed"
     elif processing > 0 or any(i.status == "running" for i in active_items):
         req.status = "partial"
 

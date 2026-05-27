@@ -423,13 +423,15 @@ async def handle_supplement_callback(
         if final:
             for aid in request_account_ids:
                 account_uuid = uuid.UUID(str(aid))
+                # setdefault：只对本次 callback items 里完全没有出现的账号补一条
+                # final 信号到达时通知这些账号关闭 processing，不写 error（之前的回调已正常处理）
                 progress_by_account.setdefault(
                     account_uuid,
                     {
                         "scheduled": 0,
                         "duplicated": 0,
                         "rejected": 0,
-                        "error": "vendor final 未返回该账号结果",
+                        "error": None,   # 不覆盖之前已经正常处理过账号的状态
                     },
                 )
 
@@ -438,8 +440,8 @@ async def handle_supplement_callback(
         req.videos_duplicated = (req.videos_duplicated or 0) + duplicated
         req.videos_rejected = (req.videos_rejected or 0) + rejected
         if final:
-            req.status = "completed"
             req.completed_at = datetime.now(timezone.utc)
+            # 不在这里强制 completed，由 refresh_request_rollup 根据 item 汇总决定
 
         # 把本次回调的摘要追加到 callbacks_log（JSON 列需重新赋值才会写库）
         callback_log_entry = {
