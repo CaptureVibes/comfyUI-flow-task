@@ -127,12 +127,29 @@ async def encode_short_link(long_link: str) -> dict[str, str]:
     }
 
 
+# 占位符名称前缀列表；含这些前缀时 AI 生成尚未完成，不允许创建 KOL
+_PLACEHOLDER_NAME_PREFIXES: tuple[str, ...] = (
+    "AI博主生成中",   # 批量一键生成：f"AI博主生成中 · {tag.name}"
+    "新建账号（AI生成中）",  # 详情页 AI 生成：前端默认占位名
+)
+
+
+def _is_placeholder_name(name: str | None) -> bool:
+    """判断账号名是否仍是 AI 生成占位符，防止把占位名推给 KOL 平台。"""
+    if not name:
+        return True  # 空名称也不允许
+    return any(name.startswith(prefix) for prefix in _PLACEHOLDER_NAME_PREFIXES)
+
+
 async def provision_kol_for_account(account_id: UUID) -> None:
     """调用站内平台创建 KOL，将 kol_user_id 写回 accounts。
 
     自带 session，自带 try/except，不抛出任何异常给调用方。
     幂等：若 kol_user_id 已存在则跳过整次调用。
     长链/短链不在此触发 —— 需要时由其它流程读取 ``kol_user_id`` 后现算。
+
+    防护：账号名若仍为 AI 生成占位符（如「AI博主生成中 · xxx」、「新建账号（AI生成中）」）
+    则直接跳过，KOL 将在 AI 生成完成后由 ai_account_service 自行触发。
     """
     async with SessionLocal() as session:
         account = await session.scalar(select(Account).where(Account.id == account_id))
@@ -141,6 +158,15 @@ async def provision_kol_for_account(account_id: UUID) -> None:
             return
         if account.kol_user_id:
             logger.info("KOL provision skipped: account %s already has kol_user_id=%s", account_id, account.kol_user_id)
+            return
+
+        # 占位符名称保护：AI 生成未完成时直接跳过，不把临时名称推到 KOL 平台
+        if _is_placeholder_name(account.account_name):
+            logger.warning(
+                "KOL provision skipped: account %s has placeholder name %r, "
+                "will be provisioned after AI generation completes",
+                account_id, account.account_name,
+            )
             return
 
         try:
