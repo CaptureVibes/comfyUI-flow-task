@@ -648,6 +648,7 @@ async def on_vendor_callback(
     shared_videos: list[dict[str, Any]] = []   # 暂存已写入的共享视频（独享触发时清除）
     now = _utcnow()
 
+    from app.db.session import SessionLocal
     async with SessionLocal() as session:
         for aid in ordered_accounts:
             blogger_info = blogger_by_account_id.get(aid) or {}
