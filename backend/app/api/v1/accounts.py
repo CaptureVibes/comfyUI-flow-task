@@ -360,7 +360,10 @@ async def create_account_endpoint(
     creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountRead:
-    account = await create_account(session, payload, creator_id)
+    account = await create_account(
+        session, payload, creator_id,
+        defer_kol_provision=payload.defer_kol_provision,
+    )
     if payload.social_bindings is not None:
         await _sync_channel_reservations_from_bindings(session, account, payload.social_bindings)
     reservations = await _load_channel_reservations(session, account.id)

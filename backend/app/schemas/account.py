@@ -50,6 +50,13 @@ class AccountCreate(BaseModel):
     photo_url: str | None = None
     social_bindings: list[dict] | None = None
     hashtags: list[str] | None = None
+    defer_kol_provision: bool = Field(
+        default=False,
+        description=(
+            "为 True 时跳过即时 KOL 创建，适用于即将触发 AI 自动生成的账号；"
+            "KOL 创建将在 AI 生成完成后由 ai_account_service 自行调用。"
+        ),
+    )
 
 
 class AccountPatch(BaseModel):

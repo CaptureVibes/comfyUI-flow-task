@@ -1313,6 +1313,7 @@ async function startAIGeneration() {
         avatar_url: form.avatar_url || null,
         photo_url: form.photo_url || null,
         social_bindings: form.social_bindings.length > 0 ? form.social_bindings : null,
+        defer_kol_provision: true,  // AI 生成完成后再创建 KOL，避免用占位符名称
       }
       const created = await createAccount(payload)
       currentAccountId.value = created.id
