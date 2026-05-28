@@ -105,6 +105,7 @@ async def mark_callback_seen(
     rejected_count: int,
     final_received: bool,
     error_message: str | None = None,
+    _req: ExternalSupplementRequest | None = None,
 ) -> None:
     item = await _get_item_for_update(session, request_id, account_id)
     if item is None:
@@ -123,7 +124,7 @@ async def mark_callback_seen(
             processing_count=int(item.processing_count or 0),
             final_received=bool(item.final_received),
         )
-    await refresh_request_rollup(session, request_id)
+    await refresh_request_rollup(session, request_id, _req=_req)
 
 
 async def mark_video_completed(
@@ -227,12 +228,18 @@ async def refresh_request_rollup(
     *,
     force_failed: bool = False,
     error_message: str | None = None,
+    _req: ExternalSupplementRequest | None = None,
 ) -> None:
-    req = await session.scalar(
-        select(ExternalSupplementRequest)
-        .where(ExternalSupplementRequest.request_id == request_id)
-        .with_for_update()
-    )
+    # 优先复用调用方已持有的 req 对象，避免 SELECT FOR UPDATE 在同一 session
+    # 内重新 load 覆盖调用方尚未 commit 的字段修改（如 callbacks_log）
+    if _req is not None:
+        req = _req
+    else:
+        req = await session.scalar(
+            select(ExternalSupplementRequest)
+            .where(ExternalSupplementRequest.request_id == request_id)
+            .with_for_update()
+        )
     if req is None:
         return
     items = (await session.execute(

@@ -467,6 +467,7 @@ async def handle_supplement_callback(
                 rejected_count=int(counters.get("rejected") or 0),
                 final_received=final,
                 error_message=counters.get("error"),
+                _req=req,   # 传入已有对象，避免 SELECT FOR UPDATE 覆盖 callbacks_log
             )
         await session.commit()
 
