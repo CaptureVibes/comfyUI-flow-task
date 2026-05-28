@@ -455,7 +455,12 @@ async def handle_supplement_callback(
             "rejected": rejected,
             "items": callback_preview,
         }
-        req.callbacks_log = list(req.callbacks_log or []) + [callback_log_entry]
+        new_log = list(req.callbacks_log or []) + [callback_log_entry]
+        req.callbacks_log = new_log
+        logger.info(
+            "[ext_supp][callback] callbacks_log before commit: request_id=%s len=%d",
+            request_id, len(new_log),
+        )
         from app.services.supplement_status_service import mark_callback_seen
         for aid, counters in progress_by_account.items():
             await mark_callback_seen(
@@ -469,7 +474,15 @@ async def handle_supplement_callback(
                 error_message=counters.get("error"),
                 _req=req,   # 传入已有对象，避免 SELECT FOR UPDATE 覆盖 callbacks_log
             )
+        logger.info(
+            "[ext_supp][callback] callbacks_log after mark_callback_seen: request_id=%s len=%d",
+            request_id, len(req.callbacks_log or []),
+        )
         await session.commit()
+        logger.info(
+            "[ext_supp][callback] committed: request_id=%s callbacks_log_len=%d",
+            request_id, len(req.callbacks_log or []),
+        )
 
     logger.info(
         "[ext_supp][callback] processed: request_id=%s scheduled=%d duplicated=%d rejected=%d (cumulative: cb=%s accepted=%s dup=%s rej=%s)",
