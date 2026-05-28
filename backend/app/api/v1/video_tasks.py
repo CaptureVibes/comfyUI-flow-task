@@ -465,6 +465,7 @@ async def retry_daily_task_templates(
     stmt = select(VideoTask.id, VideoTask.template_id, VideoTask.cta).where(
         VideoTask.target_date == target_date,
         VideoTask.template_id.is_not(None),
+        VideoTask.ai_retry_done.is_not(True),  # 跳过已被 AI 模板处理完成的任务
     )
     if task_status:
         stmt = stmt.where(VideoTask.status == task_status)

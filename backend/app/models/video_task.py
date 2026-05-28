@@ -30,6 +30,8 @@ class VideoTask(Base):
     has_face: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # 是否走「有CTA」一套提示词（创建任务时按 account.product_code_mode 计算：with_code=True）
     cta: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # AI 模板成功写回 shots 后标记为 True，一键重试时跳过已处理完成的任务
+    ai_retry_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

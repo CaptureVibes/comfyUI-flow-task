@@ -1309,6 +1309,8 @@ async def _sync_task_shots(
                     has_face=bool(task.has_face),
                 )
                 task.is_prompt_updated = True
+            # AI 模板成功写回，标记本任务已处理完成，一键重试时不再重复触发
+            task.ai_retry_done = True
 
         await session.commit()
 
