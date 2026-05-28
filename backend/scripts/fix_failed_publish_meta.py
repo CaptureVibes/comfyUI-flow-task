@@ -19,7 +19,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.db.session import SessionLocal
 from app.models.video_task import VideoSubTask, VideoTask
@@ -37,7 +36,6 @@ async def fix_failed_publish_meta(
             .where(
                 VideoSubTask.publish_meta["status"].as_string() == "failed",
             )
-            .options(selectinload(VideoSubTask.task))
         )
         if owner_id is not None:
             stmt = stmt.where(VideoTask.owner_id == owner_id)
@@ -51,8 +49,7 @@ async def fix_failed_publish_meta(
     fixed = 0
     async with SessionLocal() as session:
         for sub in rows:
-            task_prompt = (sub.task.prompt or "").strip()
-            title = task_prompt[:100] if task_prompt else "How do you like this?"
+            title = "How do you like this?"
             new_meta = {
                 "status": "done",
                 "title": title,
