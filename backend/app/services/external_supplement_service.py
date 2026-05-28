@@ -358,6 +358,63 @@ async def handle_supplement_callback(
         owner_id = req.owner_id
         request_account_ids = {str(aid) for aid in (req.account_ids or [])}
 
+        # 鉴权通过后立刻持久化原始 callback payload，方便排查问题
+        # 与后续业务处理解耦：无论下游逻辑走到哪，原始数据都已落库
+        import json as _json
+        _raw_log_entry = {
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+            "final": final,
+            "items": [
+                {
+                    "account_id": str(it.account_id),
+                    "status": it.status,
+                    "error": it.error,
+                    "videos": [v.model_dump() for v in it.videos],
+                }
+                for it in items
+            ],
+        }
+        try:
+            async with SessionLocal() as _log_session:
+                await _log_session.execute(
+                    sa_text(
+                        "UPDATE external_supplement_requests "
+                        "SET callbacks_log = cast(callbacks_log as jsonb) || cast(:entry as jsonb) "
+                        "WHERE request_id = cast(:rid as uuid)"
+                    ),
+                    {
+                        "entry": _json.dumps([_raw_log_entry], ensure_ascii=False),
+                        "rid": str(request_id),
+                    },
+                )
+                await _log_session.commit()
+        except Exception as _log_exc:
+            logger.warning("[ext_supp][callback] callbacks_log 写入失败（不影响主流程）: %s", _log_exc)
+
+        # 已达到 target 数量则直接跳过，不走任何业务逻辑
+        # 用 videos_accepted（已调度入 pipeline 的数量）判断，不依赖异步 pipeline 的结果
+        target_count = int(req.target_video_count or 0)
+        already_accepted = int(req.videos_accepted or 0)
+        if target_count > 0 and already_accepted >= target_count:
+            logger.info(
+                "[ext_supp][callback] target already reached (%d/%d), skip all processing: request_id=%s",
+                already_accepted, target_count, request_id,
+            )
+            req.callbacks_received = (req.callbacks_received or 0) + 1
+            if req.status not in ("completed", "failed"):
+                req.status = "completed"
+                req.completed_at = datetime.now(timezone.utc)
+            await session.commit()
+            return {
+                "request_id": str(request_id),
+                "accepted": 0,
+                "duplicated": 0,
+                "rejected": 0,
+                "message": "target already reached",
+                "http_status": 200,
+            }
+
         import json as _json
         total_videos = sum(len(it.videos) for it in items)
         logger.info(
@@ -458,39 +515,6 @@ async def handle_supplement_callback(
                 _req=req,
             )
         await session.commit()
-
-    # callbacks_log 用原子 SQL 追加，彻底绕开 ORM dirty-tracking 问题：
-    # 无论并发还是 SQLAlchemy 引用检测，都能保证每条 callback 被追加进去
-    import json as _json
-    callback_log_entry = {
-        "received_at": datetime.now(timezone.utc).isoformat(),
-        "mode": mode,
-        "final": final,
-        "items_count": len(items),
-        "videos_count": total_videos,
-        "scheduled": scheduled,
-        "duplicated": duplicated,
-        "rejected": rejected,
-        "items": callback_preview,
-    }
-    from app.db.session import SessionLocal as _SessionLocal
-    async with _SessionLocal() as log_session:
-        await log_session.execute(
-            sa_text(
-                "UPDATE external_supplement_requests "
-                "SET callbacks_log = cast(callbacks_log as jsonb) || cast(:entry as jsonb) "
-                "WHERE request_id = cast(:rid as uuid)"
-            ),
-            {
-                "entry": _json.dumps([callback_log_entry], ensure_ascii=False),
-                "rid": str(request_id),
-            },
-        )
-        await log_session.commit()
-    logger.info(
-        "[ext_supp][callback] callbacks_log appended: request_id=%s cb_total=%s",
-        request_id, req.callbacks_received,
-    )
 
     logger.info(
         "[ext_supp][callback] processed: request_id=%s scheduled=%d duplicated=%d rejected=%d (cumulative: cb=%s accepted=%s dup=%s rej=%s)",
