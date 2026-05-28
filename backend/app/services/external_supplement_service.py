@@ -370,7 +370,7 @@ async def handle_supplement_callback(
                     "account_id": str(it.account_id),
                     "status": it.status,
                     "error": it.error,
-                    "videos": [v.model_dump() for v in it.videos],
+                    "videos": [v.model_dump(mode="json") for v in it.videos],
                 }
                 for it in items
             ],
