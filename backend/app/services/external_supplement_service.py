@@ -457,6 +457,9 @@ async def handle_supplement_callback(
         }
         new_log = list(req.callbacks_log or []) + [callback_log_entry]
         req.callbacks_log = new_log
+        # JSON 列赋新列表后必须 flag_modified，否则 SQLAlchemy 可能认为无变化而跳过写库
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(req, "callbacks_log")
         logger.info(
             "[ext_supp][callback] callbacks_log before commit: request_id=%s len=%d",
             request_id, len(new_log),
@@ -555,6 +558,8 @@ async def _append_rejected_video(
             current = list(req.rejected_videos or [])
             current.append(entry)
             req.rejected_videos = current
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(req, "rejected_videos")
             req.videos_rejected = (req.videos_rejected or 0) + 1
             # handle_supplement_callback 在调度时已把这条计入 videos_accepted（=已调度），
             # 现在终因 AI 审核 / 分类未过被丢弃，回退该计数以保持总和一致
