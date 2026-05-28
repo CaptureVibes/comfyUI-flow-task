@@ -478,7 +478,7 @@ async def handle_supplement_callback(
         await log_session.execute(
             sa_text(
                 "UPDATE external_supplement_requests "
-                "SET callbacks_log = callbacks_log || cast(:entry as jsonb) "
+                "SET callbacks_log = cast(callbacks_log as jsonb) || cast(:entry as jsonb) "
                 "WHERE request_id = cast(:rid as uuid)"
             ),
             {
