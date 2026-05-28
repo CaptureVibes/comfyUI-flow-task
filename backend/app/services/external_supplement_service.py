@@ -443,27 +443,7 @@ async def handle_supplement_callback(
             req.completed_at = datetime.now(timezone.utc)
             # 不在这里强制 completed，由 refresh_request_rollup 根据 item 汇总决定
 
-        # 把本次回调的摘要追加到 callbacks_log（JSON 列需重新赋值才会写库）
-        callback_log_entry = {
-            "received_at": datetime.now(timezone.utc).isoformat(),
-            "mode": mode,
-            "final": final,
-            "items_count": len(items),
-            "videos_count": total_videos,
-            "scheduled": scheduled,
-            "duplicated": duplicated,
-            "rejected": rejected,
-            "items": callback_preview,
-        }
-        new_log = list(req.callbacks_log or []) + [callback_log_entry]
-        req.callbacks_log = new_log
-        # JSON 列赋新列表后必须 flag_modified，否则 SQLAlchemy 可能认为无变化而跳过写库
-        from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(req, "callbacks_log")
-        logger.info(
-            "[ext_supp][callback] callbacks_log before commit: request_id=%s len=%d",
-            request_id, len(new_log),
-        )
+        # 其余标量字段通过 ORM 写入
         from app.services.supplement_status_service import mark_callback_seen
         for aid, counters in progress_by_account.items():
             await mark_callback_seen(
@@ -475,17 +455,42 @@ async def handle_supplement_callback(
                 rejected_count=int(counters.get("rejected") or 0),
                 final_received=final,
                 error_message=counters.get("error"),
-                _req=req,   # 传入已有对象，避免 SELECT FOR UPDATE 覆盖 callbacks_log
+                _req=req,
             )
-        logger.info(
-            "[ext_supp][callback] callbacks_log after mark_callback_seen: request_id=%s len=%d",
-            request_id, len(req.callbacks_log or []),
-        )
         await session.commit()
-        logger.info(
-            "[ext_supp][callback] committed: request_id=%s callbacks_log_len=%d",
-            request_id, len(req.callbacks_log or []),
+
+    # callbacks_log 用原子 SQL 追加，彻底绕开 ORM dirty-tracking 问题：
+    # 无论并发还是 SQLAlchemy 引用检测，都能保证每条 callback 被追加进去
+    import json as _json
+    callback_log_entry = {
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "mode": mode,
+        "final": final,
+        "items_count": len(items),
+        "videos_count": total_videos,
+        "scheduled": scheduled,
+        "duplicated": duplicated,
+        "rejected": rejected,
+        "items": callback_preview,
+    }
+    from app.db.session import SessionLocal as _SessionLocal
+    async with _SessionLocal() as log_session:
+        await log_session.execute(
+            sa_text(
+                "UPDATE external_supplement_requests "
+                "SET callbacks_log = callbacks_log || :entry::jsonb "
+                "WHERE request_id = :rid"
+            ),
+            {
+                "entry": _json.dumps([callback_log_entry], ensure_ascii=False),
+                "rid": str(request_id),
+            },
         )
+        await log_session.commit()
+    logger.info(
+        "[ext_supp][callback] callbacks_log appended: request_id=%s cb_total=%s",
+        request_id, req.callbacks_received,
+    )
 
     logger.info(
         "[ext_supp][callback] processed: request_id=%s scheduled=%d duplicated=%d rejected=%d (cumulative: cb=%s accepted=%s dup=%s rej=%s)",
