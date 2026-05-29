@@ -47,6 +47,7 @@ class CandidateVideoItem(BaseModel):
     status: str = "pending"
     ai_reviewed: bool = False
     ai_error: str | None = None
+    hidden: bool = False
     created_at: datetime
 
 

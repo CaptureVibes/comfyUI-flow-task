@@ -321,8 +321,11 @@ async def _ai_review_candidates(
         logger.warning("【候选库AI审核】GOOGLE_API_KEY 未配置，跳过")
         return
 
-    # 查询待审核的视频（本次关键词入库的）
-    q = select(CandidateVideo).where(CandidateVideo.video_url.isnot(None))
+    # 查询待审核的视频（本次关键词入库的，hidden 的跳过）
+    q = select(CandidateVideo).where(
+        CandidateVideo.video_url.isnot(None),
+        CandidateVideo.hidden.is_not(True),
+    )
     if keyword_id is not None:
         q = q.where(CandidateVideo.keyword_id == keyword_id)
     if owner_id is not None:
@@ -903,6 +906,7 @@ async def _import_to_video_library(
         CandidateVideo.video_url.isnot(None),
         CandidateVideo.video_source_id.is_(None),
         CandidateVideo.import_attempts < _MAX_IMPORT_ATTEMPTS,
+        CandidateVideo.hidden.is_not(True),
     )
     if keyword_id is not None:
         q = q.where(CandidateVideo.keyword_id == keyword_id)
@@ -1099,7 +1103,7 @@ async def list_candidate_videos(
     page_size: int = 20,
 ) -> dict[str, Any]:
     """分页查询候选视频。imported=True 查已导入库；imported=False 查候选库（未导入）；None 查全部。"""
-    q = select(CandidateVideo)
+    q = select(CandidateVideo).where(CandidateVideo.hidden.is_not(True))
 
     if owner_id is not None:
         q = q.where(CandidateVideo.owner_id == owner_id)
@@ -1141,6 +1145,23 @@ async def delete_candidate_video(
     if owner_id is not None and row.owner_id != owner_id:
         return False
     await session.delete(row)
+    await session.commit()
+    return True
+
+
+async def set_candidate_video_hidden(
+    session: AsyncSession,
+    video_id: uuid.UUID,
+    owner_id: uuid.UUID | None,
+    hidden: bool,
+) -> bool:
+    """设置候选视频的隐藏状态，非 admin 需校验 owner。返回是否操作成功。"""
+    row = await session.get(CandidateVideo, video_id)
+    if row is None:
+        return False
+    if owner_id is not None and row.owner_id != owner_id:
+        return False
+    row.hidden = hidden
     await session.commit()
     return True
 
@@ -1208,6 +1229,7 @@ async def ai_review_candidates_by_ids(
     q = select(CandidateVideo).where(
         CandidateVideo.id.in_([_uuid.UUID(i) for i in candidate_ids]),
         CandidateVideo.status.in_([CandidateVideoStatus.pending, CandidateVideoStatus.ai_failed]),
+        CandidateVideo.hidden.is_not(True),
     )
     if owner_uuid is not None:
         q = q.where(CandidateVideo.owner_id == owner_uuid)
@@ -1312,6 +1334,7 @@ async def import_candidates_by_ids(
     q = select(CandidateVideo).where(
         CandidateVideo.id.in_([_uuid.UUID(i) for i in candidate_ids]),
         CandidateVideo.status.not_in(_skip),
+        CandidateVideo.hidden.is_not(True),
     )
     if owner_uuid is not None:
         q = q.where(CandidateVideo.owner_id == owner_uuid)

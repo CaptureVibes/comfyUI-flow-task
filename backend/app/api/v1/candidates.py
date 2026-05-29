@@ -17,7 +17,11 @@ from app.schemas.settings import (
     CandidateVideoListResponse,
 )
 from app.services import candidate_service
-from app.services.candidate_service import delete_candidate_video, list_candidate_videos
+from app.services.candidate_service import (
+    delete_candidate_video,
+    list_candidate_videos,
+    set_candidate_video_hidden,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +122,7 @@ async def get_candidates(
             status=str(row.status.value if hasattr(row.status, 'value') else row.status),
             ai_reviewed=row.ai_reviewed,
             ai_error=row.ai_error,
+            hidden=row.hidden,
             created_at=row.created_at,
         )
         for row in result["items"]
@@ -146,6 +151,25 @@ async def remove_candidate_video(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="候选视频不存在或无权限删除")
     return Response(status_code=204)
+
+
+@router.patch("/{video_id}/hidden")
+async def update_candidate_hidden(
+    video_id: uuid.UUID,
+    hidden: bool = Query(..., description="true=隐藏, false=取消隐藏"),
+    token: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """设置候选视频的隐藏状态。隐藏后前后端均不可见，但不影响 status 状态机，可随时恢复。"""
+    owner_id: uuid.UUID | None = None
+    if not token.is_admin and token.user_id:
+        owner_id = uuid.UUID(str(token.user_id))
+
+    ok = await set_candidate_video_hidden(session, video_id, owner_id, hidden)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="候选视频不存在或无权限操作")
+    return {"id": str(video_id), "hidden": hidden}
 
 
 @router.post("/ai-review-all")
