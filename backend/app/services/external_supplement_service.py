@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.external_supplement_request import ExternalSupplementRequest
+from app.models.external_supplement_request_item import ExternalSupplementRequestItem
 
 logger = logging.getLogger("app.external_supplement_service")
 
@@ -394,12 +395,22 @@ async def handle_supplement_callback(
 
         # 已达到 target 数量则直接跳过，不走任何业务逻辑
         # 用 videos_accepted（已调度入 pipeline 的数量）判断，不依赖异步 pipeline 的结果
-        target_count = int(req.target_video_count or 0)
+        #
+        # ⚠️ req.target_video_count 是单个账号的 target（如 100），
+        # 整个 request 的总 target 是各 item.target_video_count 之和。
+        # 必须对比「所有 item 的 target 合计」，否则多账号场景下总 accepted 超过
+        # 单账号 target 就会被错误截断。
+        _items_for_target = (await session.execute(
+            select(ExternalSupplementRequestItem.target_video_count)
+            .where(ExternalSupplementRequestItem.request_id == request_id)
+            .where(ExternalSupplementRequestItem.status != "skipped")
+        )).scalars().all()
+        total_target_count = sum(int(t or 0) for t in _items_for_target)
         already_accepted = int(req.videos_accepted or 0)
-        if target_count > 0 and already_accepted >= target_count:
+        if total_target_count > 0 and already_accepted >= total_target_count:
             logger.info(
-                "[ext_supp][callback] target already reached (%d/%d), skip all processing: request_id=%s",
-                already_accepted, target_count, request_id,
+                "[ext_supp][callback] total target already reached (%d/%d across %d items), skip all processing: request_id=%s",
+                already_accepted, total_target_count, len(_items_for_target), request_id,
             )
             req.callbacks_received = (req.callbacks_received or 0) + 1
             if req.status not in ("completed", "failed"):
