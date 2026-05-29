@@ -2153,7 +2153,7 @@ async def auto_supplement_for_account(
         "skipped": skipped,
         "filtered": filtered,
         "rejected": rejected,
-        "allowed_categories": allowed_categories,
+        "allowed_indices": allowed_indices,
     }
 
 
