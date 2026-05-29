@@ -606,6 +606,38 @@ async def submit_candidate_supplement_request(
     return str(request_id)
 
 
+async def _mark_candidate_request_completed(
+    session: AsyncSession,
+    request_id: uuid.UUID,
+    written_count: int,
+) -> None:
+    """候选库写入完成后，更新 videos_accepted 并把 request 推为 completed。
+
+    候选库不走 mark_video_completed，需要在此统一推状态，
+    确保下次 callback 进来时入口 early-return 生效。
+    """
+    from sqlalchemy import select as sa_select
+    from app.models.external_supplement_request import ExternalSupplementRequest
+    from datetime import datetime, timezone
+    try:
+        req = await session.scalar(
+            sa_select(ExternalSupplementRequest)
+            .where(ExternalSupplementRequest.request_id == request_id)
+            .with_for_update()
+        )
+        if req is not None and req.status not in ("completed", "failed"):
+            req.videos_accepted = int(req.videos_accepted or 0) + written_count
+            req.status = "completed"
+            req.completed_at = datetime.now(timezone.utc)
+            await session.commit()
+            logger.info(
+                "【候选库callback】request_id=%s 已写入 %d 条，推为 completed",
+                request_id, written_count,
+            )
+    except Exception as exc:
+        logger.warning("【候选库callback】推 completed 失败 request_id=%s: %s", request_id, exc)
+
+
 async def on_vendor_callback(
     *,
     to_process: list[dict],            # [{"account_id": uuid, "video": {...}}]
@@ -715,6 +747,7 @@ async def on_vendor_callback(
                     "【候选库callback】keyword=%s 结果=独享 blogger=%s videos=%d",
                     keyword_text, unique_id, len(videos),
                 )
+                await _mark_candidate_request_completed(session, request_id, len(rows_to_insert))
                 return
 
             else:
@@ -762,6 +795,7 @@ async def on_vendor_callback(
             "【候选库callback】keyword=%s 结果=共享 videos=%d",
             keyword_text, total_shared,
         )
+        await _mark_candidate_request_completed(session, request_id, total_shared)
 
 
 # ---------------------------------------------------------------------------
