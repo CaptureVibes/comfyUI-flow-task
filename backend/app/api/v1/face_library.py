@@ -105,6 +105,46 @@ async def list_tags_with_faces(
     return TagWithFacePageResponse(total=total, page=page, page_size=page_size, items=items)
 
 
+@router.get("/pending-count")
+async def get_pending_face_count(
+    token: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """返回尚未生成人脸且有关联视频的标签数量（用于"一键生成人脸"按钮展示）。"""
+    owner_id: uuid.UUID | None = None if token.is_admin else token.user_id
+
+    tag_stmt = select(Tag.id)
+    if owner_id is not None:
+        tag_stmt = tag_stmt.where(Tag.owner_id == owner_id)
+    all_tag_ids = [row[0] for row in (await session.execute(tag_stmt)).fetchall()]
+
+    if not all_tag_ids:
+        return {"count": 0}
+
+    existing_face_stmt = select(FacePhoto.tag_id).where(FacePhoto.tag_id.in_(all_tag_ids))
+    existing_face_tag_ids = set(
+        row[0] for row in (await session.execute(existing_face_stmt)).fetchall()
+    )
+
+    has_video_stmt = (
+        select(VideoSourceTag.tag_id)
+        .where(
+            VideoSourceTag.tag_id.in_(all_tag_ids),
+            VideoSourceTag.video_source_id.isnot(None),
+        )
+        .distinct()
+    )
+    has_video_tag_ids = set(
+        row[0] for row in (await session.execute(has_video_stmt)).fetchall()
+    )
+
+    count = sum(
+        1 for tid in all_tag_ids
+        if tid not in existing_face_tag_ids and tid in has_video_tag_ids
+    )
+    return {"count": count}
+
+
 @router.post("/tags/{tag_id}/select-face")
 async def trigger_face_selection(
     tag_id: uuid.UUID,

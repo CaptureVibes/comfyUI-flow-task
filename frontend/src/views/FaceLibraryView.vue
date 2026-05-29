@@ -18,7 +18,7 @@
         </svg>
         AI配置
       </button>
-      <button class="fl-btn-bulk" :disabled="bulkRunning" @click="handleBulkSelect">
+      <button class="fl-btn-bulk" :disabled="bulkRunning || pendingFaceCount === 0" @click="handleBulkSelect">
         <span v-if="bulkRunning" class="btn-spin"></span>
         <span v-else>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -111,17 +111,37 @@
       </div>
 
       <!-- 分页 -->
-      <div class="fl-pagination">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :total="total"
-          :page-sizes="[20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
-          background
-          @current-change="loadTags"
-          @size-change="onPageSizeChange"
-        />
+      <div v-if="total > 0" class="fl-footer">
+        <div class="fl-pagination-left">
+          <span class="fl-count-text">显示 {{ startIdx }}-{{ endIdx }} 共 {{ total }} 条</span>
+          <select v-model="pageSize" @change="handleSizeChange(pageSize)" class="fl-size-select">
+            <option :value="20">20</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+            <option :value="200">200</option>
+          </select>
+        </div>
+        <div class="fl-pagination">
+          <button class="pg-btn" :disabled="page <= 1" @click="goPage(page - 1)">← 上一页</button>
+          <template v-for="p in visiblePages" :key="p">
+            <span v-if="p === '...'" class="pg-ellipsis">…</span>
+            <button v-else class="pg-btn pg-num" :class="{ active: p === page }" @click="goPage(p)">{{ p }}</button>
+          </template>
+          <button class="pg-btn" :disabled="endIdx >= total" @click="goPage(page + 1)">下一页 →</button>
+          <span class="pg-jump-wrap">
+            跳至
+            <input
+              v-model.number="jumpPage"
+              class="pg-jump-input"
+              type="number"
+              :min="1"
+              :max="totalPages"
+              @keyup.enter="doJump"
+            />
+            页
+            <button class="pg-btn pg-jump-go" @click="doJump">GO</button>
+          </span>
+        </div>
       </div>
     </template>
 
@@ -177,7 +197,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchTagsWithFaces, triggerFaceSelection, bulkSelectFaces } from '../api/faceLibrary'
+import { fetchTagsWithFaces, fetchPendingFaceCount, triggerFaceSelection, bulkSelectFaces } from '../api/faceLibrary'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
 
 const tags = ref([])
@@ -186,14 +206,30 @@ const loadingTags = ref(new Set())
 const bulkRunning = ref(false)
 
 // 分页
-const currentPage = ref(1)
+const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const jumpPage = ref(1)
 
-// 尚未生成人脸且有关联视频的标签数（当前页统计，仅供按钮显示参考）
-const pendingFaceCount = computed(() =>
-  tags.value.filter(t => !t.face_photo && t.video_count > 0).length
-)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const startIdx = computed(() => total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1)
+const endIdx = computed(() => Math.min(page.value * pageSize.value, total.value))
+
+const visiblePages = computed(() => {
+  const n = totalPages.value
+  const cur = page.value
+  if (n <= 7) return Array.from({ length: n }, (_, i) => i + 1)
+  const pages = []
+  pages.push(1)
+  if (cur > 3) pages.push('...')
+  for (let p = Math.max(2, cur - 1); p <= Math.min(n - 1, cur + 1); p++) pages.push(p)
+  if (cur < n - 2) pages.push('...')
+  pages.push(n)
+  return pages
+})
+
+// 一键生成人脸：全局待处理数量（不依赖当前页）
+const pendingFaceCount = ref(0)
 
 // 配置弹窗
 const showConfigDialog = ref(false)
@@ -230,7 +266,7 @@ function remixClass(face) {
 async function loadTags() {
   loading.value = true
   try {
-    const res = await fetchTagsWithFaces({ page: currentPage.value, pageSize: pageSize.value })
+    const res = await fetchTagsWithFaces({ page: page.value, pageSize: pageSize.value })
     tags.value = res.items
     total.value = res.total
   } catch {
@@ -240,10 +276,32 @@ async function loadTags() {
   }
 }
 
-function onPageSizeChange(newSize) {
-  pageSize.value = newSize
-  currentPage.value = 1
+async function loadPendingCount() {
+  try {
+    pendingFaceCount.value = await fetchPendingFaceCount()
+  } catch {
+    // 静默失败，不影响主流程
+  }
+}
+
+function goPage(p) {
+  const target = Math.max(1, Math.min(p, totalPages.value))
+  if (target === page.value) return
+  page.value = target
+  jumpPage.value = target
   loadTags()
+}
+
+function handleSizeChange(val) {
+  pageSize.value = val
+  page.value = 1
+  jumpPage.value = 1
+  loadTags()
+}
+
+function doJump() {
+  const p = parseInt(jumpPage.value)
+  if (!isNaN(p)) goPage(p)
 }
 
 async function handleSelectFace(tag) {
@@ -253,6 +311,7 @@ async function handleSelectFace(tag) {
     const result = await triggerFaceSelection(tag.id)
     ElMessage.success(result?.status === 'submitted' ? '人脸选择与分类已启动' : '人脸选择成功')
     await loadTags()
+    loadPendingCount()
   } catch (err) {
     const msg = err?.response?.data?.detail || '人脸选择失败，请稍后重试'
     ElMessage.error(msg)
@@ -309,7 +368,10 @@ async function handleSaveConfig() {
   }
 }
 
-onMounted(loadTags)
+onMounted(() => {
+  loadTags()
+  loadPendingCount()
+})
 </script>
 
 <style scoped>
@@ -377,12 +439,112 @@ onMounted(loadTags)
   gap: 20px;
 }
 
-.fl-pagination {
+/* 分页 */
+.fl-footer {
   display: flex;
-  justify-content: center;
-  padding: 28px 0 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding: 16px 0 8px;
+  border-top: 1px solid #f1f5f9;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
+.fl-pagination-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fl-count-text {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.fl-size-select {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding: 0 4px;
+}
+.fl-size-select:hover { color: #64748b; }
+
+.fl-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pg-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all .15s;
+}
+.pg-btn:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #eef2ff;
+}
+.pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.pg-num {
+  min-width: 36px;
+  padding: 7px 10px;
+  text-align: center;
+}
+.pg-num.active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.pg-ellipsis {
+  font-size: 13px;
+  color: #94a3b8;
+  padding: 0 4px;
+  user-select: none;
+}
+
+.pg-jump-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
+.pg-jump-input {
+  width: 52px;
+  height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 13px;
+  color: #334155;
+  outline: none;
+  padding: 0 6px;
+}
+.pg-jump-input:focus { border-color: #6366f1; }
+.pg-jump-input::-webkit-inner-spin-button,
+.pg-jump-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+.pg-jump-go { padding: 7px 12px; }
+
+/* 卡片 */
 .fl-card {
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -530,13 +692,9 @@ onMounted(loadTags)
 .fl-btn-select:disabled { background: #c7d2fe; cursor: not-allowed; }
 
 /* 配置弹窗样式 */
-.config-form {
-  min-height: 120px;
-}
+.config-form { min-height: 120px; }
 
-.cf-row {
-  margin-bottom: 18px;
-}
+.cf-row { margin-bottom: 18px; }
 
 .cf-label {
   display: block;
@@ -564,10 +722,7 @@ onMounted(loadTags)
   margin-left: 8px;
 }
 
-.dlg-btn-cancel {
-  background: #f1f5f9;
-  color: #475569;
-}
+.dlg-btn-cancel { background: #f1f5f9; color: #475569; }
 .dlg-btn-cancel:hover { background: #e2e8f0; }
 
 .dlg-btn-primary {
