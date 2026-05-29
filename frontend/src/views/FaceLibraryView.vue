@@ -44,70 +44,86 @@
       <p>暂无标签，请先创建标签并关联视频</p>
     </div>
 
-    <div v-else class="fl-grid">
-      <div v-for="tag in tags" :key="tag.id" class="fl-card">
-        <!-- 人脸图片 -->
-        <div class="fl-photo-wrap">
-          <img v-if="tag.face_photo?.face_photo_url" :src="tag.face_photo.face_photo_url"
-            class="fl-photo" alt="人脸照片" />
-          <div v-else class="fl-photo-placeholder">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="8" r="4" />
-              <path d="M6 21v-1a6 6 0 0 1 12 0v1" />
-            </svg>
+    <template v-else>
+      <div class="fl-grid">
+        <div v-for="tag in tags" :key="tag.id" class="fl-card">
+          <!-- 人脸图片 -->
+          <div class="fl-photo-wrap">
+            <img v-if="tag.face_photo?.face_photo_url" :src="tag.face_photo.face_photo_url"
+              class="fl-photo" alt="人脸照片" />
+            <div v-else class="fl-photo-placeholder">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M6 21v-1a6 6 0 0 1 12 0v1" />
+              </svg>
+            </div>
+            <!-- 加载中遮罩 -->
+            <div v-if="loadingTags.has(tag.id)" class="fl-loading-mask">
+              <div class="fl-spinner"></div>
+            </div>
           </div>
-          <!-- 加载中遮罩 -->
-          <div v-if="loadingTags.has(tag.id)" class="fl-loading-mask">
-            <div class="fl-spinner"></div>
-          </div>
-        </div>
 
-        <!-- 标签信息 -->
-        <div class="fl-info">
-          <div class="fl-tag-name">
-            <span v-if="tag.color" class="fl-color-dot" :style="{ background: tag.color }"></span>
-            {{ tag.name }}
+          <!-- 标签信息 -->
+          <div class="fl-info">
+            <div class="fl-tag-name">
+              <span v-if="tag.color" class="fl-color-dot" :style="{ background: tag.color }"></span>
+              {{ tag.name }}
+            </div>
+            <div class="fl-meta">
+              <span class="fl-video-count">{{ tag.video_count }} 个视频</span>
+              <span v-if="tag.face_photo" class="fl-frame-index">第 {{ tag.face_photo.frame_index }} 帧</span>
+            </div>
+            <div v-if="tag.face_photo" class="fl-classify">
+              <template v-if="tag.face_photo.classification_status === 'success'">
+                <span>{{ tag.face_photo.gender || '不确定' }}</span>
+                <span>{{ tag.face_photo.ethnicity || '不确定' }}</span>
+                <span>{{ tag.face_photo.age_range || '-' }}</span>
+                <span>{{ beautyLabel(tag.face_photo) }}</span>
+                <span :class="remixClass(tag.face_photo)">{{ remixLabel(tag.face_photo) }}</span>
+                <span v-if="tag.face_photo.notes" class="fl-note">{{ tag.face_photo.notes }}</span>
+              </template>
+              <template v-else-if="tag.face_photo.classification_status === 'running'">
+                <span class="fl-status">分类中</span>
+              </template>
+              <template v-else-if="tag.face_photo.classification_status === 'failed'">
+                <span class="fl-status fl-status-failed">分类失败</span>
+              </template>
+              <template v-else>
+                <span class="fl-status">待分类</span>
+              </template>
+            </div>
           </div>
-          <div class="fl-meta">
-            <span class="fl-video-count">{{ tag.video_count }} 个视频</span>
-            <span v-if="tag.face_photo" class="fl-frame-index">第 {{ tag.face_photo.frame_index }} 帧</span>
-          </div>
-          <div v-if="tag.face_photo" class="fl-classify">
-            <template v-if="tag.face_photo.classification_status === 'success'">
-              <span>{{ tag.face_photo.gender || '不确定' }}</span>
-              <span>{{ tag.face_photo.ethnicity || '不确定' }}</span>
-              <span>{{ tag.face_photo.age_range || '-' }}</span>
-              <span>{{ beautyLabel(tag.face_photo) }}</span>
-              <span :class="remixClass(tag.face_photo)">{{ remixLabel(tag.face_photo) }}</span>
-              <span v-if="tag.face_photo.notes" class="fl-note">{{ tag.face_photo.notes }}</span>
-            </template>
-            <template v-else-if="tag.face_photo.classification_status === 'running'">
-              <span class="fl-status">分类中</span>
-            </template>
-            <template v-else-if="tag.face_photo.classification_status === 'failed'">
-              <span class="fl-status fl-status-failed">分类失败</span>
-            </template>
-            <template v-else>
-              <span class="fl-status">待分类</span>
-            </template>
-          </div>
-        </div>
 
-        <!-- 操作按钮 -->
-        <div class="fl-actions">
-          <button
-            class="fl-btn-select"
-            :disabled="loadingTags.has(tag.id) || tag.video_count === 0"
-            @click="handleSelectFace(tag)"
-          >
-            <span v-if="loadingTags.has(tag.id)">AI选择中...</span>
-            <span v-else-if="tag.face_photo">重新选择</span>
-            <span v-else>选择人脸</span>
-          </button>
+          <!-- 操作按钮 -->
+          <div class="fl-actions">
+            <button
+              class="fl-btn-select"
+              :disabled="loadingTags.has(tag.id) || tag.video_count === 0"
+              @click="handleSelectFace(tag)"
+            >
+              <span v-if="loadingTags.has(tag.id)">AI选择中...</span>
+              <span v-else-if="tag.face_photo">重新选择</span>
+              <span v-else>选择人脸</span>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+
+      <!-- 分页 -->
+      <div class="fl-pagination">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+          @current-change="loadTags"
+          @size-change="onPageSizeChange"
+        />
+      </div>
+    </template>
 
     <!-- AI配置弹窗 -->
     <el-dialog v-model="showConfigDialog" title="人脸选择 AI 配置" width="580px" align-center destroy-on-close @open="loadConfig">
@@ -169,7 +185,12 @@ const loading = ref(false)
 const loadingTags = ref(new Set())
 const bulkRunning = ref(false)
 
-// 尚未生成人脸且有关联视频的标签数
+// 分页
+const currentPage = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
+
+// 尚未生成人脸且有关联视频的标签数（当前页统计，仅供按钮显示参考）
 const pendingFaceCount = computed(() =>
   tags.value.filter(t => !t.face_photo && t.video_count > 0).length
 )
@@ -209,12 +230,20 @@ function remixClass(face) {
 async function loadTags() {
   loading.value = true
   try {
-    tags.value = await fetchTagsWithFaces()
+    const res = await fetchTagsWithFaces({ page: currentPage.value, pageSize: pageSize.value })
+    tags.value = res.items
+    total.value = res.total
   } catch {
     ElMessage.error('加载人脸库失败')
   } finally {
     loading.value = false
   }
+}
+
+function onPageSizeChange(newSize) {
+  pageSize.value = newSize
+  currentPage.value = 1
+  loadTags()
 }
 
 async function handleSelectFace(tag) {
@@ -346,6 +375,12 @@ onMounted(loadTags)
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 20px;
+}
+
+.fl-pagination {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0 8px;
 }
 
 .fl-card {

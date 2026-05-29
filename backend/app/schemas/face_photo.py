@@ -37,3 +37,10 @@ class TagWithFaceRead(BaseModel):
     face_photo: FacePhotoRead | None
 
     model_config = {"from_attributes": True}
+
+
+class TagWithFacePageResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[TagWithFaceRead]
