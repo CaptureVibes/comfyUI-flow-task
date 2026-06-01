@@ -83,6 +83,7 @@ class BulkUpdateAccountAttributesBody(BaseModel):
     gender: Literal["male", "female", "unisex"] | None = None
     product_code_mode: Literal["with_code", "without_code"] | None = None
     account_tier: Literal["test", "dev", "prod"] | None = None
+    hidden: bool | None = None
 
 
 class BulkUpdateAccountAttributesResponse(BaseModel):
@@ -447,6 +448,7 @@ class AccountRead(BaseModel):
     kol_user_id: str | None = None
     kol_provision_status: str = "pending"
     kol_provision_error: str | None = None
+    hidden: bool = False
     supplement_status: SupplementStatusRead | None = None
     created_at: datetime
     updated_at: datetime

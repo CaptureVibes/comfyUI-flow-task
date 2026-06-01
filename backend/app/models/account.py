@@ -57,6 +57,8 @@ class Account(Base):
     kol_provision_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | success | failed
     kol_provision_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

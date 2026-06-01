@@ -1245,6 +1245,7 @@
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
                 </span>
+                <span v-if="item.hidden" class="ac-type-badge ac-hidden-badge">已隐藏</span>
               </div>
 
               <div v-if="item.supplement_status" class="ac-supplement-row" :class="`is-${item.supplement_status.status}`">
@@ -2248,6 +2249,11 @@ const BULK_ATTRIBUTE_OPTIONS = {
     { label: '常规号', value: 'dev' },
     { label: '正式号', value: 'prod' },
   ],
+  hidden: [
+    { label: '不修改', value: '' },
+    { label: '显示', value: 'false' },
+    { label: '隐藏', value: 'true' },
+  ],
 }
 
 const BULK_ATTRIBUTE_FIELDS = [
@@ -2281,6 +2287,12 @@ const BULK_ATTRIBUTE_FIELDS = [
     tone: 'amber',
     icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 15 8.5 22 9.5l-5 4.8 1.2 7L12 17.8 5.8 21.3 7 14.3 2 9.5l7-1Z"/></svg>',
   },
+  {
+    key: 'hidden',
+    label: '隐藏',
+    tone: 'slate',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  },
 ]
 
 const showBulkAttributeDialog = ref(false)
@@ -2291,6 +2303,7 @@ const bulkAttributeForm = ref({
   gender: '',
   product_code_mode: '',
   account_tier: '',
+  hidden: '',
 })
 
 function resetBulkAttributeForm() {
@@ -2300,11 +2313,12 @@ function resetBulkAttributeForm() {
     gender: '',
     product_code_mode: '',
     account_tier: '',
+    hidden: '',
   }
 }
 
 const bulkAttributeChangedCount = computed(() =>
-  ['account_type', 'face_mode', 'gender', 'product_code_mode', 'account_tier']
+  ['account_type', 'face_mode', 'gender', 'product_code_mode', 'account_tier', 'hidden']
     .filter(key => !!bulkAttributeForm.value[key]).length
 )
 
@@ -2327,6 +2341,9 @@ function buildBulkAttributePayload() {
     if (bulkAttributeForm.value[key]) {
       payload[key] = bulkAttributeForm.value[key]
     }
+  }
+  if (bulkAttributeForm.value.hidden !== '') {
+    payload.hidden = bulkAttributeForm.value.hidden === 'true'
   }
   return payload
 }
@@ -4673,6 +4690,12 @@ onMounted(() => {
 .ac-ai-status.is-completed {
   background: #dcfce7;
   color: #15803d;
+}
+
+.ac-hidden-badge {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
 }
 
 .ac-supplement-row {
