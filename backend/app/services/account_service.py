@@ -67,8 +67,8 @@ async def create_account(
 async def list_accounts(
     session: AsyncSession,
     *,
-    page: int,
-    page_size: int,
+    page: int | None = 1,
+    page_size: int | None = 20,
     owner_id: UUID | None = None,
     flag_id: UUID | None = None,
     search: str | None = None,
@@ -103,7 +103,9 @@ async def list_accounts(
     else:
         order_clause = Account.created_at.desc()
 
-    stmt = select(Account).order_by(order_clause).offset((page - 1) * page_size).limit(page_size)
+    stmt = select(Account).order_by(order_clause)
+    if page is not None and page_size is not None:
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     total_stmt = select(func.count(Account.id))
 
     # ── Filters ───────────────────────────────────────────────────────────────

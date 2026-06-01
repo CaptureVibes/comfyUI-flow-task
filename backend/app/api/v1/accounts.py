@@ -908,8 +908,8 @@ async def bulk_update_scheduled_publish(
             f = body.filters
             all_accounts, _ = await list_accounts(
                 session,
-                page=1,
-                page_size=999999,
+                page=None,
+                page_size=None,
                 owner_id=owner_id,
                 gender=f.gender,
                 account_type=f.account_type,
@@ -1864,8 +1864,8 @@ async def bulk_generate_video_tasks(
             f = body.filters
             all_accounts, _ = await list_accounts(
                 session,
-                page=1,
-                page_size=999999,
+                page=None,
+                page_size=None,
                 owner_id=owner_id,
                 gender=f.gender,
                 account_type=f.account_type,
