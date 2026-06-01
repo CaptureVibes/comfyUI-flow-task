@@ -1842,32 +1842,21 @@ async def supplement_templates_for_accounts(
 # 自动补充（按分类类型过滤）
 # ---------------------------------------------------------------------------
 
-_AUTO_SUPPLEMENT_CLASSIFY_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {"category_index": {"type": "INTEGER", "minimum": 0, "maximum": 13}},
-    "required": ["category_index"],
-}
-
-_CATEGORY_MAJOR_MAP: dict[int, str] = {
-    0: "display", 1: "display", 2: "display", 3: "display",
-    4: "knowledge", 5: "knowledge", 6: "knowledge", 7: "knowledge", 8: "knowledge",
-    9: "persona", 10: "persona", 11: "persona",
-    12: "trending", 13: "trending",
-}
-
-
 async def _classify_video_for_auto_supplement(
     local_video_url: str,
     owner_id: uuid.UUID | None,
-) -> int | None:
-    """对视频调用 Gemini 分类，返回小类 category_index (0-13) 或 None（失败时）。
+) -> str | None:
+    """对视频调用 Gemini 分类，返回 category_key 字符串或 None（失败时）。
 
     自动补充的过滤口径是「小类必须命中账号 single primary / dual primary+secondary」，
-    因此这里直接返回 idx，让调用方与 classification_summary.primary_index / secondary_index 比对。
+    因此这里直接返回 key，让调用方与 classification_summary.primary_key / secondary_key 比对。
     """
     from app.services.ai_api import call_gemini_api
     from app.services.pipeline_settings_service import get_or_create_pipeline_settings
     from app.db.session import SessionLocal
+    from app.services.video_classification_service import (
+        _DEFAULT_PROMPT, _RESPONSE_SCHEMA, _parse_category_key,
+    )
 
     async with SessionLocal() as session:
         cfg_owner = owner_id if owner_id is not None else uuid.UUID(int=0)
@@ -1877,32 +1866,19 @@ async def _classify_video_for_auto_supplement(
             cfg = None
 
     model_name = (cfg.video_classify_model if cfg else "") or "gemini-3.1-pro-preview"
-    from app.services.video_classification_service import _DEFAULT_PROMPT
     prompt = (cfg.video_classify_prompt if cfg else "") or _DEFAULT_PROMPT
     temperature = float(cfg.video_classify_temperature) if cfg else 0.7
 
     try:
-        import re, json as _json
         text = await call_gemini_api(
             model_name=model_name,
             prompt=prompt,
             temperature=temperature,
             video_url=local_video_url,
-            response_schema=_AUTO_SUPPLEMENT_CLASSIFY_SCHEMA,
+            response_schema=_RESPONSE_SCHEMA,
             timeout=180.0,
         )
-        text = (text or "").strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
-        obj = _json.loads(text) if text.startswith("{") else None
-        if obj is None:
-            m = re.search(r"category_index\D*(\d+)", text)
-            idx = int(m.group(1)) if m else int(text)
-        else:
-            idx = int(obj["category_index"])
-        if 0 <= idx <= 13:
-            return idx
-        return None
+        return _parse_category_key(text or "")
     except Exception as exc:
         logger.warning("【自动补充】分类失败 url=%s: %s", local_video_url, exc)
         return None
@@ -1941,8 +1917,8 @@ async def auto_supplement_for_account(
             return {"account_id": str(account_id), "error": "账号不存在", "imported": 0, "skipped": 0, "filtered": 0}
         cls_type = account.classification_type
         summary = account.classification_summary or {}
-        primary_index = summary.get("primary_index")
-        secondary_index = summary.get("secondary_index")
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
 
     if cls_type not in ("single", "dual"):
         return {
@@ -1951,13 +1927,13 @@ async def auto_supplement_for_account(
             "imported": 0, "skipped": 0, "filtered": 0,
         }
 
-    # 用小类 index 严格匹配（single → 仅 primary；dual → primary + secondary）
-    allowed_indices: list[int] = []
-    if isinstance(primary_index, int):
-        allowed_indices.append(primary_index)
-    if cls_type == "dual" and isinstance(secondary_index, int):
-        allowed_indices.append(secondary_index)
-    if not allowed_indices:
+    # 用小类 key 严格匹配（single → 仅 primary；dual → primary + secondary）
+    allowed_keys: list[str] = []
+    if isinstance(primary_key, str) and primary_key:
+        allowed_keys.append(primary_key)
+    if cls_type == "dual" and isinstance(secondary_key, str) and secondary_key:
+        allowed_keys.append(secondary_key)
+    if not allowed_keys:
         return {"account_id": str(account_id), "error": "无法确定允许的视频小类", "imported": 0, "skipped": 0, "filtered": 0}
 
     async with SessionLocal() as session:
@@ -1991,8 +1967,8 @@ async def auto_supplement_for_account(
     ai_review_prompt = _search_cfg.ai_review_prompt
 
     logger.info(
-        "【自动补充】account_id=%s cls_type=%s allowed_indices=%s blogger=%s ai_review=%s 开始",
-        account_id, cls_type, allowed_indices, blogger_handle, ai_review_enabled,
+        "【自动补充】account_id=%s cls_type=%s allowed_keys=%s blogger=%s ai_review=%s 开始",
+        account_id, cls_type, allowed_keys, blogger_handle, ai_review_enabled,
     )
 
     imported = 0
@@ -2089,12 +2065,12 @@ async def auto_supplement_for_account(
                     continue
                 logger.info("【自动补充】AI审核通过 %s", video_url)
 
-            # ── Step 3.5: Gemini 分类（小类必须命中 allowed_indices）─────────
-            category_index = await _classify_video_for_auto_supplement(local_video_url, owner_id)
-            if category_index is None or category_index not in allowed_indices:
+            # ── Step 3.5: Gemini 分类（小类必须命中 allowed_keys）─────────
+            category_key = await _classify_video_for_auto_supplement(local_video_url, owner_id)
+            if category_key is None or category_key not in allowed_keys:
                 logger.info(
-                    "【自动补充】分类不匹配 index=%s allowed=%s，丢弃（不写库）%s",
-                    category_index, allowed_indices, video_url,
+                    "【自动补充】分类不匹配 key=%s allowed=%s，丢弃（不写库）%s",
+                    category_key, allowed_keys, video_url,
                 )
                 filtered += 1
                 continue
@@ -2176,7 +2152,7 @@ async def auto_supplement_for_account(
         "skipped": skipped,
         "filtered": filtered,
         "rejected": rejected,
-        "allowed_indices": allowed_indices,
+        "allowed_keys": allowed_keys,
     }
 
 

@@ -385,19 +385,13 @@ async def list_accounts_endpoint(
     account_tier: str | None = Query(None),
     platform_binding_status: str | None = Query(None),
     classification_type: str | None = Query(None),
-    category_indices: str | None = Query(None),
+    category_keys: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
-    parsed_category_indices: list[int] | None = None
-    if category_indices:
-        try:
-            parsed_category_indices = [int(x) for x in category_indices.split(",") if x.strip() != ""]
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="category_indices 必须是逗号分隔的整数",
-            ) from exc
+    parsed_category_keys: list[str] | None = None
+    if category_keys:
+        parsed_category_keys = [x.strip() for x in category_keys.split(",") if x.strip()]
     items, total = await list_accounts(
         session,
         page=page,
@@ -414,7 +408,7 @@ async def list_accounts_endpoint(
         account_tier=account_tier or None,
         platform_binding_status=platform_binding_status or None,
         classification_type=classification_type or None,
-        category_indices=parsed_category_indices or None,
+        category_keys=parsed_category_keys or None,
     )
     # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]
@@ -1403,17 +1397,18 @@ class SupplementFiltersBody(BaseModel):
     min_view_count: int | None = None
     published_after: date | None = None
     max_duration_seconds: int | None = None
-    category_indices: list[int] | None = None
+    category_keys: list[str] | None = None
 
-    def normalized_category_indices(self) -> list[int]:
-        if not self.category_indices:
+    def normalized_category_keys(self) -> list[str]:
+        from app.services.video_classification_service import _VALID_KEYS_SET
+        if not self.category_keys:
             return []
-        values: list[int] = []
-        for idx in self.category_indices:
-            if idx < 0 or idx > 13:
-                raise ValueError("category_indices 必须是 0-13 的整数")
-            if idx not in values:
-                values.append(idx)
+        values: list[str] = []
+        for key in self.category_keys:
+            if key not in _VALID_KEYS_SET:
+                raise ValueError(f"无效 category_key: {key}")
+            if key not in values:
+                values.append(key)
         return values
 
 
@@ -1466,9 +1461,9 @@ async def _load_bulk_video_task_templates(
     from app.models.video_ai_template import VideoAITemplate
     from app.models.video_classification import VideoClassification
 
-    # ── 按分类类型决定允许的小类（category_index）──────────────────────────────
+    # ── 按分类类型决定允许的小类（category_key）──────────────────────────────
     account = await session.get(Account, account_id)
-    allowed_indices: list[int] | None = None  # None = 不限制
+    allowed_keys: list[str] | None = None  # None = 不限制
 
     if account is None:
         return ([], "account_missing") if with_reason else []
@@ -1477,13 +1472,13 @@ async def _load_bulk_video_task_templates(
     summary = account.classification_summary or {}
     # 仅 single / dual 走小类硬过滤；chaos / insufficient / None 不限分类（仅靠标签交集）
     if cls_type == "single":
-        primary_idx = summary.get("primary_index")
-        if primary_idx is not None:
-            allowed_indices = [int(primary_idx)]
+        primary_key = summary.get("primary_key")
+        if primary_key is not None:
+            allowed_keys = [str(primary_key)]
     elif cls_type == "dual":
-        primary_idx = summary.get("primary_index")
-        secondary_idx = summary.get("secondary_index")
-        allowed_indices = [int(i) for i in [primary_idx, secondary_idx] if i is not None]
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
+        allowed_keys = [k for k in [primary_key, secondary_key] if k is not None]
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
     tagged_tpls: list[VideoAITemplate] = []
@@ -1536,9 +1531,9 @@ async def _load_bulk_video_task_templates(
     if not unique_tpls:
         return ([], mode_skip_reason) if with_reason else []
 
-    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 小类（category_index）
+    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 小类（category_key）
     # 完全匹配的模板，没有匹配则跳过该账号（不再回退到全部候选）。
-    if allowed_indices is not None:
+    if allowed_keys is not None:
         vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
         matched_vs_ids: set[uuid.UUID] = set()
         if vs_ids:
@@ -1547,7 +1542,7 @@ async def _load_bulk_video_task_templates(
                     select(VideoClassification.video_source_id)
                     .where(VideoClassification.video_source_id.in_(vs_ids))
                     .where(VideoClassification.status == "success")
-                    .where(VideoClassification.category_index.in_(allowed_indices))
+                    .where(VideoClassification.category_key.in_(allowed_keys))
                 )
             ).scalars().all()
             matched_vs_ids = set(rows)
@@ -1588,15 +1583,15 @@ async def _count_account_templates(
 
     cls_type = account.classification_type
     summary = account.classification_summary or {}
-    allowed_indices: list[int] | None = None
+    allowed_keys: list[str] | None = None
     if cls_type == "single":
-        primary_idx = summary.get("primary_index")
-        if primary_idx is not None:
-            allowed_indices = [int(primary_idx)]
+        primary_key = summary.get("primary_key")
+        if primary_key is not None:
+            allowed_keys = [str(primary_key)]
     elif cls_type == "dual":
-        primary_idx = summary.get("primary_index")
-        secondary_idx = summary.get("secondary_index")
-        allowed_indices = [int(i) for i in [primary_idx, secondary_idx] if i is not None]
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
+        allowed_keys = [k for k in [primary_key, secondary_key] if k is not None]
 
     tag_ids = list((await session.execute(
         select(AccountTag.tag_id).where(AccountTag.account_id == account.id)
@@ -1617,7 +1612,7 @@ async def _count_account_templates(
         tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
     tpls = list((await session.execute(tpl_stmt)).scalars().all())
 
-    if allowed_indices is not None:
+    if allowed_keys is not None:
         vs_ids = list({t.video_source_id for t in tpls if t.video_source_id})
         matched_vs_ids: set[uuid.UUID] = set()
         if vs_ids:
@@ -1625,7 +1620,7 @@ async def _count_account_templates(
                 select(VideoClassification.video_source_id)
                 .where(VideoClassification.video_source_id.in_(vs_ids))
                 .where(VideoClassification.status == "success")
-                .where(VideoClassification.category_index.in_(allowed_indices))
+                .where(VideoClassification.category_key.in_(allowed_keys))
             )).scalars().all()
             matched_vs_ids = set(rows)
         tpls = [t for t in tpls if t.video_source_id in matched_vs_ids]
@@ -1782,7 +1777,7 @@ async def bulk_generate_video_tasks(
     - fill_mode=target_total：每账号补到 limit 个 status='queued' 任务；够了就跳过
     - 模板按对应 video_source.view_count 从高到低排序后取需求量
     - chaos / insufficient / 未分类账号不再被分类硬阻断；仅按标签交集出候选
-    - single / dual 仍按小类(category_index)硬过滤
+    - single / dual 仍按小类(category_key)硬过滤
     先计算预计创建的任务数并立即返回，真正创建过程放到后台执行。
     """
     if not body.account_ids:
@@ -1882,15 +1877,15 @@ async def supplement_templates(
     target_count = _resolve_target_count(body)
     effective_owner = owner_id if owner_id is not None else creator_id
     filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
-    if body.filters and body.filters.category_indices is not None:
+    if body.filters and body.filters.category_keys is not None:
         try:
-            category_indices = body.filters.normalized_category_indices()
+            category_keys = body.filters.normalized_category_keys()
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if category_indices:
-            filters_dict["category_indices"] = category_indices
+        if category_keys:
+            filters_dict["category_keys"] = category_keys
         else:
-            filters_dict.pop("category_indices", None)
+            filters_dict.pop("category_keys", None)
 
     # exclusive 模式：只走 vendor，失败/未配置直接报错
     if template_type == "exclusive":

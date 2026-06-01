@@ -264,7 +264,7 @@
               placeholder="留空则使用内置默认提示词"
             />
             <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
-              <span style="color:#9ca3af;font-size:12px">无论是否自定义，系统都会通过 response_schema 限制返回 {"category_index": 0~13}。</span>
+              <span style="color:#9ca3af;font-size:12px">无论是否自定义，系统都会通过 response_schema 限制返回 {"category_key": "..."}。</span>
               <button type="button" class="ai-default-prompt-toggle" @click="showDefaultPrompt = !showDefaultPrompt">
                 {{ showDefaultPrompt ? '收起' : '查看内置默认提示词' }}
               </button>
@@ -676,11 +676,11 @@
               <div class="al-cat-filter-pills">
                 <button
                   v-for="cat in CATEGORY_OPTIONS.filter(c => c.major === major)"
-                  :key="cat.index"
+                  :key="cat.key"
                   type="button"
                   class="al-cat-pill"
-                  :class="[`is-${cat.major}`, { active: supplementForm.categoryIndices.includes(cat.index) }]"
-                  @click="toggleSupplementCategory(cat.index)"
+                  :class="[`is-${cat.major}`, { active: supplementForm.categoryKeys.includes(cat.key) }]"
+                  @click="toggleSupplementCategory(cat.key)"
                 >
                   {{ cat.label }}
                 </button>
@@ -1048,15 +1048,15 @@
         <div class="al-cat-filter-pills">
           <button
             v-for="cat in CATEGORY_OPTIONS"
-            :key="cat.index"
+            :key="cat.key"
             type="button"
             class="al-cat-pill"
             :class="[
               `is-${cat.major}`,
-              { active: filterCategoryIndices.includes(cat.index) },
+              { active: filterCategoryIndices.includes(cat.key) },
             ]"
-            @click.prevent="toggleCategoryFilter(cat.index)"
-          >{{ cat.index }}. {{ cat.label }}</button>
+            @click.prevent="toggleCategoryFilter(cat.key)"
+          >{{ cat.label }}</button>
         </div>
       </div>
 
@@ -1751,22 +1751,42 @@ const filterPlatformBindingStatus = ref('')
 const filterClassificationType = ref('')
 const filterCategoryIndices = ref([])
 
-// 14 个细分类（与后端 video_classification_service.CATEGORY_LABELS 保持一致）
+// 分类体系（与后端 video_classification_service._CATEGORIES 保持一致）
 const CATEGORY_OPTIONS = [
-  { index: 0, label: '单套衣服展示美', major: 'display' },
-  { index: 1, label: '换装展示美', major: 'display' },
-  { index: 2, label: '镜头感或表演型展示美', major: 'display' },
-  { index: 3, label: '生活场景中的展示美', major: 'display' },
-  { index: 4, label: '单品语言讲解', major: 'knowledge' },
-  { index: 5, label: '造型选择或对比', major: 'knowledge' },
-  { index: 6, label: '搭配教程或方法论', major: 'knowledge' },
-  { index: 7, label: '单品展示无人讲解', major: 'knowledge' },
-  { index: 8, label: '单品展示字幕讲解', major: 'knowledge' },
-  { index: 9, label: '人生故事', major: 'persona' },
-  { index: 10, label: '人生阶段', major: 'persona' },
-  { index: 11, label: '个人态度表达', major: 'persona' },
-  { index: 12, label: '热门梗段子反转梗流行文案', major: 'trending' },
-  { index: 13, label: '明星影视综艺节日社会话题相关穿搭', major: 'trending' },
+  // 美美展示类
+  { key: 'beauty_static_pose',    label: '静态 Pose / 镜头展示类',         major: 'beauty' },
+  { key: 'beauty_light_action',   label: '轻动作展示类',                   major: 'beauty' },
+  { key: 'beauty_dance',          label: '音乐跳舞类',                     major: 'beauty' },
+  { key: 'beauty_lipsync',        label: '歌曲对口型类',                   major: 'beauty' },
+  { key: 'beauty_drama_light',    label: '影视 / 台词轻演绎类',            major: 'beauty' },
+  // 穿搭方法类
+  { key: 'method_single_silent',  label: '不带语音单套逐件穿搭型',         major: 'method' },
+  { key: 'method_multi_look',     label: '不带语音多套完整 Look 切换型',   major: 'method' },
+  { key: 'method_multi_build',    label: '不带语音多套逐件搭建型',         major: 'method' },
+  { key: 'method_base_replace',   label: '不带语音 Base Look 替换单品型', major: 'method' },
+  { key: 'method_multiway',       label: '不带语音单品多穿型',             major: 'method' },
+  { key: 'method_before_after',   label: '不带语音 Before & After 优化型', major: 'method' },
+  { key: 'method_compare',        label: '不带语音左右对比 / 并列对比型', major: 'method' },
+  { key: 'method_voice_formula',  label: '带语音公式规则讲解型',           major: 'method' },
+  { key: 'method_voice_steps',    label: '带语音步骤流程讲解型',           major: 'method' },
+  { key: 'method_voice_diagnose', label: '带语音问题诊断 / 优化讲解型',   major: 'method' },
+  { key: 'method_voice_compare',  label: '带语音对比判断讲解型',           major: 'method' },
+  { key: 'method_voice_case',     label: '带语音案例拆解讲解型',           major: 'method' },
+  { key: 'method_voice_standard', label: '带语音选择标准讲解型',           major: 'method' },
+  { key: 'method_voice_system',   label: '带语音系统规划讲解型',           major: 'method' },
+  // 购物决策类
+  { key: 'shopping_brand',        label: '品牌导向型',                     major: 'shopping' },
+  { key: 'shopping_single_item',  label: '单品种草型',                     major: 'shopping' },
+  { key: 'shopping_dupe',         label: '大牌平替 / Dupe 型',             major: 'shopping' },
+  { key: 'shopping_scene',        label: '场景需求型',                     major: 'shopping' },
+  { key: 'shopping_list',         label: '清单合集型',                     major: 'shopping' },
+  { key: 'shopping_compare',      label: '对比选择型',                     major: 'shopping' },
+  // 人设生活类
+  { key: 'lifestyle',             label: '人设生活类',                     major: 'lifestyle' },
+  // 情景剧情类
+  { key: 'drama',                 label: '情景剧情类',                     major: 'drama' },
+  // 不能分类
+  { key: 'unclassifiable',        label: '不能分类',                       major: 'unclassifiable' },
 ]
 
 const hasActiveColFilters = computed(() =>
@@ -1783,15 +1803,15 @@ function onClassificationTypeChange() {
   onFilterChange()
 }
 
-function toggleCategoryFilter(idx) {
+function toggleCategoryFilter(key) {
   const max = filterClassificationType.value === 'dual' ? 2 : 1
   const list = filterCategoryIndices.value
-  const pos = list.indexOf(idx)
+  const pos = list.indexOf(key)
   if (pos >= 0) {
     list.splice(pos, 1)
   } else {
     if (list.length >= max) list.shift()
-    list.push(idx)
+    list.push(key)
   }
   page.value = 1
   loadData({ silent: true })
@@ -2740,7 +2760,7 @@ async function loadData({ silent = false } = {}) {
     if (filterAccountTier.value) params.account_tier = filterAccountTier.value
     if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
     if (filterClassificationType.value) params.classification_type = filterClassificationType.value
-    if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
+    if (filterCategoryIndices.value.length > 0) params.category_keys = filterCategoryIndices.value.join(',')
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
@@ -2914,7 +2934,7 @@ async function startBulkVideoGenerate() {
       if (filterAccountTier.value) params.account_tier = filterAccountTier.value
       if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
       if (filterClassificationType.value) params.classification_type = filterClassificationType.value
-      if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
+      if (filterCategoryIndices.value.length > 0) params.category_keys = filterCategoryIndices.value.join(',')
       const data = await fetchAccounts(params)
       accountIds = (data.items || []).map(a => a.id)
     }
@@ -3026,7 +3046,7 @@ const supplementForm = ref({
   minViewCount: 10000,
   publishedAfter: '2024-01-01',
   maxDurationSeconds: 30,
-  categoryIndices: [],
+  categoryKeys: [],
 })
 
 function openSupplementDialog() {
@@ -3036,17 +3056,17 @@ function openSupplementDialog() {
     minViewCount: 10000,
     publishedAfter: '2024-01-01',
     maxDurationSeconds: 30,
-    categoryIndices: [],
+    categoryKeys: [],
   }
   showSupplementDialog.value = true
 }
 
-function toggleSupplementCategory(index) {
-  const values = supplementForm.value.categoryIndices || []
-  if (values.includes(index)) {
-    supplementForm.value.categoryIndices = values.filter(v => v !== index)
+function toggleSupplementCategory(key) {
+  const values = supplementForm.value.categoryKeys || []
+  if (values.includes(key)) {
+    supplementForm.value.categoryKeys = values.filter(v => v !== key)
   } else {
-    supplementForm.value.categoryIndices = [...values, index]
+    supplementForm.value.categoryKeys = [...values, key]
   }
 }
 
@@ -3076,8 +3096,8 @@ async function handleSupplement() {
         min_view_count: supplementForm.value.minViewCount,
         published_after: supplementForm.value.publishedAfter,
         max_duration_seconds: supplementForm.value.maxDurationSeconds,
-        category_indices: supplementForm.value.templateType === 'exclusive'
-          ? [...(supplementForm.value.categoryIndices || [])]
+        category_keys: supplementForm.value.templateType === 'exclusive'
+          ? [...(supplementForm.value.categoryKeys || [])]
           : [],
       }
   const target = supplementForm.value.targetVideoCount
@@ -3105,35 +3125,20 @@ async function handleSupplement() {
 
 // ── 视频分类 ────────────────────────────────────────────────────────────────
 
-const MAJOR_KEYS = ['display', 'knowledge', 'persona', 'trending']
+const MAJOR_KEYS = ['beauty', 'method', 'shopping', 'lifestyle', 'drama', 'unclassifiable']
 const MAJOR_LABEL_MAP = {
-  display: '展示美',
-  knowledge: '知识',
-  persona: '人设',
-  trending: '热点',
+  beauty:         '美美展示类',
+  method:         '穿搭方法类',
+  shopping:       '购物决策类',
+  lifestyle:      '人设生活类',
+  drama:          '情景剧情类',
+  unclassifiable: '不能分类',
 }
 
-const _CLASSIFY_CATEGORIES = [
-  [0, '单套衣服展示美', 'display'],
-  [1, '换装展示美', 'display'],
-  [2, '镜头感或表演型展示美', 'display'],
-  [3, '生活场景中的展示美', 'display'],
-  [4, '单品语言讲解', 'knowledge'],
-  [5, '造型选择或对比', 'knowledge'],
-  [6, '搭配教程或方法论', 'knowledge'],
-  [7, '单品展示无人讲解', 'knowledge'],
-  [8, '单品展示字幕讲解', 'knowledge'],
-  [9, '人生故事', 'persona'],
-  [10, '人生阶段', 'persona'],
-  [11, '个人态度表达', 'persona'],
-  [12, '热门梗段子反转梗流行文案', 'trending'],
-  [13, '明星影视综艺节日社会话题相关穿搭', 'trending'],
-]
-
-const DEFAULT_CLASSIFY_PROMPT = '你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下面 14 个分类中的哪一个，'
-  + '只输出该分类的下标整数（0-13），不要输出任何额外文字。\n\n分类列表：\n'
-  + _CLASSIFY_CATEGORIES.map(([idx, label, major]) => `${idx} - ${label}（大类: ${major}）`).join('\n')
-  + '\n\n输出格式：JSON 对象 {"category_index": <整数>}'
+const DEFAULT_CLASSIFY_PROMPT = '你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下列分类中的哪一个，'
+  + '只输出对应的 category_key 字符串，不要输出任何额外文字。\n\n分类列表（格式：key — 名称 [大类]）：\n'
+  + CATEGORY_OPTIONS.map(c => `${c.key} — ${c.label} [${MAJOR_LABEL_MAP[c.major]}]`).join('\n')
+  + '\n\n输出格式：JSON 对象 {"category_key": "<key>"}'
 
 const showDefaultPrompt = ref(false)
 
@@ -3146,10 +3151,10 @@ function topSubLabel(summary, majorKey) {
   if (!counts) return majorLabel(majorKey)
   let bestLabel = null
   let bestCount = 0
-  for (const [idx, label, major] of _CLASSIFY_CATEGORIES) {
-    if (major !== majorKey) continue
-    const c = Number(counts[String(idx)] || 0)
-    if (c > bestCount) { bestCount = c; bestLabel = label }
+  for (const cat of CATEGORY_OPTIONS) {
+    if (cat.major !== majorKey) continue
+    const c = Number(counts[cat.key] || 0)
+    if (c > bestCount) { bestCount = c; bestLabel = cat.label }
   }
   return bestLabel || majorLabel(majorKey)
 }

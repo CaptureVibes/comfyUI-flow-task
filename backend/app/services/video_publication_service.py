@@ -36,11 +36,11 @@ logger = logging.getLogger("app.video_publication_service")
 
 
 def _classification_label(classification: VideoClassification | None) -> str | None:
-    if classification is None or classification.category_index is None:
+    if classification is None or not classification.category_key:
         return None
     from app.services.video_classification_service import CATEGORY_LABELS
 
-    return CATEGORY_LABELS.get(classification.category_index)
+    return CATEGORY_LABELS.get(classification.category_key)
 
 
 # ── 后台轮询器 ──────────────────────────────────────────────────────────────────
@@ -1886,7 +1886,7 @@ class VideoPublicationService:
         if query.unclassified:
             stmt = stmt.where(VideoClassification.id.is_(None))
         elif query.category_indices:
-            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
+            stmt = stmt.where(VideoClassification.category_key.in_(query.category_indices))
         if query.promotion_code_filter == "with":
             stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
         elif query.promotion_code_filter == "without":
@@ -1986,7 +1986,7 @@ class VideoPublicationService:
             total_comments=total_comments,
             total_shares=total_shares,
             avg_view_percentage=(sum(view_percentage_values) / len(view_percentage_values)) if view_percentage_values else None,
-            category_index=getattr(classification, "category_index", None),
+            category_key=getattr(classification, "category_key", None),
             category_label=_classification_label(classification),
             major_category=getattr(classification, "major_category", None),
             created_at=publication.created_at,

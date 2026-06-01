@@ -134,7 +134,7 @@ class VideoPublicationStatsListItem(BaseModel):
     total_comments: int = 0
     total_shares: int = 0
     avg_view_percentage: float | None = None
-    category_index: int | None = None
+    category_key: str | None = None
     category_label: str | None = None
     major_category: str | None = None
     created_at: datetime | None = None
@@ -154,7 +154,7 @@ class VideoPublicationStatsQuery(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     keyword: str | None = None
-    category_indices: list[int] | None = None
+    category_indices: list[str] | None = None
     unclassified: bool = False
     promotion_code_filter: str | None = None  # 'with' | 'without' | None
     sort_by: str = "published_at"

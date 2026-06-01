@@ -641,17 +641,15 @@ def _rejected_entry(video: dict, account_id: uuid.UUID, **extras) -> dict:
     }
 
 
-def _normalize_category_indices(raw: Any) -> list[int]:
+def _normalize_category_keys(raw: Any) -> list[str]:
+    from app.services.video_classification_service import _VALID_KEYS_SET
     if not isinstance(raw, list):
         return []
-    values: list[int] = []
+    values: list[str] = []
     for item in raw:
-        try:
-            idx = int(item)
-        except (TypeError, ValueError):
-            continue
-        if 0 <= idx <= 13 and idx not in values:
-            values.append(idx)
+        key = str(item).strip() if item else ""
+        if key in _VALID_KEYS_SET and key not in values:
+            values.append(key)
     return values
 
 
@@ -747,13 +745,13 @@ async def _post_callback_pipeline(
     ai_review_prompt = search_cfg.ai_review_prompt if search_cfg else ""
     retry_delay = search_cfg.retry_delay if search_cfg else 30.0
 
-    # auto 模式：解出允许的小类 index（single → primary_index；dual → primary + secondary）
-    allowed_indices: list[int] = []
+    # auto 模式：解出允许的小类 key（single → primary_key；dual → primary + secondary）
+    allowed_keys: list[str] = []
     if mode == "auto":
         cls_type = account.classification_type
         summary = account.classification_summary or {}
-        primary_index = summary.get("primary_index")
-        secondary_index = summary.get("secondary_index")
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
         if cls_type not in ("single", "dual"):
             logger.info(
                 "[ext_supp] auto 模式但账号 %s 分类=%s，跳过",
@@ -766,11 +764,11 @@ async def _post_callback_pipeline(
                 rejected=True,
             )
             return
-        if isinstance(primary_index, int):
-            allowed_indices.append(primary_index)
-        if cls_type == "dual" and isinstance(secondary_index, int):
-            allowed_indices.append(secondary_index)
-        if not allowed_indices:
+        if isinstance(primary_key, str) and primary_key:
+            allowed_keys.append(primary_key)
+        if cls_type == "dual" and isinstance(secondary_key, str) and secondary_key:
+            allowed_keys.append(secondary_key)
+        if not allowed_keys:
             logger.info("[ext_supp] auto 模式但 account %s 无法确定允许小类，跳过", account_id)
             await _mark_callback_video_failed(
                 request_id=request_id,
@@ -779,8 +777,8 @@ async def _post_callback_pipeline(
                 rejected=True,
             )
             return
-    exclusive_filter_indices = (
-        _normalize_category_indices(request_filters.get("category_indices"))
+    exclusive_filter_keys = (
+        _normalize_category_keys(request_filters.get("category_keys"))
         if mode == "exclusive"
         else []
     )
@@ -860,20 +858,20 @@ async def _post_callback_pipeline(
         logger.info("[ext_supp] AI 审核通过 source_url=%s", source_url)
 
     # 3. 分类过滤：auto 使用账号 single/dual 小类；exclusive 可使用手选小类。
-    classify_allowed_indices = allowed_indices if mode == "auto" else exclusive_filter_indices
-    if classify_allowed_indices:
+    classify_allowed_keys = allowed_keys if mode == "auto" else exclusive_filter_keys
+    if classify_allowed_keys:
         try:
-            category_index = await _classify_video_for_auto_supplement(permanent_url, owner_id)
+            category_key = await _classify_video_for_auto_supplement(permanent_url, owner_id)
         except Exception as exc:
             logger.warning("[ext_supp] 分类异常 source_url=%s: %s", source_url, exc)
-            category_index = None
-        if category_index is None:
+            category_key = None
+        if category_key is None:
             logger.info("[ext_supp] 分类失败，丢弃 source_url=%s mode=%s", source_url, mode)
             await _append_rejected_video(request_id, _rejected_entry(
                 video, account_id,
                 reason_type="classify_failed",
                 reason="Gemini 分类未返回结果",
-                allowed_indices=classify_allowed_indices,
+                allowed_keys=classify_allowed_keys,
             ))
             await _mark_callback_video_failed(
                 request_id=request_id,
@@ -882,26 +880,26 @@ async def _post_callback_pipeline(
                 rejected=True,
             )
             return
-        if category_index not in classify_allowed_indices:
+        if category_key not in classify_allowed_keys:
             logger.info(
-                "[ext_supp] 分类 idx=%s ∉ 允许 %s，丢弃 source_url=%s mode=%s",
-                category_index, classify_allowed_indices, source_url, mode,
+                "[ext_supp] 分类 key=%s ∉ 允许 %s，丢弃 source_url=%s mode=%s",
+                category_key, classify_allowed_keys, source_url, mode,
             )
             await _append_rejected_video(request_id, _rejected_entry(
                 video, account_id,
                 reason_type="classify_unmatched",
-                reason=f"分类 idx={category_index} 不在允许小类 {classify_allowed_indices}",
-                category_index=category_index,
-                allowed_indices=classify_allowed_indices,
+                reason=f"分类 key={category_key} 不在允许小类 {classify_allowed_keys}",
+                category_key=category_key,
+                allowed_keys=classify_allowed_keys,
             ))
             await _mark_callback_video_failed(
                 request_id=request_id,
                 account_id=account_id,
-                reason=f"分类 idx={category_index} 不在允许小类 {classify_allowed_indices}",
+                reason=f"分类 key={category_key} 不在允许小类 {classify_allowed_keys}",
                 rejected=True,
             )
             return
-        logger.info("[ext_supp] 分类匹配 idx=%s source_url=%s mode=%s", category_index, source_url, mode)
+        logger.info("[ext_supp] 分类匹配 key=%s source_url=%s mode=%s", category_key, source_url, mode)
 
     # 4. 写库（写 video_sources + template + 绑 tag）
     try:
