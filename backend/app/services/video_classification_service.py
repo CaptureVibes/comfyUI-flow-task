@@ -243,6 +243,9 @@ async def _classify_one(video_source_id: str) -> None:
         if row is None or vs is None:
             logger.warning("classification row or video_source missing: %s", video_source_id)
             return
+        # GCS 签名 URL 续签（过期前自动刷新）
+        from app.utils.gcs_signing import ensure_video_source_signed_urls
+        await ensure_video_source_signed_urls(session, vs)
         local_url = vs.local_video_url or vs.local_gcs_video_url
         if not local_url:
             row.status = "failed"
