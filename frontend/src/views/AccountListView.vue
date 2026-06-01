@@ -276,32 +276,29 @@
         <!-- 分类聚合阈值 -->
         <div class="ai-cfg-section">
           <div class="ai-cfg-section-header">
-            <span class="ai-cfg-tag">聚合阈值</span>
-            <span class="ai-cfg-desc">基于成功分类视频的大类占比，将 AI 博主判定为单核心 / 双核心 / 混乱</span>
+            <span class="ai-cfg-tag">博主分类阈值</span>
+            <span class="ai-cfg-desc">基于大类占比（排除「不能分类」）将 AI 博主判定为单核心 / 双核心 / 混乱</span>
           </div>
           <el-form-item label="样本阈值">
             <el-input-number v-model="aiSettingsForm.classify_min_sample" :min="1" :max="50" style="width: 160px" />
             <span style="margin-left:8px;color:#6b7280;font-size:13px">成功分类数 &lt; 此值时记为「样本不足」</span>
           </el-form-item>
-          <el-form-item label="单核心 · Top1 占比">
-            <el-input-number v-model="aiSettingsForm.classify_single_top1_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 ≥ 此值即判为单核心</span>
-          </el-form-item>
-          <el-form-item label="单核心 · Top1−Top2 差">
-            <el-input-number v-model="aiSettingsForm.classify_single_diff_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 − Top2 ≥ 此值也判为单核心</span>
-          </el-form-item>
-          <el-form-item label="双核心 · Top1 下限">
-            <el-input-number v-model="aiSettingsForm.classify_dual_top1_lower" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 ≥ 此值才考虑双核心</span>
-          </el-form-item>
-          <el-form-item label="双核心 · Top1 上限">
-            <el-input-number v-model="aiSettingsForm.classify_dual_top1_upper" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 &lt; 此值才考虑双核心（达到则归单核心）</span>
-          </el-form-item>
-          <el-form-item label="双核心 · Top2 阈值">
-            <el-input-number v-model="aiSettingsForm.classify_dual_top2_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top2 ≥ 此值且差值 &lt; 单核心差，判双核心</span>
+          <div style="margin-bottom:8px;color:#374151;font-size:13px;font-weight:500">单核心阈值（某大类占比 ≥ 阈值即为单核心）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px 24px;margin-bottom:16px">
+            <div v-for="major in RANKABLE_MAJOR_KEYS" :key="major" style="display:flex;align-items:center;gap:8px">
+              <span :class="`al-supplement-major-dot is-${major}`" style="flex-shrink:0"></span>
+              <span style="color:#374151;font-size:13px;min-width:72px">{{ MAJOR_LABEL_MAP[major] }}</span>
+              <el-input-number
+                v-model="aiSettingsForm[`classify_${major}_threshold_pct`]"
+                :min="1" :max="100" :step="5" :precision="0"
+                style="width:120px"
+              />
+              <span style="color:#6b7280;font-size:12px">%</span>
+            </div>
+          </div>
+          <el-form-item label="双核心合计阈值">
+            <el-input-number v-model="aiSettingsForm.classify_dual_combined_threshold_pct" :min="1" :max="100" :step="5" :precision="0" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">% &nbsp;Top1+Top2 大类占比合计 ≥ 此值（且均未达单核心阈值）判为双核心</span>
           </el-form-item>
         </div>
 
@@ -2451,11 +2448,12 @@ const aiSettingsForm = ref({
   video_classify_prompt: '',
   video_classify_temperature: 0.7,
   classify_min_sample: 3,
-  classify_single_top1_threshold: 0.5,
-  classify_single_diff_threshold: 0.15,
-  classify_dual_top1_lower: 0.35,
-  classify_dual_top1_upper: 0.5,
-  classify_dual_top2_threshold: 0.2,
+  classify_beauty_threshold_pct: 75,
+  classify_method_threshold_pct: 60,
+  classify_shopping_threshold_pct: 55,
+  classify_lifestyle_threshold_pct: 55,
+  classify_drama_threshold_pct: 65,
+  classify_dual_combined_threshold_pct: 80,
   tier_video_sample_count: 7,
   tier_avg_play_threshold: 700,
   tier_activity_days: 7,
@@ -2490,11 +2488,12 @@ async function openAISettings() {
     aiSettingsForm.value.video_classify_prompt = data.video_classify_prompt || ''
     aiSettingsForm.value.video_classify_temperature = data.video_classify_temperature ?? 0.7
     aiSettingsForm.value.classify_min_sample = data.classify_min_sample ?? 3
-    aiSettingsForm.value.classify_single_top1_threshold = data.classify_single_top1_threshold ?? 0.5
-    aiSettingsForm.value.classify_single_diff_threshold = data.classify_single_diff_threshold ?? 0.15
-    aiSettingsForm.value.classify_dual_top1_lower = data.classify_dual_top1_lower ?? 0.35
-    aiSettingsForm.value.classify_dual_top1_upper = data.classify_dual_top1_upper ?? 0.5
-    aiSettingsForm.value.classify_dual_top2_threshold = data.classify_dual_top2_threshold ?? 0.2
+    aiSettingsForm.value.classify_beauty_threshold_pct = Math.round((data.classify_beauty_threshold ?? 0.75) * 100)
+    aiSettingsForm.value.classify_method_threshold_pct = Math.round((data.classify_method_threshold ?? 0.60) * 100)
+    aiSettingsForm.value.classify_shopping_threshold_pct = Math.round((data.classify_shopping_threshold ?? 0.55) * 100)
+    aiSettingsForm.value.classify_lifestyle_threshold_pct = Math.round((data.classify_lifestyle_threshold ?? 0.55) * 100)
+    aiSettingsForm.value.classify_drama_threshold_pct = Math.round((data.classify_drama_threshold ?? 0.65) * 100)
+    aiSettingsForm.value.classify_dual_combined_threshold_pct = Math.round((data.classify_dual_combined_threshold ?? 0.80) * 100)
     aiSettingsForm.value.tier_video_sample_count = data.tier_video_sample_count ?? 7
     aiSettingsForm.value.tier_avg_play_threshold = data.tier_avg_play_threshold ?? 700
     aiSettingsForm.value.tier_activity_days = data.tier_activity_days ?? 7
@@ -2535,11 +2534,12 @@ async function saveAISettings() {
       video_classify_prompt: aiSettingsForm.value.video_classify_prompt,
       video_classify_temperature: aiSettingsForm.value.video_classify_temperature,
       classify_min_sample: aiSettingsForm.value.classify_min_sample,
-      classify_single_top1_threshold: aiSettingsForm.value.classify_single_top1_threshold,
-      classify_single_diff_threshold: aiSettingsForm.value.classify_single_diff_threshold,
-      classify_dual_top1_lower: aiSettingsForm.value.classify_dual_top1_lower,
-      classify_dual_top1_upper: aiSettingsForm.value.classify_dual_top1_upper,
-      classify_dual_top2_threshold: aiSettingsForm.value.classify_dual_top2_threshold,
+      classify_beauty_threshold: (aiSettingsForm.value.classify_beauty_threshold_pct ?? 75) / 100,
+      classify_method_threshold: (aiSettingsForm.value.classify_method_threshold_pct ?? 60) / 100,
+      classify_shopping_threshold: (aiSettingsForm.value.classify_shopping_threshold_pct ?? 55) / 100,
+      classify_lifestyle_threshold: (aiSettingsForm.value.classify_lifestyle_threshold_pct ?? 55) / 100,
+      classify_drama_threshold: (aiSettingsForm.value.classify_drama_threshold_pct ?? 65) / 100,
+      classify_dual_combined_threshold: (aiSettingsForm.value.classify_dual_combined_threshold_pct ?? 80) / 100,
       tier_video_sample_count: aiSettingsForm.value.tier_video_sample_count,
       tier_avg_play_threshold: aiSettingsForm.value.tier_avg_play_threshold,
       tier_activity_days: aiSettingsForm.value.tier_activity_days,
@@ -3126,6 +3126,7 @@ async function handleSupplement() {
 // ── 视频分类 ────────────────────────────────────────────────────────────────
 
 const MAJOR_KEYS = ['beauty', 'method', 'shopping', 'lifestyle', 'drama', 'unclassifiable']
+const RANKABLE_MAJOR_KEYS = ['beauty', 'method', 'shopping', 'lifestyle', 'drama']
 const MAJOR_LABEL_MAP = {
   beauty:         '美美展示类',
   method:         '穿搭方法类',

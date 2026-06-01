@@ -146,11 +146,12 @@ class PipelineSettingsPayload(BaseModel):
     video_classify_temperature: float = 0.7
     # 视频分类聚合阈值
     classify_min_sample: int = 3
-    classify_single_top1_threshold: float = 0.5
-    classify_single_diff_threshold: float = 0.15
-    classify_dual_top1_lower: float = 0.35
-    classify_dual_top1_upper: float = 0.5
-    classify_dual_top2_threshold: float = 0.2
+    classify_beauty_threshold: float = 0.75
+    classify_method_threshold: float = 0.60
+    classify_shopping_threshold: float = 0.55
+    classify_lifestyle_threshold: float = 0.55
+    classify_drama_threshold: float = 0.65
+    classify_dual_combined_threshold: float = 0.80
     # 账号分级判定规则
     tier_video_sample_count: int = 7
     tier_avg_play_threshold: int = 700

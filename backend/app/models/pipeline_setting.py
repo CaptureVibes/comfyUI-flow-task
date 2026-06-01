@@ -144,11 +144,14 @@ class PipelineSetting(Base):
 
     # 视频分类聚合阈值
     classify_min_sample: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
-    classify_single_top1_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
-    classify_single_diff_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.15)
-    classify_dual_top1_lower: Mapped[float] = mapped_column(Float, nullable=False, default=0.35)
-    classify_dual_top1_upper: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
-    classify_dual_top2_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
+    # 各大类单核心阈值（占比 >= 该值即判为单核心）
+    classify_beauty_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.75)
+    classify_method_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.60)
+    classify_shopping_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.55)
+    classify_lifestyle_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.55)
+    classify_drama_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.65)
+    # 双核心合计阈值（Top1+Top2 合计 >= 该值且均未达单核心阈值，判为双核心）
+    classify_dual_combined_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.80)
 
     # 账号分级判定规则（test=实验号 / dev=常规号 / prod=正式号）
     tier_video_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=7)        # 最近 N 条视频

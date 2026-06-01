@@ -102,12 +102,19 @@ _RESPONSE_SCHEMA = {
 # =============================================================================
 
 _DEFAULT_MIN_SAMPLE = 3
-_DEFAULT_SINGLE_TOP1 = 0.5
-_DEFAULT_SINGLE_DIFF = 0.15
-_DEFAULT_DUAL_TOP1_LOWER = 0.35
-_DEFAULT_DUAL_TOP1_UPPER = 0.5
-_DEFAULT_DUAL_TOP2 = 0.2
+# 各大类独立单核心阈值（占比 >= 该值即判为单核心）
+_DEFAULT_MAJOR_THRESHOLDS: dict[str, float] = {
+    "beauty":    0.75,
+    "method":    0.60,
+    "shopping":  0.55,
+    "lifestyle": 0.55,
+    "drama":     0.65,
+}
+# 双核心：Top1+Top2 合计占比 >= 该值（且均未达各自单核心阈值）
+_DEFAULT_DUAL_COMBINED = 0.80
+# unclassifiable 不参与判断，排除在外
 _MAJOR_KEYS = ("beauty", "method", "shopping", "lifestyle", "drama", "unclassifiable")
+_RANKABLE_MAJOR_KEYS = ("beauty", "method", "shopping", "lifestyle", "drama")
 
 # =============================================================================
 # 队列 / 内存状态
@@ -399,12 +406,24 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
                 if r.category_key in category_counts:
                     category_counts[r.category_key] += 1
 
-        # 大类占比：供饼图展示
+        # unclassifiable 不计入占比分母
+        unclassifiable_count = major_counts.get("unclassifiable", 0)
+        rankable_success = success - unclassifiable_count
+
+        # 大类占比（含 unclassifiable，供饼图展示，分母用全部 success）
         major_ratios: dict[str, float] = {}
         if success > 0:
             major_ratios = {k: round(v / success, 4) for k, v in major_counts.items()}
 
-        # 小类占比：用于 single/dual/chaos 聚合判断
+        # 可排名大类占比（排除 unclassifiable，分母为 rankable_success，供聚合判断）
+        rankable_ratios: dict[str, float] = {}
+        if rankable_success > 0:
+            rankable_ratios = {
+                k: round(major_counts.get(k, 0) / rankable_success, 4)
+                for k in _RANKABLE_MAJOR_KEYS
+            }
+
+        # 小类占比（供展示）
         category_ratios: dict[str, float] = {}
         if success > 0:
             category_ratios = {k: round(v / success, 4) for k, v in category_counts.items()}
@@ -420,7 +439,7 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
             cfg = None
         thresholds = _resolve_thresholds(cfg)
 
-        cls_type, primary_key, secondary_key = _classify_aggregation(category_ratios, success, thresholds)
+        cls_type, primary_key, secondary_key = _classify_aggregation(rankable_ratios, rankable_success, thresholds)
 
         summary = {
             "total": total,
@@ -429,11 +448,12 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
             "pending": pending,
             "processing": processing,
             "type": cls_type,
-            "primary": CATEGORY_LABELS.get(primary_key) if primary_key else None,
+            "primary": MAJOR_LABELS.get(primary_key) if primary_key else None,
             "primary_key": primary_key,
-            "secondary": CATEGORY_LABELS.get(secondary_key) if secondary_key else None,
+            "secondary": MAJOR_LABELS.get(secondary_key) if secondary_key else None,
             "secondary_key": secondary_key,
             "ratios": major_ratios,
+            "rankable_ratios": rankable_ratios,
             "counts": major_counts,
             "category_ratios": category_ratios,
             "category_counts": category_counts,
@@ -448,22 +468,30 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
         await session.commit()
 
 
-def _resolve_thresholds(cfg: Any) -> dict[str, float]:
+def _resolve_thresholds(cfg: Any) -> dict[str, Any]:
+    def _f(attr: str, default: float) -> float:
+        return float(getattr(cfg, attr, default) or default)
+
     return {
         "min_sample": int(getattr(cfg, "classify_min_sample", _DEFAULT_MIN_SAMPLE) or _DEFAULT_MIN_SAMPLE),
-        "single_top1": float(getattr(cfg, "classify_single_top1_threshold", _DEFAULT_SINGLE_TOP1) or _DEFAULT_SINGLE_TOP1),
-        "single_diff": float(getattr(cfg, "classify_single_diff_threshold", _DEFAULT_SINGLE_DIFF) or _DEFAULT_SINGLE_DIFF),
-        "dual_top1_lower": float(getattr(cfg, "classify_dual_top1_lower", _DEFAULT_DUAL_TOP1_LOWER) or _DEFAULT_DUAL_TOP1_LOWER),
-        "dual_top1_upper": float(getattr(cfg, "classify_dual_top1_upper", _DEFAULT_DUAL_TOP1_UPPER) or _DEFAULT_DUAL_TOP1_UPPER),
-        "dual_top2": float(getattr(cfg, "classify_dual_top2_threshold", _DEFAULT_DUAL_TOP2) or _DEFAULT_DUAL_TOP2),
+        "major": {
+            major: _f(f"classify_{major}_threshold", _DEFAULT_MAJOR_THRESHOLDS[major])
+            for major in _RANKABLE_MAJOR_KEYS
+        },
+        "dual_combined": _f("classify_dual_combined_threshold", _DEFAULT_DUAL_COMBINED),
     }
 
 
 def _classify_aggregation(
-    ratios: dict[str, float],
+    major_ratios: dict[str, float],
     success_count: int,
-    thresholds: dict[str, float] | None = None,
+    thresholds: dict[str, Any] | None = None,
 ) -> tuple[str, str | None, str | None]:
+    """
+    按大类占比判断账号分类类型。
+    major_ratios: 仅含 _RANKABLE_MAJOR_KEYS（已排除 unclassifiable）的占比，总和 <= 1.0。
+    返回 (cls_type, primary_major_key, secondary_major_key)
+    """
     t = thresholds or _resolve_thresholds(None)
 
     if success_count == 0:
@@ -471,19 +499,26 @@ def _classify_aggregation(
     if success_count < t["min_sample"]:
         return ("insufficient", None, None)
 
-    sorted_pairs = sorted(ratios.items(), key=lambda kv: kv[1], reverse=True)
-    top1_key, p1 = sorted_pairs[0]
-    top2_key, p2 = sorted_pairs[1] if len(sorted_pairs) > 1 else (None, 0.0)
+    major_thresholds: dict[str, float] = t["major"]
 
-    # 单核心
-    if p1 >= t["single_top1"] or (p1 - p2) >= t["single_diff"]:
-        return ("single", top1_key, None)
+    # 只排名可计算的大类，按占比降序
+    ranked = sorted(
+        [(k, major_ratios.get(k, 0.0)) for k in _RANKABLE_MAJOR_KEYS],
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    top1_key, p1 = ranked[0]
+    top2_key, p2 = ranked[1] if len(ranked) > 1 else (None, 0.0)
 
-    # 双核心
+    # 单核心：任何大类占比 >= 该大类的阈值
+    for major_key, ratio in ranked:
+        if ratio >= major_thresholds.get(major_key, 1.0):
+            return ("single", major_key, None)
+
+    # 双核心：Top1+Top2 合计 >= dual_combined 且两者均未达各自阈值
     if (
-        t["dual_top1_lower"] <= p1 < t["dual_top1_upper"]
-        and p2 >= t["dual_top2"]
-        and (p1 - p2) < t["single_diff"]
+        top2_key is not None
+        and (p1 + p2) >= t["dual_combined"]
     ):
         return ("dual", top1_key, top2_key)
 
@@ -746,7 +781,7 @@ def _empty_summary(account: Account) -> dict[str, Any]:
             "primary": None,
             "secondary": None,
             "ratios": {},
-            "counts": {k: 0 for k in _MAJOR_KEYS},  # type: ignore[dict-item]
+            "counts": {k: 0 for k in _MAJOR_KEYS},
             "updated_at": None,
         }
     return base
