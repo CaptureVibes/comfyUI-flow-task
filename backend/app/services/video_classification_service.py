@@ -120,7 +120,7 @@ _RANKABLE_MAJOR_KEYS = ("beauty", "method", "shopping", "lifestyle", "drama")
 # 队列 / 内存状态
 # =============================================================================
 
-_CONCURRENCY = 17          # 单账号内视频并发数
+_CONCURRENCY = 100         # 单账号内视频并发数
 _PERSIST_INTERVAL = 2.0
 
 classification_states: dict[str, dict] = {}
