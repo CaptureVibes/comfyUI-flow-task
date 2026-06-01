@@ -877,6 +877,69 @@ async def update_scheduled_publish(
     return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
+class BulkScheduledPublishFilters(BaseModel):
+    gender: str | None = None
+    account_type: str | None = None
+    face_mode: str | None = None
+    product_code_mode: str | None = None
+    account_tier: str | None = None
+    platform_binding_status: str | None = None
+    classification_type: str | None = None
+    category_keys: list[str] | None = None
+    flag_id: uuid.UUID | None = None
+
+
+class BulkScheduledPublishBody(BaseModel):
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    filters: BulkScheduledPublishFilters | None = None  # account_ids 为空时用此条件查全量
+    config: ScheduledPublishConfig
+
+
+@router.post("/bulk-update-scheduled-publish", status_code=200)
+async def bulk_update_scheduled_publish(
+    body: BulkScheduledPublishBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """批量更新 AI 博主定时发布配置。account_ids 为空时用 filters 查全量。"""
+    account_ids = list(body.account_ids)
+    if not account_ids:
+        if body.filters:
+            f = body.filters
+            all_accounts, _ = await list_accounts(
+                session,
+                page=1,
+                page_size=999999,
+                owner_id=owner_id,
+                gender=f.gender,
+                account_type=f.account_type,
+                face_mode=f.face_mode,
+                product_code_mode=f.product_code_mode,
+                account_tier=f.account_tier,
+                platform_binding_status=f.platform_binding_status,
+                classification_type=f.classification_type,
+                category_keys=f.category_keys,
+                flag_id=f.flag_id,
+            )
+            account_ids = [a.id for a in all_accounts]
+        if not account_ids:
+            return {"status": "ok", "updated": 0}
+
+    stmt = select(Account).where(Account.id.in_(account_ids))
+    if owner_id is not None:
+        stmt = stmt.where(Account.owner_id == owner_id)
+    accounts = list((await session.execute(stmt)).scalars().all())
+
+    for account in accounts:
+        account.publish_enabled = body.config.publish_enabled
+        account.publish_cron = body.config.publish_cron
+        account.publish_window_minutes = body.config.publish_window_minutes
+        account.publish_count = body.config.publish_count
+
+    await session.commit()
+    return {"status": "ok", "updated_count": len(accounts)}
+
+
 # ── 账号-博主绑定 ─────────────────────────────────────────────────────────────
 
 @router.get("/{account_id}/bloggers", response_model=list[TiktokBloggerRead])
@@ -1425,8 +1488,22 @@ class SupplementTemplatesBody(BaseModel):
 # 一键生成视频任务
 # ---------------------------------------------------------------------------
 
+class AccountListFilters(BaseModel):
+    """前端筛选条件，供无 account_ids 时后端自查全量。"""
+    gender: str | None = None
+    account_type: str | None = None
+    face_mode: str | None = None
+    product_code_mode: str | None = None
+    account_tier: str | None = None
+    platform_binding_status: str | None = None
+    classification_type: str | None = None
+    category_keys: list[str] | None = None
+    flag_id: uuid.UUID | None = None
+
+
 class BulkGenerateVideoTasksBody(BaseModel):
-    account_ids: list[uuid.UUID]
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    filters: AccountListFilters | None = None  # account_ids 为空时用此条件查全量
     mode: str = "unused"         # "unused" | "used"
     fill_mode: str = "count"     # "count" = 每号补 limit 个；"target_total" = 每号补到 limit 个 queued 任务
     limit: int = 0               # 数量值（fill_mode=count 时是新增数；target_total 时是目标 queued 总数）
@@ -1780,8 +1857,29 @@ async def bulk_generate_video_tasks(
     - single / dual 仍按小类(category_key)硬过滤
     先计算预计创建的任务数并立即返回，真正创建过程放到后台执行。
     """
-    if not body.account_ids:
-        return {"status": "no_accounts", "planned": 0, "skipped_accounts": 0, "account_count": 0}
+    # 无 account_ids 时用 filters 查全量
+    account_ids = list(body.account_ids)
+    if not account_ids:
+        if body.filters:
+            f = body.filters
+            all_accounts, _ = await list_accounts(
+                session,
+                page=1,
+                page_size=999999,
+                owner_id=owner_id,
+                gender=f.gender,
+                account_type=f.account_type,
+                face_mode=f.face_mode,
+                product_code_mode=f.product_code_mode,
+                account_tier=f.account_tier,
+                platform_binding_status=f.platform_binding_status,
+                classification_type=f.classification_type,
+                category_keys=f.category_keys,
+                flag_id=f.flag_id,
+            )
+            account_ids = [a.id for a in all_accounts]
+        if not account_ids:
+            return {"status": "no_accounts", "planned": 0, "skipped_accounts": 0, "account_count": 0}
     if body.fill_mode not in ("count", "target_total"):
         raise HTTPException(status_code=422, detail="fill_mode 必须是 'count' 或 'target_total'")
     if body.fill_mode == "target_total" and body.limit <= 0:
@@ -1792,7 +1890,7 @@ async def bulk_generate_video_tasks(
     total_skipped = 0
     skip_reasons: dict[str, int] = {}
 
-    for account_id in body.account_ids:
+    for account_id in account_ids:
         try:
             items_to_use, _vs_map, skip_reason = await _resolve_account_pool(
                 session,
@@ -1826,7 +1924,7 @@ async def bulk_generate_video_tasks(
 
     asyncio.create_task(
         _run_bulk_generate_video_tasks(
-            account_ids=body.account_ids,
+            account_ids=account_ids,
             owner_id=owner_id,
             user_id=current_user.user_id,
             mode=body.mode,
@@ -1841,7 +1939,7 @@ async def bulk_generate_video_tasks(
         "planned": total_planned,
         "skipped_accounts": total_skipped,
         "skip_reasons": skip_reasons,
-        "account_count": len(body.account_ids),
+        "account_count": len(account_ids),
         "message": f"后台已启动，预计创建 {total_planned} 个生成任务{skipped_text}",
     }
 

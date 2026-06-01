@@ -1696,7 +1696,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -2939,29 +2939,23 @@ async function startBulkVideoGenerate() {
   try {
     const isSelection = selectedMap.value.size > 0
     let accountIds = []
+    let filters = null
 
     if (isSelection) {
       accountIds = [...selectedMap.value.values()].map(a => a.id)
     } else {
-      const params = { page: 1, page_size: 9999 }
-      if (filterGender.value) params.gender = filterGender.value
-      if (filterAccountType.value) params.account_type = filterAccountType.value
-      if (filterFaceMode.value) params.face_mode = filterFaceMode.value
-      if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
-      if (filterAccountTier.value) params.account_tier = filterAccountTier.value
-      if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
-      if (filterClassificationType.value) params.classification_type = filterClassificationType.value
-      if (filterCategoryIndices.value.length > 0) params.category_keys = filterCategoryIndices.value.join(',')
-      const data = await fetchAccounts(params)
-      accountIds = (data.items || []).map(a => a.id)
+      filters = {}
+      if (filterGender.value) filters.gender = filterGender.value
+      if (filterAccountType.value) filters.account_type = filterAccountType.value
+      if (filterFaceMode.value) filters.face_mode = filterFaceMode.value
+      if (filterProductCodeMode.value) filters.product_code_mode = filterProductCodeMode.value
+      if (filterAccountTier.value) filters.account_tier = filterAccountTier.value
+      if (filterPlatformBindingStatus.value) filters.platform_binding_status = filterPlatformBindingStatus.value
+      if (filterClassificationType.value) filters.classification_type = filterClassificationType.value
+      if (filterCategoryIndices.value.length > 0) filters.category_keys = filterCategoryIndices.value
     }
 
-    if (accountIds.length === 0) {
-      ElMessage.info('没有可操作的账号')
-      return
-    }
-
-    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount, fill_mode)
+    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount, fill_mode, filters)
     const skipMsg = result.skipped_accounts > 0 ? `，${result.skipped_accounts} 个账号无可用模板` : ''
     ElMessage.success(result.message || `后台已启动，预计创建 ${result.planned || 0} 个生成任务${skipMsg}`)
   } catch (err) {
@@ -3015,43 +3009,38 @@ async function handleBulkSchedule() {
 
   savingBulkSchedule.value = true
 
-  // 使用已选账号或拉取全部账号
   const isSelection = selectedMap.value.size > 0
-  let allAccounts = []
-  if (isSelection) {
-    allAccounts = [...selectedMap.value.values()]
-  } else {
-    try {
-      const data = await fetchAccounts({ page: 1, page_size: 9999 })
-      allAccounts = data.items || []
-    } catch {
-      ElMessage.error('加载账号列表失败')
-      savingBulkSchedule.value = false
-      return
-    }
+  const accountIds = isSelection ? [...selectedMap.value.values()].map(a => a.id) : []
+  let filters = null
+  if (!isSelection) {
+    filters = {}
+    if (filterGender.value) filters.gender = filterGender.value
+    if (filterAccountType.value) filters.account_type = filterAccountType.value
+    if (filterFaceMode.value) filters.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) filters.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) filters.account_tier = filterAccountTier.value
+    if (filterPlatformBindingStatus.value) filters.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) filters.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) filters.category_keys = filterCategoryIndices.value
   }
 
-  const results = await Promise.allSettled(
-    allAccounts.map(account =>
-      updateScheduledPublish(account.id, {
-        publish_enabled: true,
-        publish_cron: bulkScheduleForm.value.publish_cron,
-        publish_window_minutes: bulkScheduleForm.value.publish_window_minutes,
-        publish_count: bulkScheduleForm.value.publish_count,
-      })
-    )
-  )
-
-  const successCount = results.filter(r => r.status === 'fulfilled').length
-  const failCount = results.filter(r => r.status === 'rejected').length
-
-  savingBulkSchedule.value = false
-  showBulkScheduleDialog.value = false
-
-  const failMsg = failCount > 0 ? `，${failCount} 个失败` : ''
-  ElMessage.success(`已为 ${successCount} 个账号启用定时发布${failMsg}`)
-  await loadData()
+  try {
+    const result = await bulkUpdateScheduledPublish(accountIds, {
+      publish_enabled: true,
+      publish_cron: bulkScheduleForm.value.publish_cron,
+      publish_window_minutes: bulkScheduleForm.value.publish_window_minutes,
+      publish_count: bulkScheduleForm.value.publish_count,
+    }, filters)
+    ElMessage.success(`已为 ${result.updated_count} 个账号设置定时发布`)
+    showBulkScheduleDialog.value = false
+    await loadData({ silent: true })
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '批量定时失败')
+  } finally {
+    savingBulkSchedule.value = false
+  }
 }
+
 
 // ── 补充模板 ────────────────────────────────────────────────────────────────
 

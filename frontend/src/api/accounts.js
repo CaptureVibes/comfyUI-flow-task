@@ -156,14 +156,26 @@ export async function bulkGenerateVideoTasks(
   limit = 0,
   subtaskCount = 3,
   fillMode = 'count',
+  filters = null,
 ) {
-  const { data } = await http.post('/accounts/bulk-generate-video-tasks', {
-    account_ids: accountIds,
-    mode,
-    limit,
-    subtask_count: subtaskCount,
-    fill_mode: fillMode,
-  })
+  const payload = { mode, limit, subtask_count: subtaskCount, fill_mode: fillMode }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (filters) {
+    payload.filters = filters
+  }
+  const { data } = await http.post('/accounts/bulk-generate-video-tasks', payload)
+  return data
+}
+
+export async function bulkUpdateScheduledPublish(accountIds, config, filters = null) {
+  const payload = { config }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (filters) {
+    payload.filters = filters
+  }
+  const { data } = await http.post('/accounts/bulk-update-scheduled-publish', payload)
   return data
 }
 
