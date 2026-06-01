@@ -2382,7 +2382,8 @@ async def get_account_classification(
 
 
 class BatchClassifyRequest(BaseModel):
-    ids: list[uuid.UUID]
+    ids: list[uuid.UUID] = Field(default_factory=list)
+    account_list_filters: AccountListFilters | None = None  # ids 为空时后端自查全量
     force: bool = False
 
 
@@ -2390,11 +2391,18 @@ class BatchClassifyRequest(BaseModel):
 async def batch_classify_videos(
     body: BatchClassifyRequest,
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from app.services.video_classification_service import enqueue_account_classification
 
+    account_ids = await _resolve_account_ids(
+        body.ids, body.account_list_filters, session, owner_id
+    )
+    if not account_ids:
+        return {"status": "queued", "total_queued": 0, "results": []}
+
     results: list[dict] = []
-    for account_id in body.ids:
+    for account_id in account_ids:
         try:
             r = await enqueue_account_classification(account_id, owner_id, force=body.force)
             results.append({"account_id": str(account_id), **r})

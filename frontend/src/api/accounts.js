@@ -254,8 +254,14 @@ export async function retryAccountClassificationFailed(accountId) {
   return data
 }
 
-export async function batchClassifyVideos(ids, force = false) {
-  const { data } = await http.post('/accounts/batch-classify-videos', { ids, force })
+export async function batchClassifyVideos(ids, force = false, accountListFilters = null) {
+  const payload = { force }
+  if (ids && ids.length > 0) {
+    payload.ids = ids
+  } else if (accountListFilters) {
+    payload.account_list_filters = accountListFilters
+  }
+  const { data } = await http.post('/accounts/batch-classify-videos', payload)
   return data
 }
 

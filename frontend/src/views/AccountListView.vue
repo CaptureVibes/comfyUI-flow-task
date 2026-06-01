@@ -2152,13 +2152,23 @@ async function confirmClassify() {
 
 async function _doBatchClassify() {
   if (bulkClassifying.value) return
-  const ids = selectedMap.value.size > 0
-    ? [...selectedMap.value.keys()]
-    : items.value.map(i => i.id)
-  if (!ids.length) { ElMessage.warning('没有可操作的账号'); return }
+  const isSelection = selectedMap.value.size > 0
+  const ids = isSelection ? [...selectedMap.value.keys()] : []
+  let accountListFilters = null
+  if (!isSelection) {
+    accountListFilters = {}
+    if (filterGender.value) accountListFilters.gender = filterGender.value
+    if (filterAccountType.value) accountListFilters.account_type = filterAccountType.value
+    if (filterFaceMode.value) accountListFilters.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) accountListFilters.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) accountListFilters.account_tier = filterAccountTier.value
+    if (filterPlatformBindingStatus.value) accountListFilters.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) accountListFilters.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) accountListFilters.category_keys = filterCategoryIndices.value
+  }
   bulkClassifying.value = true
   try {
-    const res = await batchClassifyVideos(ids, classifyForce.value)
+    const res = await batchClassifyVideos(ids, classifyForce.value, accountListFilters)
     ElMessage.success(`已入队 ${res.total_queued} 个视频，将逐账号依次分类`)
     showClassifyConfirmDialog.value = false
   } catch (e) {
