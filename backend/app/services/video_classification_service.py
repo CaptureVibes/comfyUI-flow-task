@@ -857,6 +857,9 @@ async def stop_classification_queue_processor() -> None:
     logger.info("Video classification queue processor stopped")
 
 
+_BATCH_SIZE = 5000  # asyncpg 单次 IN 参数上限保守值
+
+
 async def recover_classification_on_startup() -> None:
     """启动恢复：把 pending/processing 行重置为 pending，按账号入队。"""
     async with SessionLocal() as session:
@@ -874,21 +877,29 @@ async def recover_classification_on_startup() -> None:
             return
 
         vs_ids = [r.video_source_id for r in rows]
-        await session.execute(
-            VideoClassification.__table__.update()
-            .where(VideoClassification.video_source_id.in_(vs_ids))
-            .values(status="pending", error_message=None)
-        )
 
-        # 查出涉及的 account_ids
+        # 分批 UPDATE，避免 asyncpg 32767 参数上限
+        for i in range(0, len(vs_ids), _BATCH_SIZE):
+            batch = vs_ids[i:i + _BATCH_SIZE]
+            await session.execute(
+                VideoClassification.__table__.update()
+                .where(VideoClassification.video_source_id.in_(batch))
+                .values(status="pending", error_message=None)
+            )
+
+        # 查出涉及的 account_ids（blogger_ids 同样分批）
         blogger_ids = list({r.tiktok_blogger_id for r in rows if r.tiktok_blogger_id})
         account_ids: list[uuid.UUID] = []
         if blogger_ids:
-            account_ids = (await session.scalars(
-                select(AccountBloggerBinding.account_id)
-                .where(AccountBloggerBinding.tiktok_blogger_id.in_(blogger_ids))
-                .distinct()
-            )).all()
+            for i in range(0, len(blogger_ids), _BATCH_SIZE):
+                batch = blogger_ids[i:i + _BATCH_SIZE]
+                chunk = (await session.scalars(
+                    select(AccountBloggerBinding.account_id)
+                    .where(AccountBloggerBinding.tiktok_blogger_id.in_(batch))
+                    .distinct()
+                )).all()
+                account_ids.extend(chunk)
+            account_ids = list(set(account_ids))
 
         await session.commit()
 
