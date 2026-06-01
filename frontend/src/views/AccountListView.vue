@@ -3081,18 +3081,18 @@ async function handleSupplement() {
   supplementing.value = true
 
   const isSelection = selectedMap.value.size > 0
-  let accountIds = []
-  if (isSelection) {
-    accountIds = [...selectedMap.value.keys()]
-  } else {
-    try {
-      const data = await fetchAccounts({ page: 1, page_size: 9999 })
-      accountIds = (data.items || []).map(a => a.id)
-    } catch {
-      ElMessage.error('加载账号列表失败')
-      supplementing.value = false
-      return
-    }
+  const accountIds = isSelection ? [...selectedMap.value.keys()] : []
+  let accountListFilters = null
+  if (!isSelection) {
+    accountListFilters = {}
+    if (filterGender.value) accountListFilters.gender = filterGender.value
+    if (filterAccountType.value) accountListFilters.account_type = filterAccountType.value
+    if (filterFaceMode.value) accountListFilters.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) accountListFilters.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) accountListFilters.account_tier = filterAccountTier.value
+    if (filterPlatformBindingStatus.value) accountListFilters.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) accountListFilters.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) accountListFilters.category_keys = filterCategoryIndices.value
   }
 
   // shared 模式不使用弹窗过滤条件（走内部 pipeline_settings 默认）
@@ -3110,17 +3110,18 @@ async function handleSupplement() {
   try {
     let result
     if (supplementForm.value.templateType === 'auto') {
-      result = await autoSupplementTemplates(accountIds, target, filters)
+      result = await autoSupplementTemplates(accountIds, target, filters, accountListFilters)
     } else {
       result = await supplementTemplates(
         accountIds,
         supplementForm.value.templateType,
         target,
         filters,
+        accountListFilters,
       )
     }
     showSupplementDialog.value = false
-    ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
+    ElMessage.success(result.message || '已启动补充模板任务')
     await loadData({ silent: true })
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '启动补充模板失败')

@@ -131,22 +131,32 @@ function _normalizeFilters(filters = {}) {
   }
 }
 
-export async function autoSupplementTemplates(accountIds, targetVideoCount = 10, filters = {}) {
-  const { data } = await http.post('/accounts/auto-supplement-templates', {
-    account_ids: accountIds,
+export async function autoSupplementTemplates(accountIds, targetVideoCount = 10, filters = {}, accountListFilters = null) {
+  const payload = {
     target_video_count: targetVideoCount,
     filters: _normalizeFilters(filters),
-  })
+  }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (accountListFilters) {
+    payload.account_list_filters = accountListFilters
+  }
+  const { data } = await http.post('/accounts/auto-supplement-templates', payload)
   return data
 }
 
-export async function supplementTemplates(accountIds, templateType = 'shared', targetVideoCount = 10, filters = {}) {
-  const { data } = await http.post('/accounts/supplement-templates', {
-    account_ids: accountIds,
+export async function supplementTemplates(accountIds, templateType = 'shared', targetVideoCount = 10, filters = {}, accountListFilters = null) {
+  const payload = {
     template_type: templateType,
     target_video_count: targetVideoCount,
     filters: _normalizeFilters(filters),
-  })
+  }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (accountListFilters) {
+    payload.account_list_filters = accountListFilters
+  }
+  const { data } = await http.post('/accounts/supplement-templates', payload)
   return data
 }
 

@@ -1476,7 +1476,8 @@ class SupplementFiltersBody(BaseModel):
 
 
 class SupplementTemplatesBody(BaseModel):
-    account_ids: list[uuid.UUID]
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    account_list_filters: AccountListFilters | None = None  # account_ids 为空时后端自查全量
     template_type: str = "shared"  # "shared" | "exclusive"
     # 新版字段 + 兼容旧前端
     target_video_count: int | None = None
@@ -1944,6 +1945,36 @@ async def bulk_generate_video_tasks(
     }
 
 
+async def _resolve_account_ids(
+    body_account_ids: list[uuid.UUID],
+    body_account_list_filters: AccountListFilters | None,
+    session: AsyncSession,
+    owner_id: uuid.UUID | None,
+) -> list[uuid.UUID]:
+    """account_ids 非空直接返回；为空时用 account_list_filters 查全量。"""
+    if body_account_ids:
+        return list(body_account_ids)
+    if body_account_list_filters:
+        f = body_account_list_filters
+        accounts, _ = await list_accounts(
+            session,
+            page=None,
+            page_size=None,
+            owner_id=owner_id,
+            gender=f.gender,
+            account_type=f.account_type,
+            face_mode=f.face_mode,
+            product_code_mode=f.product_code_mode,
+            account_tier=f.account_tier,
+            platform_binding_status=f.platform_binding_status,
+            classification_type=f.classification_type,
+            category_keys=f.category_keys,
+            flag_id=f.flag_id,
+        )
+        return [a.id for a in accounts]
+    return []
+
+
 def _resolve_target_count(body: SupplementTemplatesBody | "AutoSupplementBody") -> int:
     """新字段 target_video_count 优先，没传 fallback 到旧字段 max_new_videos，再没有默认 10。"""
     n = getattr(body, "target_video_count", None) or getattr(body, "max_new_videos", None)
@@ -1955,6 +1986,7 @@ async def supplement_templates(
     body: SupplementTemplatesBody,
     creator_id: uuid.UUID = Depends(_get_creator_id),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     为指定账号批量补充模板（后台异步执行，立即返回）。
@@ -1968,7 +2000,10 @@ async def supplement_templates(
     )
     import asyncio as _asyncio
 
-    if not body.account_ids:
+    account_ids = await _resolve_account_ids(
+        body.account_ids, body.account_list_filters, session, owner_id
+    )
+    if not account_ids:
         return {"message": "无账号，跳过", "count": 0}
 
     template_type = body.template_type if body.template_type in ("shared", "exclusive") else "shared"
@@ -1992,7 +2027,7 @@ async def supplement_templates(
         try:
             result = await submit_supplement_request(
                 owner_id=effective_owner,
-                account_ids=body.account_ids,
+                account_ids=account_ids,
                 mode="exclusive",
                 target_video_count=target_count,
                 filters=filters_dict,
@@ -2010,20 +2045,21 @@ async def supplement_templates(
     # shared 模式：内部 candidate_service
     _asyncio.create_task(
         supplement_templates_for_accounts(
-            account_ids=body.account_ids,
+            account_ids=account_ids,
             owner_id=effective_owner,
             template_type=template_type,
             max_new_videos=target_count,
         )
     )
     return {
-        "message": f"已为 {len(body.account_ids)} 个账号启动共享补充模板任务（内部路径）",
-        "count": len(body.account_ids),
+        "message": f"已为 {len(account_ids)} 个账号启动共享补充模板任务（内部路径）",
+        "count": len(account_ids),
     }
 
 
 class AutoSupplementBody(BaseModel):
-    account_ids: list[uuid.UUID]
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    account_list_filters: AccountListFilters | None = None  # account_ids 为空时后端自查全量
     target_video_count: int | None = None
     max_new_videos: int | None = None
     filters: SupplementFiltersBody | None = None
@@ -2034,6 +2070,7 @@ async def auto_supplement_templates(
     body: AutoSupplementBody,
     creator_id: uuid.UUID = Depends(_get_creator_id),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     根据 AI 博主分类类型自动补充匹配视频模板。
@@ -2043,7 +2080,10 @@ async def auto_supplement_templates(
         submit_supplement_request, _vendor_configured,
     )
 
-    if not body.account_ids:
+    account_ids = await _resolve_account_ids(
+        body.account_ids, body.account_list_filters, session, owner_id
+    )
+    if not account_ids:
         return {"message": "无账号，跳过", "count": 0}
 
     target_count = _resolve_target_count(body)
@@ -2055,7 +2095,7 @@ async def auto_supplement_templates(
     try:
         result = await submit_supplement_request(
             owner_id=effective_owner,
-            account_ids=body.account_ids,
+            account_ids=account_ids,
             mode="auto",
             target_video_count=target_count,
             filters=filters_dict,
