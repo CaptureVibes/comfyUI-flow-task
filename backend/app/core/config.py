@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     apify_token: str = ""         # Apify API token，用于 clockworks/tiktok-scraper
     tiktok_search_use_rapidapi: bool = True  # False 则跳过 RapidAPI，直接用 Apify 搜索
 
+    # 外部 BigQuery（JetonAI 项目数据，只读，通过 ADC 认证）
+    ext_bigquery_project_id: str = "my-project-8584-jetonai"
+
     # Lark 通知
     lark_webhook_url: str = ""    # Lark 机器人 Webhook 地址（为空则不发通知）
 
