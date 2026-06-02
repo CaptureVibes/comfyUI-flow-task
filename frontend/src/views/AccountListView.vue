@@ -3295,7 +3295,7 @@ let _anaResizeHandler = null
 
 const analyticsLinkTotalConversion = computed(() => {
   const d = analyticsData.value
-  if (!d || !d.total_video_views) return '0.00%'
+  if (!d || !d.total_video_views || d.total_link_clicks == null) return '0.00%'
   return ((d.total_link_clicks / d.total_video_views) * 100).toFixed(2) + '%'
 })
 
@@ -3694,6 +3694,7 @@ async function handleRetryFailed() {
 
 onUnmounted(() => {
   clearClassificationPolling()
+  disposeAnaCharts()
 })
 
 const platformStats = ref([])

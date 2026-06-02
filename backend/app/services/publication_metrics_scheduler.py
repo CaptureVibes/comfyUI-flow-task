@@ -349,7 +349,7 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 "total_likes": total_likes,
                 "avg_views": avg_views,
                 "avg_like_rate": avg_like_rate,
-                "total_kol_link_clicks": total_kol_link_clicks if click_rate_values else None,
+                "total_kol_link_clicks": total_kol_link_clicks if total_kol_link_clicks > 0 else None,
                 "avg_video_click_rate": avg_video_click_rate,
                 "latest_video_published_at": latest.isoformat() if latest else None,
                 "first_content_date": first.isoformat() if first else None,

@@ -2497,7 +2497,7 @@ async def get_channel_analytics(
     kol_user_id = account.kol_user_id
 
     # 并发查询两个 BigQuery 数据源（同步阻塞函数放到线程池）
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     async def _fetch_daily_views():
         if not channel_id:

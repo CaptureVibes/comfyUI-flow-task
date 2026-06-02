@@ -91,8 +91,8 @@ def get_channel_daily_views(
         query_parameters=[
             bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id),
             bigquery.ScalarQueryParameter("channel", "STRING", channel),
-            bigquery.ScalarQueryParameter("start_date", "STRING", start_date.isoformat()),
-            bigquery.ScalarQueryParameter("end_date", "STRING", end_date.isoformat()),
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date.isoformat()),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date.isoformat()),
         ]
     )
 
