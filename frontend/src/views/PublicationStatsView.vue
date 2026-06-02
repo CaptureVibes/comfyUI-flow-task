@@ -235,6 +235,7 @@
             <th class="ps-th ps-th-num">
               <button class="ps-sort-btn" @click="toggleSort('kol_link_clicks')">Link点击{{ sortMark('kol_link_clicks') }}</button>
             </th>
+            <th class="ps-th ps-th-num">视频点击率</th>
           </tr>
         </thead>
         <tbody>
@@ -296,6 +297,7 @@
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_shares) }}</td>
             <td class="ps-td ps-td-num">{{ formatPercent(item.avg_view_percentage) }}</td>
             <td class="ps-td ps-td-num">{{ item.kol_link_clicks ?? '—' }}</td>
+            <td class="ps-td ps-td-num">{{ videoClickRate(item) }}</td>
           </tr>
         </tbody>
       </table>
@@ -377,6 +379,10 @@
         <div class="psd-summary-card">
           <div class="psd-card-label">Link点击（24h）</div>
           <div class="psd-card-value">{{ activeItem.kol_link_clicks ?? '—' }}</div>
+        </div>
+        <div class="psd-summary-card">
+          <div class="psd-card-label">视频点击率</div>
+          <div class="psd-card-value">{{ videoClickRate(activeItem) }}</div>
         </div>
       </div>
 
@@ -795,6 +801,13 @@ function compactNumber(value) {
 function formatPercent(value) {
   if (value == null || value === '') return '-'
   return `${Number(value).toFixed(1)}%`
+}
+
+function videoClickRate(item) {
+  const clicks = item?.kol_link_clicks
+  const views = item?.total_views
+  if (clicks == null || !views) return '—'
+  return `${(clicks / views * 100).toFixed(2)}%`
 }
 
 async function searchAccounts(query) {
