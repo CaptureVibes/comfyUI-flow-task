@@ -229,6 +229,47 @@ POST /open-api/accounts/channel-reservations/release
 
 ---
 
+## 5. 账号统计
+
+```http
+POST /open-api/accounts/stats
+```
+
+请求：
+
+```json
+{
+  "api_key": "<api_key>",
+  "owner_id": null
+}
+```
+
+> `api_key` 与 `X-API-Key` header 二选一；`owner_id` 不传则使用服务端默认值。
+
+响应：
+
+```json
+{
+  "total": 200,
+  "bound_tiktok": 80,
+  "bound_youtube": 40,
+  "bound_instagram": 30,
+  "unbound": 80,
+  "available": 60
+}
+```
+
+| 字段 | 说明 |
+| ---- | ---- |
+| `total` | 该 owner 下全部 AI 博主数量 |
+| `bound_tiktok` | 已绑定 TikTok 频道的博主数（`status == "bound"`） |
+| `bound_youtube` | 已绑定 YouTube 频道的博主数 |
+| `bound_instagram` | 已绑定 Instagram 频道的博主数 |
+| `unbound` | 未绑定任一平台的博主数 |
+| `available` | `hidden = false` 且未绑定任一平台（可被领取） |
+
+---
+
 ## 状态流转
 
 ```text

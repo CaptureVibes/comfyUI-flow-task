@@ -461,3 +461,12 @@ class AccountListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class ExternalAIAccountStatsResponse(BaseModel):
+    total: int
+    bound_tiktok: int
+    bound_youtube: int
+    bound_instagram: int
+    unbound: int
+    available: int
