@@ -341,7 +341,7 @@ class OpenAPIClient:
         raise last_exc
 
     async def fetch_upload_metrics(self, task_id: str | None = None, external_id: str | None = None) -> dict:
-        """查询上传任务各渠道视频指标"""
+        """查询上传任务各渠道视频指标（base_url 使用 ext_pub_api_base_url）"""
         params = {}
         if task_id:
             params["task_id"] = task_id
@@ -350,9 +350,10 @@ class OpenAPIClient:
 
         signed_params = self._sign_params(params)
 
+        metrics_base = getattr(settings, "ext_pub_api_base_url", "").rstrip("/") or self.base_url
         async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
             response = await client.get(
-                f"{self.base_url}/open-api/v1/upload/metrics",
+                f"{metrics_base}/open-api/v1/upload/metrics",
                 params=signed_params,
             )
             response.raise_for_status()
