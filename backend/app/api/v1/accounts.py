@@ -1710,19 +1710,8 @@ async def _count_account_templates(
     （fail 模板也计入；与「一键生成」候选池口径一致）。
     """
     from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_classification import VideoClassification
 
-    cls_type = account.classification_type
-    summary = account.classification_summary or {}
-    allowed_keys: list[str] | None = None
-    if cls_type == "single":
-        primary_key = summary.get("primary_key")
-        if primary_key is not None:
-            allowed_keys = [str(primary_key)]
-    elif cls_type == "dual":
-        primary_key = summary.get("primary_key")
-        secondary_key = summary.get("secondary_key")
-        allowed_keys = [k for k in [primary_key, secondary_key] if k is not None]
+    allowed_indices, allowed_major_keys = _account_allowed_classification_filters(account)
 
     tag_ids = list((await session.execute(
         select(AccountTag.tag_id).where(AccountTag.account_id == account.id)
@@ -1743,17 +1732,14 @@ async def _count_account_templates(
         tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
     tpls = list((await session.execute(tpl_stmt)).scalars().all())
 
-    if allowed_keys is not None:
+    if allowed_indices or allowed_major_keys:
         vs_ids = list({t.video_source_id for t in tpls if t.video_source_id})
-        matched_vs_ids: set[uuid.UUID] = set()
-        if vs_ids:
-            rows = (await session.execute(
-                select(VideoClassification.video_source_id)
-                .where(VideoClassification.video_source_id.in_(vs_ids))
-                .where(VideoClassification.status == "success")
-                .where(VideoClassification.category_key.in_(allowed_keys))
-            )).scalars().all()
-            matched_vs_ids = set(rows)
+        matched_vs_ids = await _matched_classified_video_source_ids(
+            session,
+            video_source_ids=vs_ids,
+            allowed_indices=allowed_indices,
+            allowed_major_keys=allowed_major_keys,
+        )
         tpls = [t for t in tpls if t.video_source_id in matched_vs_ids]
 
     used_count = sum(1 for t in tpls if t.is_used)
