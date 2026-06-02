@@ -53,7 +53,7 @@ class Account(Base):
     publish_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # KOL 创建 + 短链
-    kol_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 站内稳定 user_id（接口 data.user_id），长链 kolUserId 用它
+    kol_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 站内稳定 user_id（接口 data.user_id），长链 kolUserId 用它
     kol_provision_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | success | failed
     kol_provision_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
