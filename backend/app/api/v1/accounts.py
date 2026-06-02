@@ -1710,6 +1710,7 @@ async def _count_account_templates(
     （fail 模板也计入；与「一键生成」候选池口径一致）。
     """
     from app.models.video_ai_template import VideoAITemplate
+    from app.models.video_classification import VideoClassification
 
     cls_type = account.classification_type
     summary = account.classification_summary or {}
