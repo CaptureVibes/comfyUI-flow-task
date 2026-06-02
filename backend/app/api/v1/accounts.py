@@ -2419,7 +2419,7 @@ async def get_channel_analytics(
     platform: str = Query(..., description="youtube / tiktok / instagram"),
     start_date: date = Query(..., description="YYYY-MM-DD"),
     end_date: date = Query(..., description="YYYY-MM-DD"),
-    current_user: TokenData = Depends(get_current_user),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> ChannelAnalyticsResponse:
     """返回指定账号、平台的频道数据分析（views 趋势 + Link 点击趋势）。"""
@@ -2428,8 +2428,6 @@ async def get_channel_analytics(
         get_channel_daily_views,
         get_kol_daily_clicks,
     )
-
-    owner_id = current_user.owner_id if not current_user.is_admin else None
 
     account = await get_account_or_404(session, account_id, owner_id)
 
