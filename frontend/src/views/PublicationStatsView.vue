@@ -232,6 +232,9 @@
             <th class="ps-th ps-th-num">
               <button class="ps-sort-btn" @click="toggleSort('avg_view_percentage')">平均观看比{{ sortMark('avg_view_percentage') }}</button>
             </th>
+            <th class="ps-th ps-th-num">
+              <button class="ps-sort-btn" @click="toggleSort('kol_link_clicks')">Link点击{{ sortMark('kol_link_clicks') }}</button>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -292,6 +295,7 @@
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_comments) }}</td>
             <td class="ps-td ps-td-num">{{ compactNumber(item.total_shares) }}</td>
             <td class="ps-td ps-td-num">{{ formatPercent(item.avg_view_percentage) }}</td>
+            <td class="ps-td ps-td-num">{{ item.kol_link_clicks ?? '—' }}</td>
           </tr>
         </tbody>
       </table>
@@ -369,6 +373,10 @@
         <div class="psd-summary-card">
           <div class="psd-card-label">平均观看比</div>
           <div class="psd-card-value">{{ formatPercent(activeItem.avg_view_percentage) }}</div>
+        </div>
+        <div class="psd-summary-card">
+          <div class="psd-card-label">Link点击（24h）</div>
+          <div class="psd-card-value">{{ activeItem.kol_link_clicks ?? '—' }}</div>
         </div>
       </div>
 
