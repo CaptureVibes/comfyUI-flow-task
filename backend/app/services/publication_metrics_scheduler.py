@@ -282,7 +282,9 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
 
             total_views = 0
             total_likes = 0
+            total_kol_link_clicks = 0
             like_rate_values: list[float] = []
+            click_rate_values: list[float] = []
             published_dates: list[datetime] = []
             video_count = 0
 
@@ -321,6 +323,12 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 if pub_views > 0 and pub_likes >= 0:
                     like_rate_values.append(pub_likes / pub_views * 100)
 
+                # kol_link_clicks 是 account 维度的，所有平台共用同一个 kol_user_id
+                if pub.kol_link_clicks is not None:
+                    total_kol_link_clicks += pub.kol_link_clicks
+                    if pub_views > 0:
+                        click_rate_values.append(pub.kol_link_clicks / pub_views * 100)
+
                 if pub.completed_at:
                     published_dates.append(pub.completed_at)
 
@@ -329,6 +337,7 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
 
             avg_views = round(total_views / video_count, 1) if video_count else None
             avg_like_rate = round(sum(like_rate_values) / len(like_rate_values), 2) if like_rate_values else None
+            avg_video_click_rate = round(sum(click_rate_values) / len(click_rate_values), 4) if click_rate_values else None
             latest = max(published_dates) if published_dates else None
             first = min(published_dates) if published_dates else None
 
@@ -340,6 +349,8 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 "total_likes": total_likes,
                 "avg_views": avg_views,
                 "avg_like_rate": avg_like_rate,
+                "total_kol_link_clicks": total_kol_link_clicks if click_rate_values else None,
+                "avg_video_click_rate": avg_video_click_rate,
                 "latest_video_published_at": latest.isoformat() if latest else None,
                 "first_content_date": first.isoformat() if first else None,
             }

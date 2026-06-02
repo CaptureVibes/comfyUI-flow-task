@@ -1245,6 +1245,8 @@
               <span class="al-th-label">点赞率</span>
               <span class="al-sort-icon"><SortIcon field="avg_like_rate" :sort-by="sortBy" :sort-order="sortOrder" /></span>
             </th>
+            <th class="al-th al-th-stat">Link总点击</th>
+            <th class="al-th al-th-stat">平均点击率</th>
             <th class="al-th al-th-date al-th-sortable" @click="toggleSort('latest_video_published_at')">
               <span class="al-th-label">最新发布</span>
               <span class="al-sort-icon"><SortIcon field="latest_video_published_at" :sort-by="sortBy" :sort-order="sortOrder" /></span>
@@ -1458,6 +1460,12 @@
 
             <!-- 点赞率 -->
             <td class="al-td al-td-stat">{{ formatPercent(snapshotValue(item, 'avg_like_rate')) }}</td>
+
+            <!-- Link 总点击 -->
+            <td class="al-td al-td-stat">{{ formatCount(snapshotValue(item, 'total_kol_link_clicks')) }}</td>
+
+            <!-- 平均点击率 -->
+            <td class="al-td al-td-stat">{{ snapshotValue(item, 'avg_video_click_rate') != null ? formatPercent(snapshotValue(item, 'avg_video_click_rate') * 100) : '-' }}</td>
 
             <!-- 最新发布 -->
             <td class="al-td al-td-date">{{ formatSnapshotDate(snapshotValue(item, 'latest_video_published_at')) }}</td>
