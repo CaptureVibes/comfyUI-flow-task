@@ -1345,6 +1345,59 @@ def _bulk_skip_reason_label(reason: str) -> str:
     return _BULK_VIDEO_TASK_SKIP_REASON_LABELS.get(reason, reason)
 
 
+def _account_allowed_classification_filters(account: Account) -> tuple[list[int], list[str]]:
+    cls_type = account.classification_type
+    summary = account.classification_summary or {}
+    if cls_type not in {"single", "dual"}:
+        return [], []
+
+    index_keys = ["primary_index"]
+    major_keys = ["primary_key"]
+    if cls_type == "dual":
+        index_keys.append("secondary_index")
+        major_keys.append("secondary_key")
+
+    allowed_indices: list[int] = []
+    for key in index_keys:
+        value = summary.get(key)
+        if value is not None:
+            allowed_indices.append(int(value))
+
+    allowed_major_keys = [
+        str(summary[key])
+        for key in major_keys
+        if summary.get(key)
+    ]
+    return allowed_indices, allowed_major_keys
+
+
+async def _matched_classified_video_source_ids(
+    session: AsyncSession,
+    *,
+    video_source_ids: list[uuid.UUID],
+    allowed_indices: list[int],
+    allowed_major_keys: list[str],
+) -> set[uuid.UUID]:
+    from app.models.video_classification import VideoClassification
+
+    if not video_source_ids or (not allowed_indices and not allowed_major_keys):
+        return set()
+
+    match_clauses = []
+    if allowed_indices:
+        match_clauses.append(VideoClassification.category_index.in_(allowed_indices))
+    if allowed_major_keys:
+        match_clauses.append(VideoClassification.major_category.in_(allowed_major_keys))
+
+    rows = (await session.execute(
+        select(VideoClassification.video_source_id)
+        .where(VideoClassification.video_source_id.in_(video_source_ids))
+        .where(VideoClassification.status == "success")
+        .where(or_(*match_clauses))
+    )).scalars().all()
+    return set(rows)
+
+
 async def _load_bulk_video_task_templates(
     session: AsyncSession,
     *,
@@ -1354,26 +1407,14 @@ async def _load_bulk_video_task_templates(
     with_reason: bool = False,
 ):
     from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_classification import VideoClassification
 
-    # ── 按分类类型决定允许的小类（category_index）──────────────────────────────
     account = await session.get(Account, account_id)
-    allowed_indices: list[int] | None = None  # None = 不限制
 
     if account is None:
         return ([], "account_missing") if with_reason else []
 
-    cls_type = account.classification_type
-    summary = account.classification_summary or {}
-    # 仅 single / dual 走小类硬过滤；chaos / insufficient / None 不限分类（仅靠标签交集）
-    if cls_type == "single":
-        primary_idx = summary.get("primary_index")
-        if primary_idx is not None:
-            allowed_indices = [int(primary_idx)]
-    elif cls_type == "dual":
-        primary_idx = summary.get("primary_index")
-        secondary_idx = summary.get("secondary_index")
-        allowed_indices = [int(i) for i in [primary_idx, secondary_idx] if i is not None]
+    # single / dual 走分类硬过滤。兼容旧小类 category_index 与新版大类 major_category。
+    allowed_indices, allowed_major_keys = _account_allowed_classification_filters(account)
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
     tagged_tpls: list[VideoAITemplate] = []
@@ -1426,21 +1467,16 @@ async def _load_bulk_video_task_templates(
     if not unique_tpls:
         return ([], mode_skip_reason) if with_reason else []
 
-    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 小类（category_index）
+    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 分类匹配的模板
     # 完全匹配的模板，没有匹配则跳过该账号（不再回退到全部候选）。
-    if allowed_indices is not None:
+    if allowed_indices or allowed_major_keys:
         vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
-        matched_vs_ids: set[uuid.UUID] = set()
-        if vs_ids:
-            rows = (
-                await session.execute(
-                    select(VideoClassification.video_source_id)
-                    .where(VideoClassification.video_source_id.in_(vs_ids))
-                    .where(VideoClassification.status == "success")
-                    .where(VideoClassification.category_index.in_(allowed_indices))
-                )
-            ).scalars().all()
-            matched_vs_ids = set(rows)
+        matched_vs_ids = await _matched_classified_video_source_ids(
+            session,
+            video_source_ids=vs_ids,
+            allowed_indices=allowed_indices,
+            allowed_major_keys=allowed_major_keys,
+        )
         unique_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
         if not unique_tpls:
             return ([], "no_classification_match") if with_reason else []
@@ -1474,19 +1510,8 @@ async def _count_account_templates(
     （fail 模板也计入；与「一键生成」候选池口径一致）。
     """
     from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_classification import VideoClassification
 
-    cls_type = account.classification_type
-    summary = account.classification_summary or {}
-    allowed_indices: list[int] | None = None
-    if cls_type == "single":
-        primary_idx = summary.get("primary_index")
-        if primary_idx is not None:
-            allowed_indices = [int(primary_idx)]
-    elif cls_type == "dual":
-        primary_idx = summary.get("primary_index")
-        secondary_idx = summary.get("secondary_index")
-        allowed_indices = [int(i) for i in [primary_idx, secondary_idx] if i is not None]
+    allowed_indices, allowed_major_keys = _account_allowed_classification_filters(account)
 
     tag_ids = list((await session.execute(
         select(AccountTag.tag_id).where(AccountTag.account_id == account.id)
@@ -1507,17 +1532,14 @@ async def _count_account_templates(
         tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
     tpls = list((await session.execute(tpl_stmt)).scalars().all())
 
-    if allowed_indices is not None:
+    if allowed_indices or allowed_major_keys:
         vs_ids = list({t.video_source_id for t in tpls if t.video_source_id})
-        matched_vs_ids: set[uuid.UUID] = set()
-        if vs_ids:
-            rows = (await session.execute(
-                select(VideoClassification.video_source_id)
-                .where(VideoClassification.video_source_id.in_(vs_ids))
-                .where(VideoClassification.status == "success")
-                .where(VideoClassification.category_index.in_(allowed_indices))
-            )).scalars().all()
-            matched_vs_ids = set(rows)
+        matched_vs_ids = await _matched_classified_video_source_ids(
+            session,
+            video_source_ids=vs_ids,
+            allowed_indices=allowed_indices,
+            allowed_major_keys=allowed_major_keys,
+        )
         tpls = [t for t in tpls if t.video_source_id in matched_vs_ids]
 
     used_count = sum(1 for t in tpls if t.is_used)
