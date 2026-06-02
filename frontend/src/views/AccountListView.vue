@@ -3340,7 +3340,8 @@ async function loadAnalyticsData() {
     })
     analyticsData.value = data
     await nextTick()
-    renderAnaCharts(data)
+    // el-dialog 有淡入动画，nextTick 只保证 vdom diff，需等动画结束 canvas 才有实际尺寸
+    setTimeout(() => renderAnaCharts(data), 150)
   } catch (e) {
     analyticsError.value = e?.response?.data?.detail || '加载失败'
   } finally {
@@ -3435,6 +3436,7 @@ function renderAnaCharts(data) {
     if (!chart) return
     const cfg = configs[i]
     chart.setOption(_lineChartOption('', allDates, cfg.values, { color: cfg.color, yFormatter: cfg.yFormatter }))
+    chart.resize()
   })
 
   if (!_anaResizeHandler) {
@@ -6917,7 +6919,7 @@ onMounted(() => {
   color: #374151;
   margin-bottom: 6px;
 }
-.ana-chart-canvas { height: 160px; width: 100%; }
+.ana-chart-canvas { height: 160px; width: 100%; display: block; }
 
 .ana-loading, .ana-error, .ana-empty {
   text-align: center;
