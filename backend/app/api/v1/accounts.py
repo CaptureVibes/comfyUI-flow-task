@@ -1529,6 +1529,59 @@ def _bulk_skip_reason_label(reason: str) -> str:
     return _BULK_VIDEO_TASK_SKIP_REASON_LABELS.get(reason, reason)
 
 
+def _account_allowed_classification_filters(account: Account) -> tuple[list[int], list[str]]:
+    cls_type = account.classification_type
+    summary = account.classification_summary or {}
+    if cls_type not in {"single", "dual"}:
+        return [], []
+
+    index_keys = ["primary_index"]
+    major_keys = ["primary_key"]
+    if cls_type == "dual":
+        index_keys.append("secondary_index")
+        major_keys.append("secondary_key")
+
+    allowed_indices: list[int] = []
+    for key in index_keys:
+        value = summary.get(key)
+        if value is not None:
+            allowed_indices.append(int(value))
+
+    allowed_major_keys = [
+        str(summary[key])
+        for key in major_keys
+        if summary.get(key)
+    ]
+    return allowed_indices, allowed_major_keys
+
+
+async def _matched_classified_video_source_ids(
+    session: AsyncSession,
+    *,
+    video_source_ids: list[uuid.UUID],
+    allowed_indices: list[int],
+    allowed_major_keys: list[str],
+) -> set[uuid.UUID]:
+    from app.models.video_classification import VideoClassification
+
+    if not video_source_ids or (not allowed_indices and not allowed_major_keys):
+        return set()
+
+    match_clauses = []
+    if allowed_indices:
+        match_clauses.append(VideoClassification.category_index.in_(allowed_indices))
+    if allowed_major_keys:
+        match_clauses.append(VideoClassification.major_category.in_(allowed_major_keys))
+
+    rows = (await session.execute(
+        select(VideoClassification.video_source_id)
+        .where(VideoClassification.video_source_id.in_(video_source_ids))
+        .where(VideoClassification.status == "success")
+        .where(or_(*match_clauses))
+    )).scalars().all()
+    return set(rows)
+
+
 async def _load_bulk_video_task_templates(
     session: AsyncSession,
     *,
@@ -1538,7 +1591,6 @@ async def _load_bulk_video_task_templates(
     with_reason: bool = False,
 ):
     from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_classification import VideoClassification
 
     # ── 按分类类型决定允许的小类（category_key）──────────────────────────────
     account = await session.get(Account, account_id)
@@ -1658,7 +1710,6 @@ async def _count_account_templates(
     （fail 模板也计入；与「一键生成」候选池口径一致）。
     """
     from app.models.video_ai_template import VideoAITemplate
-    from app.models.video_classification import VideoClassification
 
     cls_type = account.classification_type
     summary = account.classification_summary or {}
