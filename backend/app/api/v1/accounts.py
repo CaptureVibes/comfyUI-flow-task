@@ -25,6 +25,7 @@ from app.models.tag import VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
 from app.models.video_source import VideoSource
 from app.models.video_task import VideoSubTask, VideoTask
+from app.models.video_publication import VideoPublication
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
     BoundBloggerRead, BoundFlagRead, BoundTagRead, ScheduledPublishConfig,
@@ -2472,14 +2473,49 @@ async def get_channel_analytics(
             end_date,
         )
 
-    daily_views, daily_clicks = await asyncio.gather(
+    # 从本地 DB 查询该 channel 下已发布视频的总 views
+    # 路径：video_publications.completed_at IS NOT NULL
+    #        → video_sub_tasks.task_id → video_tasks.account_id == account_id
+    #        + metrics_snapshot.channels[].{platform, channel_id, stats.view_count/views}
+    async def _fetch_total_video_views() -> int:
+        if not channel_id:
+            return 0
+        target_platform = platform.lower()
+        target_channel_id = channel_id
+
+        pubs = (await session.execute(
+            select(VideoPublication)
+            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+            .where(VideoTask.account_id == account_id)
+            .where(VideoPublication.completed_at.isnot(None))
+            .where(VideoPublication.metrics_snapshot.isnot(None))
+        )).scalars().all()
+
+        total = 0
+        for pub in pubs:
+            snapshot = pub.metrics_snapshot
+            if not isinstance(snapshot, dict):
+                continue
+            for ch in (snapshot.get("channels") or []):
+                if not isinstance(ch, dict):
+                    continue
+                if str(ch.get("platform") or "").lower() != target_platform:
+                    continue
+                if str(ch.get("channel_id") or "") != target_channel_id:
+                    continue
+                stats = ch.get("stats") or {}
+                v = stats.get("views") if target_platform == "youtube" else stats.get("view_count")
+                total += int(v or 0)
+        return total
+
+    daily_views, daily_clicks, total_video_views = await asyncio.gather(
         _fetch_daily_views(),
         _fetch_daily_clicks(),
+        _fetch_total_video_views(),
     )
 
-    # 聚合值
     total_link_clicks = sum(p["daily_clicks"] for p in daily_clicks)
-    total_video_views = daily_views[-1]["day_end_views"] if daily_views else 0
 
     return ChannelAnalyticsResponse(
         platform=platform.lower(),

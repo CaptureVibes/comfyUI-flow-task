@@ -484,5 +484,5 @@ class ChannelAnalyticsResponse(BaseModel):
     daily_views: list[dict]          # [{dt, daily_view_increment, day_end_views}]
     daily_clicks: list[dict]         # [{dt, daily_clicks}]
     # 聚合值（用于计算转化率）
-    total_link_clicks: int           # 区间内 Link 历史累计点击（截至 end_date 当天的 sum）
-    total_video_views: int           # 区间内最后一天的 day_end_views（视频总 views）
+    total_link_clicks: int           # 区间内 Link 历史累计点击（sum of daily_clicks）
+    total_video_views: int           # 该 channel 下所有已发布视频的 views 之和（来自 metrics_snapshot）
