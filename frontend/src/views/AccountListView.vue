@@ -3300,10 +3300,18 @@ const analyticsLinkTotalConversion = computed(() => {
 })
 
 function _getAnalyticsPlatforms(account) {
-  // 有 reservation 即可展示，不限制 status（bound/confirmed 均可查询数据）
   const seen = new Set()
   return (account.channel_reservations || [])
-    .filter(r => r.platform && !seen.has(r.platform) && seen.add(r.platform))
+    .filter(r => r.platform && r.status === 'bound' && !seen.has(r.platform) && seen.add(r.platform))
+    .map(r => r.platform)
+}
+
+function _getUnboundPlatforms(account) {
+  // 有 reservation 但未 bound 的平台（confirmed/reserved）
+  const bound = new Set(_getAnalyticsPlatforms(account))
+  const seen = new Set()
+  return (account.channel_reservations || [])
+    .filter(r => r.platform && !bound.has(r.platform) && !seen.has(r.platform) && seen.add(r.platform))
     .map(r => r.platform)
 }
 
@@ -3315,9 +3323,18 @@ async function openAnalyticsDialog(item) {
   analyticsData.value = null
   analyticsError.value = ''
   showAnalyticsDialog.value = true
-  if (analyticsActivePlatform.value) {
-    await loadAnalyticsData()
+
+  if (!platforms.length) {
+    const unbound = _getUnboundPlatforms(item)
+    if (unbound.length) {
+      analyticsError.value = `频道尚未完成绑定（${unbound.join('、')} 处于占用状态），暂无数据`
+    } else {
+      analyticsError.value = '该账号未绑定任何平台频道'
+    }
+    return
   }
+
+  await loadAnalyticsData()
 }
 
 function closeAnalyticsDialog() {
