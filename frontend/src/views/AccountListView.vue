@@ -3300,8 +3300,10 @@ const analyticsLinkTotalConversion = computed(() => {
 })
 
 function _getAnalyticsPlatforms(account) {
+  // 有 reservation 即可展示，不限制 status（bound/confirmed 均可查询数据）
+  const seen = new Set()
   return (account.channel_reservations || [])
-    .filter(r => r.status === 'bound')
+    .filter(r => r.platform && !seen.has(r.platform) && seen.add(r.platform))
     .map(r => r.platform)
 }
 
