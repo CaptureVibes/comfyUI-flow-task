@@ -1986,6 +1986,7 @@ class VideoPublicationService:
             total_comments=total_comments,
             total_shares=total_shares,
             avg_view_percentage=(sum(view_percentage_values) / len(view_percentage_values)) if view_percentage_values else None,
+            kol_link_clicks=publication.kol_link_clicks,
             category_key=getattr(classification, "category_key", None),
             category_label=_classification_label(classification),
             major_category=getattr(classification, "major_category", None),

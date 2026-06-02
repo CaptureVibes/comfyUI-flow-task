@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, JSON, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, JSON, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -82,6 +82,9 @@ class VideoPublication(Base):
 
     # 错误信息
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 发布后 24h 内 KOL Link 点击次数（由每日定时任务从 BigQuery 写入）
+    kol_link_clicks: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

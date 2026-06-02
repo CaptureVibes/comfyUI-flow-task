@@ -109,6 +109,40 @@ def get_channel_daily_views(
     ]
 
 
+def get_kol_clicks_in_window(
+    kol_user_id: str,
+    window_start: date,
+    window_end: date,
+) -> int:
+    """
+    Count v_thirdapp_open events for a given KOL within [window_start, window_end].
+    Used to collect the 24-hour post-publish click count for a single publication.
+    Returns the event count, or 0 if no data found.
+    """
+    sql = """
+        SELECT COUNT(*) AS cnt
+        FROM decom.dwd_event_log
+        WHERE DATE(logAt_timestamp) BETWEEN @start_date AND @end_date
+          AND event_name = 'v_thirdapp_open'
+          AND JSON_VALUE(args, '$.sf') != ''
+          AND REGEXP_EXTRACT(prop_params, r'kolUserId=(\\d+)') = @kol_user_id
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", window_start.isoformat()),
+            bigquery.ScalarQueryParameter("end_date", "DATE", window_end.isoformat()),
+            bigquery.ScalarQueryParameter("kol_user_id", "STRING", kol_user_id),
+        ]
+    )
+
+    client = get_client()
+    rows = list(client.query(sql, job_config=job_config).result())
+    if not rows:
+        return 0
+    return int(rows[0]["cnt"] or 0)
+
+
 def get_kol_daily_clicks(
     kol_user_id: str,
     start_date: date,
