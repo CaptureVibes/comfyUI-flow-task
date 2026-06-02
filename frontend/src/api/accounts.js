@@ -275,3 +275,10 @@ export async function applyTierEvaluation(changes) {
   const { data } = await http.post('/accounts/tier-evaluation/apply', { changes })
   return data
 }
+
+export async function fetchChannelAnalytics(accountId, { platform, startDate, endDate }) {
+  const { data } = await http.get(`/accounts/${accountId}/channel-analytics`, {
+    params: { platform, start_date: startDate, end_date: endDate },
+  })
+  return data
+}

@@ -779,6 +779,92 @@
     </el-dialog>
 
     <!-- 视频分类弹窗 -->
+    <!-- 频道数据分析弹窗 -->
+    <el-dialog
+      v-model="showAnalyticsDialog"
+      :title="analyticsAccount ? `频道数据 · ${analyticsAccount.account_name}` : '频道数据'"
+      width="860px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @close="closeAnalyticsDialog"
+    >
+      <div class="ana-body">
+        <!-- 平台切换 + 日期选择 -->
+        <div class="ana-toolbar">
+          <div class="ana-platform-tabs">
+            <button
+              v-for="p in analyticsPlatforms"
+              :key="p"
+              class="ana-tab"
+              :class="{ active: analyticsActivePlatform === p }"
+              @click="switchAnalyticsPlatform(p)"
+            >{{ p }}</button>
+          </div>
+          <div class="ana-date-range">
+            <el-date-picker
+              v-model="analyticsDateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              :clearable="false"
+              size="small"
+              style="width:240px"
+              @change="loadAnalyticsData"
+            />
+          </div>
+        </div>
+
+        <!-- 加载 / 无数据 / 无绑定 -->
+        <div v-if="analyticsLoading" class="ana-loading">加载中...</div>
+        <div v-else-if="analyticsError" class="ana-error">{{ analyticsError }}</div>
+        <div v-else-if="!analyticsData" class="ana-empty">请选择平台和日期范围</div>
+        <template v-else>
+          <!-- 指标卡 -->
+          <div class="ana-metrics">
+            <div class="ana-metric-card">
+              <div class="ana-metric-label">Link 总点击</div>
+              <div class="ana-metric-value">{{ analyticsData.total_link_clicks.toLocaleString() }}</div>
+            </div>
+            <div class="ana-metric-card">
+              <div class="ana-metric-label">视频总 Views</div>
+              <div class="ana-metric-value">{{ analyticsData.total_video_views.toLocaleString() }}</div>
+            </div>
+            <div class="ana-metric-card">
+              <div class="ana-metric-label">Link 总转化率</div>
+              <div class="ana-metric-value">{{ analyticsLinkTotalConversion }}</div>
+            </div>
+          </div>
+
+          <!-- 5 条折线图 -->
+          <div class="ana-charts">
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">当日账号总 Views</div>
+              <div ref="anaChart1Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 总点击次数（累计）</div>
+              <div ref="anaChart2Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 当日点击次数</div>
+              <div ref="anaChart3Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 日转化率（当日点击 / 当日 Views）</div>
+              <div ref="anaChart4Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 总转化率（累计点击 / 视频总 Views）</div>
+              <div ref="anaChart5Ref" class="ana-chart-canvas"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </el-dialog>
+
     <el-dialog
       v-model="showClassificationDialog"
       :title="classificationAccount ? `视频分类 · ${classificationAccount.account_name}` : '视频分类'"
@@ -1421,6 +1507,7 @@
             <td class="al-td al-td-actions" @click.stop>
               <div class="al-row-actions">
                 <button class="ac-btn ac-btn-stats" @click="openInNewTab({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
+                <button class="ac-btn ac-btn-analytics" @click="openAnalyticsDialog(item)">数据</button>
                 <button class="ac-btn ac-btn-sync" :class="{ loading: syncingId === item.id }" @click="handleSyncAccount(item)">{{ syncingId === item.id ? '同步中' : '同步' }}</button>
                 <button class="ac-btn ac-btn-classify" @click="openClassificationDialog(item)">分类</button>
                 <button class="ac-btn ac-btn-edit" @click="openInNewTab(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
@@ -1696,7 +1783,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision, fetchChannelAnalytics } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -3175,6 +3262,194 @@ function topSubLabel(summary, majorKey) {
     if (c > bestCount) { bestCount = c; bestLabel = cat.label }
   }
   return bestLabel || majorLabel(majorKey)
+}
+
+// ── 频道数据分析弹窗 ──────────────────────────────────────────────────────────
+const showAnalyticsDialog = ref(false)
+const analyticsAccount = ref(null)
+const analyticsActivePlatform = ref('')
+const analyticsPlatforms = ref([])
+const analyticsDateRange = ref([
+  (() => { const d = new Date(); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10) })(),
+  new Date().toISOString().slice(0, 10),
+])
+const analyticsLoading = ref(false)
+const analyticsError = ref('')
+const analyticsData = ref(null)
+
+const anaChart1Ref = ref(null)
+const anaChart2Ref = ref(null)
+const anaChart3Ref = ref(null)
+const anaChart4Ref = ref(null)
+const anaChart5Ref = ref(null)
+let _anaCharts = []
+let _anaResizeHandler = null
+
+const analyticsLinkTotalConversion = computed(() => {
+  const d = analyticsData.value
+  if (!d || !d.total_video_views) return '0.00%'
+  return ((d.total_link_clicks / d.total_video_views) * 100).toFixed(2) + '%'
+})
+
+function _getAnalyticsPlatforms(account) {
+  return (account.channel_reservations || [])
+    .filter(r => r.status === 'bound')
+    .map(r => r.platform)
+}
+
+async function openAnalyticsDialog(item) {
+  analyticsAccount.value = item
+  const platforms = _getAnalyticsPlatforms(item)
+  analyticsPlatforms.value = platforms
+  analyticsActivePlatform.value = platforms[0] || ''
+  analyticsData.value = null
+  analyticsError.value = ''
+  showAnalyticsDialog.value = true
+  if (analyticsActivePlatform.value) {
+    await loadAnalyticsData()
+  }
+}
+
+function closeAnalyticsDialog() {
+  showAnalyticsDialog.value = false
+  analyticsAccount.value = null
+  analyticsData.value = null
+  analyticsError.value = ''
+  disposeAnaCharts()
+}
+
+async function switchAnalyticsPlatform(p) {
+  analyticsActivePlatform.value = p
+  await loadAnalyticsData()
+}
+
+async function loadAnalyticsData() {
+  if (!analyticsAccount.value || !analyticsActivePlatform.value) return
+  const [startDate, endDate] = analyticsDateRange.value || []
+  if (!startDate || !endDate) return
+
+  analyticsLoading.value = true
+  analyticsError.value = ''
+  analyticsData.value = null
+  disposeAnaCharts()
+  try {
+    const data = await fetchChannelAnalytics(analyticsAccount.value.id, {
+      platform: analyticsActivePlatform.value,
+      startDate,
+      endDate,
+    })
+    analyticsData.value = data
+    await nextTick()
+    renderAnaCharts(data)
+  } catch (e) {
+    analyticsError.value = e?.response?.data?.detail || '加载失败'
+  } finally {
+    analyticsLoading.value = false
+  }
+}
+
+function _lineChartOption(title, dates, values, { yFormatter = v => v, color = '#3b82f6' } = {}) {
+  return {
+    tooltip: {
+      trigger: 'axis',
+      formatter: params => {
+        const p = params[0]
+        return `${p.axisValue}<br/>${p.marker}${yFormatter(p.value)}`
+      },
+    },
+    grid: { top: 12, right: 20, bottom: 40, left: 60 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLabel: { fontSize: 11, rotate: 30 },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { fontSize: 11, formatter: yFormatter },
+    },
+    series: [{
+      type: 'line',
+      data: values,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 4,
+      lineStyle: { color, width: 2 },
+      itemStyle: { color },
+      areaStyle: { color: color + '22' },
+    }],
+  }
+}
+
+function renderAnaCharts(data) {
+  disposeAnaCharts()
+  const refs = [anaChart1Ref, anaChart2Ref, anaChart3Ref, anaChart4Ref, anaChart5Ref]
+  _anaCharts = refs.map(r => r.value ? echarts.init(r.value) : null)
+
+  // 对齐日期轴：以 views 日期为主轴，clicks 按日期 map
+  const viewsByDt = Object.fromEntries((data.daily_views || []).map(d => [d.dt, d]))
+  const clicksByDt = Object.fromEntries((data.daily_clicks || []).map(d => [d.dt, d.daily_clicks]))
+
+  // 合并所有日期
+  const allDates = [...new Set([
+    ...(data.daily_views || []).map(d => d.dt),
+    ...(data.daily_clicks || []).map(d => d.dt),
+  ])].sort()
+
+  const dailyViews = allDates.map(dt => viewsByDt[dt]?.daily_view_increment ?? 0)
+
+  // Link 累计点击（按时间累加）
+  let cumClicks = 0
+  const cumulativeClicks = allDates.map(dt => {
+    cumClicks += clicksByDt[dt] ?? 0
+    return cumClicks
+  })
+  const dailyClicks = allDates.map(dt => clicksByDt[dt] ?? 0)
+
+  // 日转化率
+  const dailyConversion = allDates.map((dt, i) => {
+    const views = dailyViews[i]
+    const clicks = dailyClicks[i]
+    if (!views) return 0
+    return +((clicks / views) * 100).toFixed(4)
+  })
+
+  // 总转化率（累计点击 / 截至当天 day_end_views）
+  const totalConversion = allDates.map((dt, i) => {
+    const totalViews = viewsByDt[dt]?.day_end_views ?? 0
+    const clicks = cumulativeClicks[i]
+    if (!totalViews) return 0
+    return +((clicks / totalViews) * 100).toFixed(4)
+  })
+
+  const pctFmt = v => v + '%'
+  const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444']
+  const configs = [
+    { values: dailyViews, color: colors[0] },
+    { values: cumulativeClicks, color: colors[1] },
+    { values: dailyClicks, color: colors[2] },
+    { values: dailyConversion, color: colors[3], yFormatter: pctFmt },
+    { values: totalConversion, color: colors[4], yFormatter: pctFmt },
+  ]
+
+  _anaCharts.forEach((chart, i) => {
+    if (!chart) return
+    const cfg = configs[i]
+    chart.setOption(_lineChartOption('', allDates, cfg.values, { color: cfg.color, yFormatter: cfg.yFormatter }))
+  })
+
+  if (!_anaResizeHandler) {
+    _anaResizeHandler = () => _anaCharts.forEach(c => c?.resize())
+    window.addEventListener('resize', _anaResizeHandler)
+  }
+}
+
+function disposeAnaCharts() {
+  if (_anaResizeHandler) {
+    window.removeEventListener('resize', _anaResizeHandler)
+    _anaResizeHandler = null
+  }
+  _anaCharts.forEach(c => c?.dispose())
+  _anaCharts = []
 }
 
 const showClassificationDialog = ref(false)
@@ -6566,4 +6841,89 @@ onMounted(() => {
 .ac-kol-platform-youtube   { background: #fee2e2; color: #b91c1c; }
 .ac-kol-platform-tiktok    { background: #1e293b; color: #f8fafc; }
 .ac-kol-platform-instagram { background: #fce7f3; color: #9d174d; }
+
+/* ── ac-btn-analytics ─────────────────────────────────────────────────── */
+.ac-btn-analytics {
+  background: #ede9fe;
+  color: #6d28d9;
+  border-color: #c4b5fd;
+}
+.ac-btn-analytics:hover { background: #ddd6fe; }
+
+/* ── 频道数据分析弹窗 (ana-*) ─────────────────────────────────────────── */
+.ana-body { padding: 0 2px; }
+
+.ana-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.ana-platform-tabs {
+  display: flex;
+  gap: 6px;
+}
+.ana-tab {
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background .15s, color .15s;
+}
+.ana-tab.active {
+  background: #6d28d9;
+  color: #fff;
+  border-color: #6d28d9;
+}
+.ana-tab:hover:not(.active) { background: #ede9fe; color: #6d28d9; }
+
+.ana-metrics {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.ana-metric-card {
+  flex: 1;
+  min-width: 160px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.ana-metric-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.ana-metric-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.ana-charts { display: flex; flex-direction: column; gap: 20px; }
+.ana-chart-row {}
+.ana-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.ana-chart-canvas { height: 160px; width: 100%; }
+
+.ana-loading, .ana-error, .ana-empty {
+  text-align: center;
+  padding: 40px 0;
+  color: #94a3b8;
+  font-size: 14px;
+}
+.ana-error { color: #ef4444; }
 </style>

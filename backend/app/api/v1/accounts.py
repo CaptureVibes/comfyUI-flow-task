@@ -34,7 +34,7 @@ from app.schemas.account import (
     AccountChannelReservationRead, BindOpenAPIChannelBody, ConfirmChannelReservationsBody,
     ConfirmChannelReservationsResponse, ReserveAIAccountsBody, ReserveAIAccountsResponse,
     BulkUpdateAccountAttributesBody, BulkUpdateAccountAttributesResponse,
-    SupplementStatusRead,
+    SupplementStatusRead, ChannelAnalyticsResponse,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -2410,3 +2410,83 @@ async def batch_classify_videos(
             results.append({"account_id": str(account_id), "queued": 0, "skipped": 0, "error": "not_found"})
     total_queued = sum(r.get("queued", 0) for r in results)
     return {"status": "queued", "total_queued": total_queued, "results": results}
+
+
+@router.get("/{account_id}/channel-analytics", response_model=ChannelAnalyticsResponse)
+async def get_channel_analytics(
+    account_id: uuid.UUID,
+    platform: str = Query(..., description="youtube / tiktok / instagram"),
+    start_date: date = Query(..., description="YYYY-MM-DD"),
+    end_date: date = Query(..., description="YYYY-MM-DD"),
+    current_user: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ChannelAnalyticsResponse:
+    """返回指定账号、平台的频道数据分析（views 趋势 + Link 点击趋势）。"""
+    import asyncio
+    from app.services.ext.bigquery_service.kol_analytics import (
+        get_channel_daily_views,
+        get_kol_daily_clicks,
+    )
+
+    owner_id = current_user.owner_id if not current_user.is_admin else None
+
+    account = await get_account_or_404(session, account_id, owner_id)
+
+    reservation = await session.scalar(
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.account_id == account_id)
+        .where(AccountChannelReservation.platform == platform.lower())
+    )
+    if not reservation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"该账号未绑定 {platform} 平台",
+        )
+
+    channel_id = reservation.channel_id
+    kol_user_id = account.kol_user_id
+
+    # 并发查询两个 BigQuery 数据源（同步阻塞函数放到线程池）
+    loop = asyncio.get_event_loop()
+
+    async def _fetch_daily_views():
+        if not channel_id:
+            return []
+        return await loop.run_in_executor(
+            None,
+            get_channel_daily_views,
+            channel_id,
+            platform.lower(),
+            start_date,
+            end_date,
+        )
+
+    async def _fetch_daily_clicks():
+        if not kol_user_id:
+            return []
+        return await loop.run_in_executor(
+            None,
+            get_kol_daily_clicks,
+            kol_user_id,
+            start_date,
+            end_date,
+        )
+
+    daily_views, daily_clicks = await asyncio.gather(
+        _fetch_daily_views(),
+        _fetch_daily_clicks(),
+    )
+
+    # 聚合值
+    total_link_clicks = sum(p["daily_clicks"] for p in daily_clicks)
+    total_video_views = daily_views[-1]["day_end_views"] if daily_views else 0
+
+    return ChannelAnalyticsResponse(
+        platform=platform.lower(),
+        channel_id=channel_id,
+        kol_user_id=kol_user_id,
+        daily_views=daily_views,
+        daily_clicks=daily_clicks,
+        total_link_clicks=total_link_clicks,
+        total_video_views=total_video_views,
+    )

@@ -470,3 +470,19 @@ class ExternalAIAccountStatsResponse(BaseModel):
     bound_instagram: int
     unbound: int
     available: int
+
+
+class ChannelAnalyticsDayPoint(BaseModel):
+    dt: str  # YYYY-MM-DD
+
+
+class ChannelAnalyticsResponse(BaseModel):
+    platform: str
+    channel_id: str | None
+    kol_user_id: str | None
+    # 每日数据点，dt 为 YYYY-MM-DD，值为当天数字
+    daily_views: list[dict]          # [{dt, daily_view_increment, day_end_views}]
+    daily_clicks: list[dict]         # [{dt, daily_clicks}]
+    # 聚合值（用于计算转化率）
+    total_link_clicks: int           # 区间内 Link 历史累计点击（截至 end_date 当天的 sum）
+    total_video_views: int           # 区间内最后一天的 day_end_views（视频总 views）
