@@ -1592,24 +1592,13 @@ async def _load_bulk_video_task_templates(
 ):
     from app.models.video_ai_template import VideoAITemplate
 
-    # ── 按分类类型决定允许的小类（category_key）──────────────────────────────
     account = await session.get(Account, account_id)
-    allowed_keys: list[str] | None = None  # None = 不限制
 
     if account is None:
         return ([], "account_missing") if with_reason else []
 
-    cls_type = account.classification_type
-    summary = account.classification_summary or {}
-    # 仅 single / dual 走小类硬过滤；chaos / insufficient / None 不限分类（仅靠标签交集）
-    if cls_type == "single":
-        primary_key = summary.get("primary_key")
-        if primary_key is not None:
-            allowed_keys = [str(primary_key)]
-    elif cls_type == "dual":
-        primary_key = summary.get("primary_key")
-        secondary_key = summary.get("secondary_key")
-        allowed_keys = [k for k in [primary_key, secondary_key] if k is not None]
+    # single / dual 走分类硬过滤，兼容旧小类 category_index 与新版大类 major_category
+    allowed_indices, allowed_major_keys = _account_allowed_classification_filters(account)
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
     tagged_tpls: list[VideoAITemplate] = []
@@ -1662,21 +1651,15 @@ async def _load_bulk_video_task_templates(
     if not unique_tpls:
         return ([], mode_skip_reason) if with_reason else []
 
-    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 小类（category_key）
-    # 完全匹配的模板，没有匹配则跳过该账号（不再回退到全部候选）。
-    if allowed_keys is not None:
+    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 分类匹配的模板
+    if allowed_indices or allowed_major_keys:
         vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
-        matched_vs_ids: set[uuid.UUID] = set()
-        if vs_ids:
-            rows = (
-                await session.execute(
-                    select(VideoClassification.video_source_id)
-                    .where(VideoClassification.video_source_id.in_(vs_ids))
-                    .where(VideoClassification.status == "success")
-                    .where(VideoClassification.category_key.in_(allowed_keys))
-                )
-            ).scalars().all()
-            matched_vs_ids = set(rows)
+        matched_vs_ids = await _matched_classified_video_source_ids(
+            session,
+            video_source_ids=vs_ids,
+            allowed_indices=allowed_indices,
+            allowed_major_keys=allowed_major_keys,
+        )
         unique_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
         if not unique_tpls:
             return ([], "no_classification_match") if with_reason else []
