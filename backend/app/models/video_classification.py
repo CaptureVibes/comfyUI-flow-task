@@ -28,6 +28,8 @@ class VideoClassification(Base):
     )
     owner_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    category_key: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    # 废弃字段，不再写入，保留供历史查询
     category_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     major_category: Mapped[str | None] = mapped_column(String(20), nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)

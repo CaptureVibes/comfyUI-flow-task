@@ -605,11 +605,11 @@
       </div>
       <div v-else class="ai-gen-progress">
         <el-steps :active="aiProgressStep" finish-status="success" simple style="margin-bottom: 20px;">
-          <el-step title="视频分析" />
-          <el-step title="名称生成" />
           <el-step title="照片候选" />
           <el-step title="待选照片" />
+          <el-step title="视频分析" />
           <el-step title="头像生成" />
+          <el-step title="名称生成" />
           <el-step title="完成" />
         </el-steps>
         <div class="ai-gen-status-text">
@@ -1259,13 +1259,15 @@ const currentAccountId = ref(null)  // 新建账号时，保存后的 ID
 const aiLastStatus = ref('idle')  // 记录上次的生成状态，用于显示续跑/重试按钮
 let _aiPollTimer = null
 
+// 与 _run_pipeline 实际执行顺序对齐：
+// photo_generating → awaiting_photo_selection → video_analyzing → avatar_generating → name_generating → completed
 const AI_STATUS_MAP = {
   pending: { step: 0, text: '等待处理...' },
-  video_analyzing: { step: 1, text: '正在分析视频...' },
-  name_generating: { step: 2, text: '正在生成博主名称...' },
-  photo_generating: { step: 3, text: '正在生成照片候选...' },
-  awaiting_photo_selection: { step: 4, text: '等待人工选择照片...' },
-  avatar_generating: { step: 5, text: '正在生成博主头像...' },
+  photo_generating: { step: 1, text: '正在生成照片候选...' },
+  awaiting_photo_selection: { step: 2, text: '等待人工选择照片...' },
+  video_analyzing: { step: 3, text: '正在分析视频...' },
+  avatar_generating: { step: 4, text: '正在生成博主头像...' },
+  name_generating: { step: 5, text: '正在生成博主名称...' },
   completed: { step: 6, text: '生成完成！' },
   failed: { step: -1, text: '生成失败' },
 }
@@ -1313,6 +1315,7 @@ async function startAIGeneration() {
         avatar_url: form.avatar_url || null,
         photo_url: form.photo_url || null,
         social_bindings: form.social_bindings.length > 0 ? form.social_bindings : null,
+        defer_kol_provision: true,  // AI 生成完成后再创建 KOL，避免用占位符名称
       }
       const created = await createAccount(payload)
       currentAccountId.value = created.id

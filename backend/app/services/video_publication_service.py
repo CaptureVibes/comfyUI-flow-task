@@ -36,11 +36,11 @@ logger = logging.getLogger("app.video_publication_service")
 
 
 def _classification_label(classification: VideoClassification | None) -> str | None:
-    if classification is None or classification.category_index is None:
+    if classification is None or not classification.category_key:
         return None
     from app.services.video_classification_service import CATEGORY_LABELS
 
-    return CATEGORY_LABELS.get(classification.category_index)
+    return CATEGORY_LABELS.get(classification.category_key)
 
 
 # ── 后台轮询器 ──────────────────────────────────────────────────────────────────
@@ -221,8 +221,12 @@ class OpenAPIClient:
         base_url: str | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
+        publish_base_url: str | None = None,
     ):
         self.base_url = base_url or getattr(settings, "open_api_base_url", "http://192.168.199.28:8080")
+        # 发布视频 + 轮询发布状态走独立 base_url；未配置时回退到主 base_url
+        _publish = publish_base_url or getattr(settings, "publish_api_base_url", "")
+        self.publish_base_url = (_publish.rstrip("/") if _publish else self.base_url)
         self.client_id = client_id or getattr(settings, "open_api_client_id", "default_client")
         self.client_secret = client_secret or getattr(
             settings, "open_api_client_secret", ""
@@ -287,14 +291,18 @@ class OpenAPIClient:
         # trust_env=False 禁用系统代理
         async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
             response = await client.post(
-                f"{self.base_url}/open-api/v1/upload/task",
+                f"{self.publish_base_url}/open-api/v1/upload/task",
                 json=signed_payload,
             )
             response.raise_for_status()
             return response.json()
 
     async def fetch_upload_status(self, task_id: str | None = None, external_id: str | None = None) -> dict:
-        """查询上传任务状态"""
+        """查询上传任务状态。
+
+        优先访问 publish_base_url；若与 base_url 不同且请求失败（网络异常 / 非 2xx），
+        自动回退到 base_url 再试一次。
+        """
         params = {}
         if task_id:
             params["task_id"] = task_id
@@ -302,15 +310,35 @@ class OpenAPIClient:
             params["external_id"] = external_id
 
         signed_params = self._sign_params(params)
+        candidates = [self.publish_base_url]
+        if self.base_url and self.base_url != self.publish_base_url:
+            candidates.append(self.base_url)
 
-        # trust_env=False 禁用系统代理
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-            response = await client.get(
-                f"{self.base_url}/open-api/v1/upload/status",
-                params=signed_params,
-            )
-            response.raise_for_status()
-            return response.json()
+        last_exc: Exception | None = None
+        for idx, base in enumerate(candidates):
+            try:
+                # trust_env=False 禁用系统代理
+                async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+                    response = await client.get(
+                        f"{base}/open-api/v1/upload/status",
+                        params=signed_params,
+                    )
+                    response.raise_for_status()
+                    return response.json()
+            except Exception as exc:
+                last_exc = exc
+                if idx < len(candidates) - 1:
+                    logger.warning(
+                        "fetch_upload_status via %s failed (%s)，回退到 %s 重试",
+                        base,
+                        exc,
+                        candidates[idx + 1],
+                    )
+                    continue
+                raise
+        # 理论上不会走到这里
+        assert last_exc is not None
+        raise last_exc
 
     async def fetch_upload_metrics(self, task_id: str | None = None, external_id: str | None = None) -> dict:
         """查询上传任务各渠道视频指标"""
@@ -430,6 +458,37 @@ class ExtPubAPIClient:
 # 每条 channel_status 的 _source 字段值
 _SOURCE_OPENAPI = "openapi"
 _SOURCE_EXT_PUB = "ext_pub"
+
+# 下游限流：100 req/min。进程级 lock + 最小间隔 0.6s 保证：
+#   1. 同一时刻只有一个 publish HTTP 请求在飞
+#   2. 即使每个请求秒级返回，QPS 上限也是 ~1.67/s = 100/min
+# 注意：asyncio.Lock 只在单进程内生效；多 worker 部署需要 Redis / DB 锁。
+_PUBLISH_HTTP_LOCK = asyncio.Lock()
+_PUBLISH_MIN_INTERVAL_SEC = 0.6
+_last_publish_call_at: float = 0.0
+
+
+class _PublishSlot:
+    """``async with _PublishSlot():`` 拿到一个发布 HTTP 槽位：
+
+    入口阻塞直到拿到全局锁，再保证距离上次发布间隔 ≥ _PUBLISH_MIN_INTERVAL_SEC。
+    退出时记录"本次开始时间"作为下次的基准。
+    """
+
+    async def __aenter__(self) -> "_PublishSlot":
+        global _last_publish_call_at
+        import time as _time
+        await _PUBLISH_HTTP_LOCK.acquire()
+        elapsed = _time.monotonic() - _last_publish_call_at
+        if elapsed < _PUBLISH_MIN_INTERVAL_SEC:
+            wait = _PUBLISH_MIN_INTERVAL_SEC - elapsed
+            logger.debug("[publish-slot] pacing: sleep %.2fs", wait)
+            await asyncio.sleep(wait)
+        _last_publish_call_at = _time.monotonic()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        _PUBLISH_HTTP_LOCK.release()
 
 # 终态集合
 _TERMINAL_STATUSES = {"completed", "published", "failed"}
@@ -682,7 +741,9 @@ class OpenAPIAdapter(PublishAdapter):
             data.sub_task_id,
             _payload_for_log(api_payload),
         )
-        response = await self.client.create_upload_task(api_payload)
+        # 进程级串行 + 节流，避免触发下游 100 req/min 限流
+        async with _PublishSlot():
+            response = await self.client.create_upload_task(api_payload)
         if response.get("code") != 0:
             raise ValueError(response.get("message", "Open API 返回错误"))
 
@@ -814,20 +875,22 @@ class ExtPubAdapter(PublishAdapter):
             data.sub_task_id, _payload_for_log(api_payload),
         )
 
-        try:
-            response = await self.client.create_post(api_payload)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 400:
-                raise
-            logger.info(
-                "ExtPubAdapter.submit: create_post 400, probing existing business_id=%s",
-                api_payload["business_id"],
-            )
+        # 进程级串行 + 节流，避免触发下游 100 req/min 限流（含 400 fallback 的两次调用）
+        async with _PublishSlot():
             try:
-                response = await self.client.fetch_post_detail(api_payload["business_id"])
-                logger.info("ExtPubAdapter.submit: found existing post for business_id=%s", api_payload["business_id"])
-            except Exception:
-                raise exc
+                response = await self.client.create_post(api_payload)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 400:
+                    raise
+                logger.info(
+                    "ExtPubAdapter.submit: create_post 400, probing existing business_id=%s",
+                    api_payload["business_id"],
+                )
+                try:
+                    response = await self.client.fetch_post_detail(api_payload["business_id"])
+                    logger.info("ExtPubAdapter.submit: found existing post for business_id=%s", api_payload["business_id"])
+                except Exception:
+                    raise exc
         logger.info("ExtPubAdapter.submit response: %s", response)
 
         response_data = response if isinstance(response, dict) else {}
@@ -1010,6 +1073,10 @@ class VideoPublicationService:
             promotion_code = None
             promotion_code_acquired_for_publication = False
         publication_committed = False
+
+        # GCS 视频链发出去之前续签，给外部平台留足 7 天拉取窗口
+        from app.utils.gcs_signing import refresh_publish_data_urls
+        refresh_publish_data_urls(data)
 
         # 记录完整请求负载（用于 audit / 重试）：结构与发到 Open API 的实际 body 一致，
         # 仅 channels 保留含 channel_source 的完整 dict 以便 retry 路由识别
@@ -1226,6 +1293,9 @@ class VideoPublicationService:
             tags=payload.get("tags"),
             channels=retry_channels,
         )
+        # GCS 视频链发出去之前续签
+        from app.utils.gcs_signing import refresh_publish_data_urls
+        refresh_publish_data_urls(data)
         ext_channels = [c for c in data.channels if c.get("channel_source") == "ext_pub"]
         openapi_channels = [c for c in data.channels if c.get("channel_source") != "ext_pub"]
 
@@ -1500,6 +1570,9 @@ class VideoPublicationService:
             tags=payload.get("tags"),
             channels=retry_channels,
         )
+        # GCS 视频链发出去之前续签
+        from app.utils.gcs_signing import refresh_publish_data_urls
+        refresh_publish_data_urls(data)
 
         logger.info(
             "retry_publication_channel start: publication_id=%s sub_task_id=%s "
@@ -1813,7 +1886,7 @@ class VideoPublicationService:
         if query.unclassified:
             stmt = stmt.where(VideoClassification.id.is_(None))
         elif query.category_indices:
-            stmt = stmt.where(VideoClassification.category_index.in_(query.category_indices))
+            stmt = stmt.where(VideoClassification.category_key.in_(query.category_indices))
         if query.promotion_code_filter == "with":
             stmt = stmt.where(VideoPublication.promotion_code.is_not(None))
         elif query.promotion_code_filter == "without":
@@ -1913,7 +1986,8 @@ class VideoPublicationService:
             total_comments=total_comments,
             total_shares=total_shares,
             avg_view_percentage=(sum(view_percentage_values) / len(view_percentage_values)) if view_percentage_values else None,
-            category_index=getattr(classification, "category_index", None),
+            kol_link_clicks=publication.kol_link_clicks,
+            category_key=getattr(classification, "category_key", None),
             category_label=_classification_label(classification),
             major_category=getattr(classification, "major_category", None),
             created_at=publication.created_at,

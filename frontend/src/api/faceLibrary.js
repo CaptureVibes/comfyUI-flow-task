@@ -1,8 +1,13 @@
 import http from './http'
 
-export async function fetchTagsWithFaces() {
-  const res = await http.get('/face-library')
+export async function fetchTagsWithFaces({ page = 1, pageSize = 20 } = {}) {
+  const res = await http.get('/face-library', { params: { page, page_size: pageSize } })
   return res.data
+}
+
+export async function fetchPendingFaceCount() {
+  const res = await http.get('/face-library/pending-count')
+  return res.data.count
 }
 
 export async function triggerFaceSelection(tagId) {

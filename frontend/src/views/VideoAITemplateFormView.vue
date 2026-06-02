@@ -17,8 +17,8 @@
             <div class="vtfd-player-wrap" :class="{ 'vtfd-player-wrap-empty': !selectedVideoSource }">
               <template v-if="selectedVideoSource">
                 <video
-                  v-if="selectedVideoSource.local_video_url || selectedVideoSource.video_url"
-                  :src="selectedVideoSource.local_video_url || selectedVideoSource.video_url"
+                  v-if="selectedVideoSource.local_video_url || selectedVideoSource.local_gcs_video_url || selectedVideoSource.video_url"
+                  :src="selectedVideoSource.local_video_url || selectedVideoSource.local_gcs_video_url || selectedVideoSource.video_url"
                   controls
                   class="vtfd-video"
                 />
@@ -275,6 +275,69 @@
             </div>
           </div>
 
+          <!-- Stage 2.5: 8 拼图 lookbook + 重洗 -->
+          <div v-if="lookbooks.length > 0" class="vtfd-section" style="margin-bottom:20px">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag vtfd-stage-tag">阶段2.5 8 拼图生成与拆分</span>
+              <span class="vtfd-section-count">{{ lookbooks.length }} 个 lookbook · 已重洗 {{ remixCount }} 次</span>
+            </div>
+            <LookbookViewer
+              v-for="lb in lookbooks"
+              :key="`lb-${lb.outfit_index}`"
+              :outfit-index="lb.outfit_index"
+              :lookbook="lb"
+              :remixing-panel="remixingPanel?.outfit_index === lb.outfit_index ? remixingPanel.panel_index : null"
+              :regenerating="regeneratingOutfitIndex === lb.outfit_index"
+              @remix="handleRemix"
+              @regenerate="handleRegenerateLookbook"
+            />
+          </div>
+
+          <!-- Stage 2.5: 重洗记录表 -->
+          <div v-if="remixHistory.length > 0" class="vtfd-section" style="margin-bottom:20px">
+            <div class="vtfd-section-header">
+              <span class="vtfd-section-tag vtfd-stage-tag">模板重洗记录</span>
+              <span class="vtfd-section-count">{{ remixHistory.length }}</span>
+            </div>
+            <el-table :data="[...remixHistory].reverse()" size="small" border>
+              <el-table-column type="index" label="#" width="50" />
+              <el-table-column label="造型" width="80">
+                <template #default="{ row }">
+                  {{ String((row.outfit_index ?? 0) + 1).padStart(2, '0') }} - panel_{{ row.panel_index }}
+                </template>
+              </el-table-column>
+              <el-table-column label="使用图" width="100">
+                <template #default="{ row }">
+                  <el-image
+                    v-if="row.panel_image_url"
+                    :src="row.panel_image_url"
+                    fit="cover"
+                    style="width:48px;height:48px;border-radius:4px"
+                    preview-teleported
+                    :preview-src-list="[row.panel_image_url]"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column prop="started_at" label="开始时间" width="180">
+                <template #default="{ row }">{{ formatDt(row.started_at) }}</template>
+              </el-table-column>
+              <el-table-column prop="completed_at" label="完成时间" width="180">
+                <template #default="{ row }">{{ formatDt(row.completed_at) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <span :class="['vtfd-remix-status', `vtfd-remix-${row.status}`]">{{ remixStatusLabel(row.status) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="error_message" label="备注">
+                <template #default="{ row }">
+                  <span v-if="row.error_message" style="color:#dc2626">{{ row.error_message }}</span>
+                  <span v-else-if="row.status === 'success'" style="color:#15803d">已生成 {{ row.downstream_result?.final_outfits?.length || 0 }} 个新造型图</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+
           <!-- Stage 3: 单品图 + 商品匹配 -->
           <div v-if="productOutfits.length > 0" class="vtfd-section vtfd-section-images" style="margin-bottom:20px">
             <div class="vtfd-section-header">
@@ -513,10 +576,14 @@ import {
   resumeVideoAITemplate,
   startVideoAITemplate,
   uploadShotImage,
+  fetchTemplateLookbooks,
+  remixTemplate,
+  regenerateOutfitLookbook,
 } from '../api/video_ai_templates'
 import { fetchVideoSources } from '../api/video_sources'
 import { isDuplicateRequestError } from '../api/http'
 import { renderMarkdown } from '../utils/markdown'
+import LookbookViewer from '../components/LookbookViewer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -543,12 +610,16 @@ const isPromptEditMode = ref(false)
 const isPromptEdited = ref(false)
 
 const form = reactive({
+  id: null,
   title: '',
   description: '',
   video_source_id: null,
   prompt_description: '',
   extracted_shots: null,
   extra: null,
+  lookbooks: [],
+  remix_history: [],
+  remix_count: 0,
 })
 
 const rules = {
@@ -563,6 +634,11 @@ const extractedShots = computed(() => form.extracted_shots || [])
 const frameShots = computed(() => form.extra?.frame_shots || [])
 const outfitShots = computed(() => form.extra?.outfit_shots || [])
 const finalOutfits = computed(() => form.extra?.final_outfits || [])
+
+// 阶段 2.5 状态：从顶层字段读，不在 extra 里
+const lookbooks = computed(() => form.lookbooks || [])
+const remixHistory = computed(() => form.remix_history || [])
+const remixCount = computed(() => form.remix_count || 0)
 const intentJson = computed(() => {
   const v = form.extra?.intent_json
   return v && typeof v === 'object' && Object.keys(v).length > 0 ? v : null
@@ -589,6 +665,7 @@ const isProductSearchProcessing = computed(() =>
 const isProcessing = computed(() =>
   templateStatus.value && [
     'pending', 'understanding', 'imagegen', 'outfit_selecting',
+    'lookbook_gen', 'remixing',
     'outfit_detailing', 'product_imagegen', 'outfit_regen',
   ].includes(templateStatus.value)
 )
@@ -600,6 +677,8 @@ const progressPercentage = computed(() => {
     understanding: 15,
     imagegen: 30,
     outfit_selecting: 45,
+    lookbook_gen: 55,
+    remixing: 70,
     outfit_detailing: 60,
     product_imagegen: 75,
     outfit_regen: 90,
@@ -623,6 +702,8 @@ const progressText = computed(() => {
     understanding: 'AI 正在理解视频内容...',
     imagegen: '正在抽帧并上传 CDN...',
     outfit_selecting: 'AI 正在识别 Unique 穿搭...',
+    lookbook_gen: '正在生成 4×2 八拼图并切割 panel...',
+    remixing: '正在跑下游 (单 panel 重洗)...',
     outfit_detailing: 'AI 正在分析穿搭单品...',
     product_imagegen: '正在生成单品图...',
     outfit_regen: '正在生成新造型图...',
@@ -642,6 +723,8 @@ function statusLabel(status) {
     understanding: '理解中',
     imagegen: '抽帧中',
     outfit_selecting: '识别穿搭',
+    lookbook_gen: '生成八拼图',
+    remixing: '重洗中',
     outfit_detailing: '分析单品',
     product_imagegen: '生成单品图',
     outfit_regen: '生成造型图',
@@ -787,6 +870,9 @@ async function pollState() {
     errorMessage.value = state.error_message || ''
     completedStages.value = state.completed_stages || []
 
+    // 同步阶段 2.5 lookbook 状态
+    await reloadLookbooks()
+
     if (['success', 'fail', 'paused'].includes(state.status)) {
       stopPolling()
     }
@@ -864,6 +950,71 @@ async function handleRestartStage2() {
   }
 }
 
+// ── 阶段 2.5 重洗 / 重生成 lookbook ──────────────────────────────────────
+const remixingPanel = ref(null) // {outfit_index, panel_index} | null
+const regeneratingOutfitIndex = ref(null)
+
+async function reloadLookbooks() {
+  if (!form.id) return
+  try {
+    const data = await fetchTemplateLookbooks(form.id)
+    form.lookbooks = data.lookbooks || []
+    form.remix_history = data.remix_history || []
+    form.remix_count = data.remix_count || 0
+    templateStatus.value = data.process_status || templateStatus.value
+  } catch (err) {
+    console.warn('reloadLookbooks failed', err)
+  }
+}
+
+async function handleRemix({ outfitIndex, panelIndex }) {
+  if (remixingPanel.value) return
+  remixingPanel.value = { outfit_index: outfitIndex, panel_index: panelIndex }
+  try {
+    const result = await remixTemplate(form.id, {
+      outfit_index: outfitIndex,
+      panel_index: panelIndex,
+    })
+    ElMessage.success(`已触发重洗：造型 ${outfitIndex + 1} / panel ${panelIndex}（下游正在跑）`)
+    await reloadLookbooks()
+    startPolling()  // 让 polling 刷新 remix_history 的 status
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '重洗失败')
+  } finally {
+    remixingPanel.value = null
+  }
+}
+
+async function handleRegenerateLookbook(outfitIndex) {
+  if (regeneratingOutfitIndex.value !== null) return
+  regeneratingOutfitIndex.value = outfitIndex
+  ElMessage.info('正在重生成 lookbook，请稍候…')
+  try {
+    const data = await regenerateOutfitLookbook(form.id, outfitIndex)
+    form.lookbooks = data.lookbooks || []
+    form.remix_history = data.remix_history || []
+    form.remix_count = data.remix_count || 0
+    ElMessage.success(`造型 ${outfitIndex + 1} 的 lookbook 已重生成`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '重生成失败')
+  } finally {
+    regeneratingOutfitIndex.value = null
+  }
+}
+
+function remixStatusLabel(status) {
+  return { running: '进行中', success: '成功', failed: '失败' }[status] || status
+}
+
+function formatDt(iso) {
+  if (!iso) return '-'
+  try {
+    return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+  } catch {
+    return iso
+  }
+}
+
 // Shot upload
 function triggerUpload() {
   fileInputRef.value?.click()
@@ -931,18 +1082,22 @@ async function loadData() {
   try {
     const data = await fetchVideoAITemplate(route.params.id)
     Object.assign(form, {
+      id: data.id,
       title: data.title,
       description: data.description,
       video_source_id: data.video_source_id,
       prompt_description: data.prompt_description ?? '',
       extracted_shots: data.extracted_shots,
       extra: data.extra || null,
+      lookbooks: data.lookbooks || [],
+      remix_history: data.remix_history || [],
+      remix_count: data.remix_count || 0,
     })
     templateTags.value = data.tags || []
     templateStatus.value = data.process_status
     errorMessage.value = data.process_error || ''
 
-    if (['pending', 'understanding', 'imagegen', 'outfit_selecting', 'outfit_detailing', 'product_imagegen', 'outfit_regen'].includes(data.process_status)) {
+    if (['pending', 'understanding', 'imagegen', 'outfit_selecting', 'lookbook_gen', 'remixing', 'outfit_detailing', 'product_imagegen', 'outfit_regen'].includes(data.process_status)) {
       startPolling()
     }
   } catch (err) {

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,7 @@ from app.core.security import TokenData, get_current_user
 from app.db.session import SessionLocal, get_db
 from app.models.face_photo import FacePhoto
 from app.models.tag import Tag, VideoSourceTag
-from app.schemas.face_photo import FacePhotoRead, TagWithFaceRead
+from app.schemas.face_photo import FacePhotoRead, TagWithFacePageResponse, TagWithFaceRead
 from app.services import face_select_service
 
 logger = logging.getLogger("app.face_library")
@@ -20,27 +20,36 @@ logger = logging.getLogger("app.face_library")
 router = APIRouter(prefix="/face-library", tags=["face-library"])
 
 
-@router.get("", response_model=list[TagWithFaceRead])
+@router.get("", response_model=TagWithFacePageResponse)
 async def list_tags_with_faces(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     token: TokenData = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
-) -> list[TagWithFaceRead]:
-    """列出当前用户的所有标签，附带人脸照片（如有）和视频数量。"""
+) -> TagWithFacePageResponse:
+    """列出当前用户的所有标签，附带人脸照片（如有）和视频数量，支持分页。"""
     owner_id: uuid.UUID | None = None if token.is_admin else token.user_id
 
-    # 查询 tags
+    # 查询 tags 总数
+    count_base = select(func.count(Tag.id))
+    if owner_id is not None:
+        count_base = count_base.where(Tag.owner_id == owner_id)
+    total: int = (await session.scalar(count_base)) or 0
+
+    # 查询当前页 tags
     stmt = select(Tag).order_by(Tag.created_at.asc())
     if owner_id is not None:
         stmt = stmt.where(Tag.owner_id == owner_id)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     tags = (await session.execute(stmt)).scalars().all()
 
     if not tags:
-        return []
+        return TagWithFacePageResponse(total=total, page=page, page_size=page_size, items=[])
 
     tag_ids = [t.id for t in tags]
 
     # 查询每个 tag 的视频数量
-    count_stmt = (
+    cnt_stmt = (
         select(VideoSourceTag.tag_id, func.count(VideoSourceTag.id).label("cnt"))
         .where(
             VideoSourceTag.tag_id.in_(tag_ids),
@@ -48,7 +57,7 @@ async def list_tags_with_faces(
         )
         .group_by(VideoSourceTag.tag_id)
     )
-    count_rows = (await session.execute(count_stmt)).all()
+    count_rows = (await session.execute(cnt_stmt)).all()
     video_count_map: dict[uuid.UUID, int] = {row.tag_id: row.cnt for row in count_rows}
 
     # 查询每个 tag 的人脸照片（每个 tag 最多一条）
@@ -56,7 +65,7 @@ async def list_tags_with_faces(
     face_rows = (await session.execute(face_stmt)).scalars().all()
     face_map: dict[uuid.UUID, FacePhoto] = {fp.tag_id: fp for fp in face_rows}
 
-    result: list[TagWithFaceRead] = []
+    items: list[TagWithFaceRead] = []
     for tag in tags:
         fp = face_map.get(tag.id)
         face_photo_read = (
@@ -65,11 +74,24 @@ async def list_tags_with_faces(
                 tag_id=str(fp.tag_id),
                 face_photo_url=fp.face_photo_url,
                 frame_index=fp.frame_index,
+                classification_status=fp.classification_status,
+                classification_error=fp.classification_error,
+                classification_model=fp.classification_model,
+                classified_at=fp.classified_at,
+                gender=fp.gender,
+                ethnicity=fp.ethnicity,
+                age_estimate=fp.age_estimate,
+                age_range=fp.age_range,
+                beauty_percentile=fp.beauty_percentile,
+                beauty_level=fp.beauty_level,
+                memorability_percentile=fp.memorability_percentile,
+                memorability_level=fp.memorability_level,
+                notes=fp.notes,
                 created_at=fp.created_at,
             )
             if fp else None
         )
-        result.append(
+        items.append(
             TagWithFaceRead(
                 id=str(tag.id),
                 name=tag.name,
@@ -80,7 +102,47 @@ async def list_tags_with_faces(
             )
         )
 
-    return result
+    return TagWithFacePageResponse(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.get("/pending-count")
+async def get_pending_face_count(
+    token: TokenData = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """返回尚未生成人脸且有关联视频的标签数量（用于"一键生成人脸"按钮展示）。"""
+    owner_id: uuid.UUID | None = None if token.is_admin else token.user_id
+
+    tag_stmt = select(Tag.id)
+    if owner_id is not None:
+        tag_stmt = tag_stmt.where(Tag.owner_id == owner_id)
+    all_tag_ids = [row[0] for row in (await session.execute(tag_stmt)).fetchall()]
+
+    if not all_tag_ids:
+        return {"count": 0}
+
+    existing_face_stmt = select(FacePhoto.tag_id).where(FacePhoto.tag_id.in_(all_tag_ids))
+    existing_face_tag_ids = set(
+        row[0] for row in (await session.execute(existing_face_stmt)).fetchall()
+    )
+
+    has_video_stmt = (
+        select(VideoSourceTag.tag_id)
+        .where(
+            VideoSourceTag.tag_id.in_(all_tag_ids),
+            VideoSourceTag.video_source_id.isnot(None),
+        )
+        .distinct()
+    )
+    has_video_tag_ids = set(
+        row[0] for row in (await session.execute(has_video_stmt)).fetchall()
+    )
+
+    count = sum(
+        1 for tid in all_tag_ids
+        if tid not in existing_face_tag_ids and tid in has_video_tag_ids
+    )
+    return {"count": count}
 
 
 @router.post("/tags/{tag_id}/select-face")

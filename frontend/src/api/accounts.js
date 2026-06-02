@@ -93,6 +93,11 @@ export async function bulkRestartAIAccountGeneration(accountIds) {
   return res.data
 }
 
+export async function retryKolProvision(accountId) {
+  const { data } = await http.post(`/accounts/${accountId}/kol/retry`)
+  return data
+}
+
 // 账号-标签绑定
 export async function fetchAccountTags(accountId) {
   const { data } = await http.get(`/accounts/${accountId}/tags`)
@@ -126,22 +131,32 @@ function _normalizeFilters(filters = {}) {
   }
 }
 
-export async function autoSupplementTemplates(accountIds, targetVideoCount = 10, filters = {}) {
-  const { data } = await http.post('/accounts/auto-supplement-templates', {
-    account_ids: accountIds,
+export async function autoSupplementTemplates(accountIds, targetVideoCount = 10, filters = {}, accountListFilters = null) {
+  const payload = {
     target_video_count: targetVideoCount,
     filters: _normalizeFilters(filters),
-  })
+  }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (accountListFilters) {
+    payload.account_list_filters = accountListFilters
+  }
+  const { data } = await http.post('/accounts/auto-supplement-templates', payload)
   return data
 }
 
-export async function supplementTemplates(accountIds, templateType = 'shared', targetVideoCount = 10, filters = {}) {
-  const { data } = await http.post('/accounts/supplement-templates', {
-    account_ids: accountIds,
+export async function supplementTemplates(accountIds, templateType = 'shared', targetVideoCount = 10, filters = {}, accountListFilters = null) {
+  const payload = {
     template_type: templateType,
     target_video_count: targetVideoCount,
     filters: _normalizeFilters(filters),
-  })
+  }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (accountListFilters) {
+    payload.account_list_filters = accountListFilters
+  }
+  const { data } = await http.post('/accounts/supplement-templates', payload)
   return data
 }
 
@@ -151,14 +166,26 @@ export async function bulkGenerateVideoTasks(
   limit = 0,
   subtaskCount = 3,
   fillMode = 'count',
+  filters = null,
 ) {
-  const { data } = await http.post('/accounts/bulk-generate-video-tasks', {
-    account_ids: accountIds,
-    mode,
-    limit,
-    subtask_count: subtaskCount,
-    fill_mode: fillMode,
-  })
+  const payload = { mode, limit, subtask_count: subtaskCount, fill_mode: fillMode }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (filters) {
+    payload.filters = filters
+  }
+  const { data } = await http.post('/accounts/bulk-generate-video-tasks', payload)
+  return data
+}
+
+export async function bulkUpdateScheduledPublish(accountIds, config, filters = null) {
+  const payload = { config }
+  if (accountIds && accountIds.length > 0) {
+    payload.account_ids = accountIds
+  } else if (filters) {
+    payload.filters = filters
+  }
+  const { data } = await http.post('/accounts/bulk-update-scheduled-publish', payload)
   return data
 }
 
@@ -227,8 +254,14 @@ export async function retryAccountClassificationFailed(accountId) {
   return data
 }
 
-export async function batchClassifyVideos(ids, force = false) {
-  const { data } = await http.post('/accounts/batch-classify-videos', { ids, force })
+export async function batchClassifyVideos(ids, force = false, accountListFilters = null) {
+  const payload = { force }
+  if (ids && ids.length > 0) {
+    payload.ids = ids
+  } else if (accountListFilters) {
+    payload.account_list_filters = accountListFilters
+  }
+  const { data } = await http.post('/accounts/batch-classify-videos', payload)
   return data
 }
 
@@ -240,5 +273,12 @@ export async function previewTierEvaluation() {
 
 export async function applyTierEvaluation(changes) {
   const { data } = await http.post('/accounts/tier-evaluation/apply', { changes })
+  return data
+}
+
+export async function fetchChannelAnalytics(accountId, { platform, startDate, endDate }) {
+  const { data } = await http.get(`/accounts/${accountId}/channel-analytics`, {
+    params: { platform, start_date: startDate, end_date: endDate },
+  })
   return data
 }

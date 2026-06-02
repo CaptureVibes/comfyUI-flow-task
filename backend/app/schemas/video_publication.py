@@ -134,7 +134,8 @@ class VideoPublicationStatsListItem(BaseModel):
     total_comments: int = 0
     total_shares: int = 0
     avg_view_percentage: float | None = None
-    category_index: int | None = None
+    kol_link_clicks: int | None = None
+    category_key: str | None = None
     category_label: str | None = None
     major_category: str | None = None
     created_at: datetime | None = None
@@ -154,7 +155,7 @@ class VideoPublicationStatsQuery(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     keyword: str | None = None
-    category_indices: list[int] | None = None
+    category_indices: list[str] | None = None
     unclassified: bool = False
     promotion_code_filter: str | None = None  # 'with' | 'without' | None
     sort_by: str = "published_at"
@@ -164,7 +165,15 @@ class VideoPublicationStatsQuery(BaseModel):
 
 
 class VideoPublicationStatusUpdate(BaseModel):
-    """更新发布任务状态（用于回调）"""
+    """更新发布任务状态（用于回调）
+
+    兼容两种回调来源：
+    - B 侧（callback.echooo.link）：带 timestamp/signature 等签名字段
+    - C 侧 RPA（rpa-linux1:3001）：不带签名字段，body 是完整 task 对象
+      （额外字段如 client_id / video_url / channels[].real_channel_id /
+      channels[].route / channels[].job_id / channels[].b_task_id 等
+      通过 channels: list[dict] passthrough 兼容，model_config 默认 ignore extra）
+    """
     task_id: str  # Open API task_id
     external_id: str | None = None
     status: str
@@ -173,4 +182,4 @@ class VideoPublicationStatusUpdate(BaseModel):
     failed_channels: int | None = None
     channels: list[dict] | None = None
     completed_at: datetime | None = None
-    timestamp: int
+    timestamp: int | None = None  # B 侧带，C 侧不带

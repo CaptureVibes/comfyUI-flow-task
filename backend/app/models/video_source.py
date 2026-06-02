@@ -26,6 +26,7 @@ class VideoSource(Base):
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     local_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_gcs_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     download_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default="idle")
     view_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     like_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

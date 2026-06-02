@@ -7,7 +7,8 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import exists, select
+from pydantic import BaseModel
+from sqlalchemy import exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,7 @@ from app.services.channel_status_poller import (
 )
 from app.services.kol_service import build_long_link, encode_short_link
 from app.schemas.account import (
+    ExternalAIAccountStatsResponse,
     ExternalBindOpenAPIChannelBody,
     ExternalBindOpenAPIChannelResponse,
     ExternalAIAccountCandidateItem,
@@ -155,6 +157,7 @@ async def reserve_ai_accounts_for_channel_openapi(
         .where(Account.owner_id == owner_id)
         .where(Account.gender == body.gender)
         .where(Account.ai_generation_status == "completed")
+        .where(Account.hidden == False)  # noqa: E712
         .where(
             ~exists()
             .where(AccountChannelReservation.account_id == Account.id)
@@ -385,3 +388,81 @@ async def release_channel_reservation_openapi(
     await session.delete(reservation)
     await session.commit()
     return {"account_id": str(body.account_id), "platform": body.platform, "released": True}
+
+
+class _AIAccountStatsBody(BaseModel):
+    api_key: str = ""
+    owner_id: uuid.UUID | None = None
+
+
+@router.post("/stats", response_model=ExternalAIAccountStatsResponse)
+async def get_ai_account_stats(
+    body: _AIAccountStatsBody,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_db),
+) -> ExternalAIAccountStatsResponse:
+    """返回 AI 博主账号统计数据（总量、各平台绑定量、未绑定量、可绑定量）。"""
+    logger.info(
+        "get_ai_account_stats request: owner_id=%s api_key_header=%s api_key_body=%s",
+        body.owner_id,
+        _mask_api_key(x_api_key),
+        _mask_api_key(body.api_key),
+    )
+    _verify_api_key(body.api_key, x_api_key)
+    owner_id = _resolve_owner_id(body.owner_id)
+
+    # 总数
+    total: int = await session.scalar(
+        select(func.count()).select_from(Account).where(Account.owner_id == owner_id)
+    ) or 0
+
+    # 各平台绑定数（bound 状态的 reservation）
+    def _bound_count_stmt(platform: str):
+        return (
+            select(func.count())
+            .select_from(Account)
+            .where(Account.owner_id == owner_id)
+            .where(
+                exists(
+                    select(AccountChannelReservation.id)
+                    .where(AccountChannelReservation.account_id == Account.id)
+                    .where(AccountChannelReservation.platform == platform)
+                    .where(AccountChannelReservation.status == "bound")
+                )
+            )
+        )
+
+    bound_tiktok: int = await session.scalar(_bound_count_stmt("tiktok")) or 0
+    bound_youtube: int = await session.scalar(_bound_count_stmt("youtube")) or 0
+    bound_instagram: int = await session.scalar(_bound_count_stmt("instagram")) or 0
+
+    # 未绑定任一平台：没有任何 bound reservation
+    has_any_bound = exists(
+        select(AccountChannelReservation.id)
+        .where(AccountChannelReservation.account_id == Account.id)
+        .where(AccountChannelReservation.status == "bound")
+    )
+    unbound: int = await session.scalar(
+        select(func.count())
+        .select_from(Account)
+        .where(Account.owner_id == owner_id)
+        .where(~has_any_bound)
+    ) or 0
+
+    # 可被绑定：hidden=False 且未绑定任一平台
+    available: int = await session.scalar(
+        select(func.count())
+        .select_from(Account)
+        .where(Account.owner_id == owner_id)
+        .where(Account.hidden.is_(False))
+        .where(~has_any_bound)
+    ) or 0
+
+    return ExternalAIAccountStatsResponse(
+        total=total,
+        bound_tiktok=bound_tiktok,
+        bound_youtube=bound_youtube,
+        bound_instagram=bound_instagram,
+        unbound=unbound,
+        available=available,
+    )

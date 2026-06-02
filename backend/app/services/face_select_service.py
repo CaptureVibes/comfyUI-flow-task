@@ -14,12 +14,13 @@ import json
 import logging
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.face_photo import FacePhoto
 from app.models.tag import Tag, VideoSourceTag
 from app.models.video_source import VideoSource
+from app.services.face_classification_service import classify_face_photo
 from app.services.pipeline_settings_service import get_or_create_pipeline_settings
 from app.services.video_ai_service import _extract_frames, _upload_frame_to_cdn
 
@@ -50,20 +51,21 @@ async def select_face_for_tag(
     if not is_admin and owner_uuid is not None and tag.owner_id != owner_uuid:
         raise RuntimeError("无权操作此标签")
 
-    # 2. 随机获取一个关联视频的 local_video_url（CDN）
+    # 2. 随机获取一个关联视频；优先 local_video_url，回退 local_gcs_video_url
     stmt = (
-        select(VideoSource.local_video_url)
+        select(VideoSource.local_video_url, VideoSource.local_gcs_video_url)
         .join(VideoSourceTag, VideoSourceTag.video_source_id == VideoSource.id)
         .where(VideoSourceTag.tag_id == tag_uuid)
-        .where(VideoSource.local_video_url.isnot(None))
+        .where(or_(VideoSource.local_video_url.isnot(None), VideoSource.local_gcs_video_url.isnot(None)))
         .order_by(func.random())
         .limit(1)
     )
-    video_url = await session.scalar(stmt)
+    row = (await session.execute(stmt)).first()
+    video_url = (row[0] or row[1]) if row else None
     if not video_url:
-        raise RuntimeError("此标签下没有已上传CDN的关联视频")
+        raise RuntimeError("此标签下没有已上传的关联视频")
 
-    logger.info("[人脸选择] tag_id=%s 选取视频 local_video_url=%s", tag_id, video_url[:80])
+    logger.info("[人脸选择] tag_id=%s 选取视频 url=%s", tag_id, video_url[:80])
 
     # 3. 抽帧（base64 data URL 列表）
     data_urls = await _extract_frames(video_url, tag_id)
@@ -150,5 +152,7 @@ async def select_face_for_tag(
     session.add(face_photo)
     await session.commit()
     await session.refresh(face_photo)
+
+    face_photo = await classify_face_photo(session, face_photo)
 
     return face_photo

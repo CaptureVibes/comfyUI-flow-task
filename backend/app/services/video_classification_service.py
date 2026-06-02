@@ -21,53 +21,80 @@ from app.models.video_source import VideoSource
 logger = logging.getLogger("app.video_classification")
 
 # =============================================================================
-# 14 个分类 → 4 大类
+# 分类体系：6 大类 × N 小类，用字符串 key 存储，与顺序解耦
 # =============================================================================
-
-_CATEGORIES: list[tuple[int, str, str]] = [
-    (0, "单套衣服展示美", "display"),
-    (1, "换装展示美", "display"),
-    (2, "镜头感或表演型展示美", "display"),
-    (3, "生活场景中的展示美", "display"),
-    (4, "单品语言讲解", "knowledge"),
-    (5, "造型选择或对比", "knowledge"),
-    (6, "搭配教程或方法论", "knowledge"),
-    (7, "单品展示无人讲解", "knowledge"),
-    (8, "单品展示字幕讲解", "knowledge"),
-    (9, "人生故事", "persona"),
-    (10, "人生阶段", "persona"),
-    (11, "个人态度表达", "persona"),
-    (12, "热门梗段子反转梗流行文案", "trending"),
-    (13, "明星影视综艺节日社会话题相关穿搭", "trending"),
+# 每条记录：(category_key, label, major_key)
+_CATEGORIES: list[tuple[str, str, str]] = [
+    # ── 美美展示类 ────────────────────────────────────────────────────────────
+    ("beauty_static_pose",    "静态 Pose / 镜头展示类",   "beauty"),
+    ("beauty_light_action",   "轻动作展示类",              "beauty"),
+    ("beauty_dance",          "音乐跳舞类",                "beauty"),
+    ("beauty_lipsync",        "歌曲对口型类",              "beauty"),
+    ("beauty_drama_light",    "影视 / 台词轻演绎类",       "beauty"),
+    # ── 穿搭方法类 ────────────────────────────────────────────────────────────
+    ("method_single_silent",  "不带语音单套逐件穿搭型",    "method"),
+    ("method_multi_look",     "不带语音多套完整 Look 切换型", "method"),
+    ("method_multi_build",    "不带语音多套逐件搭建型",    "method"),
+    ("method_base_replace",   "不带语音 Base Look 替换单品型", "method"),
+    ("method_multiway",       "不带语音单品多穿型",        "method"),
+    ("method_before_after",   "不带语音 Before & After 优化型", "method"),
+    ("method_compare",        "不带语音左右对比 / 并列对比型", "method"),
+    ("method_voice_formula",  "带语音公式规则讲解型",      "method"),
+    ("method_voice_steps",    "带语音步骤流程讲解型",      "method"),
+    ("method_voice_diagnose", "带语音问题诊断 / 优化讲解型", "method"),
+    ("method_voice_compare",  "带语音对比判断讲解型",      "method"),
+    ("method_voice_case",     "带语音案例拆解讲解型",      "method"),
+    ("method_voice_standard", "带语音选择标准讲解型",      "method"),
+    ("method_voice_system",   "带语音系统规划讲解型",      "method"),
+    # ── 购物决策类 ────────────────────────────────────────────────────────────
+    ("shopping_brand",        "品牌导向型",                "shopping"),
+    ("shopping_single_item",  "单品种草型",                "shopping"),
+    ("shopping_dupe",         "大牌平替 / Dupe 型",        "shopping"),
+    ("shopping_scene",        "场景需求型",                "shopping"),
+    ("shopping_list",         "清单合集型",                "shopping"),
+    ("shopping_compare",      "对比选择型",                "shopping"),
+    # ── 人设生活类 ────────────────────────────────────────────────────────────
+    ("lifestyle",             "人设生活类",                "lifestyle"),
+    # ── 情景剧情类 ────────────────────────────────────────────────────────────
+    ("drama",                 "情景剧情类",                "drama"),
+    # ── 不能分类 ─────────────────────────────────────────────────────────────
+    ("unclassifiable",        "不能分类",                  "unclassifiable"),
 ]
 
-CATEGORY_LABELS: dict[int, str] = {idx: label for idx, label, _ in _CATEGORIES}
-CATEGORY_MAJOR: dict[int, str] = {idx: major for idx, _, major in _CATEGORIES}
+# 快查表
+CATEGORY_LABELS: dict[str, str] = {key: label for key, label, _ in _CATEGORIES}
+CATEGORY_MAJOR: dict[str, str] = {key: major for key, _, major in _CATEGORIES}
 MAJOR_LABELS: dict[str, str] = {
-    "display": "展示美",
-    "knowledge": "知识",
-    "persona": "人设",
-    "trending": "热点",
+    "beauty":         "美美展示类",
+    "method":         "穿搭方法类",
+    "shopping":       "购物决策类",
+    "lifestyle":      "人设生活类",
+    "drama":          "情景剧情类",
+    "unclassifiable": "不能分类",
 }
 
+_ALL_KEYS: list[str] = [key for key, _, _ in _CATEGORIES]
+
 _DEFAULT_PROMPT = (
-    "你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下面 14 个分类中的哪一个，"
-    "只输出该分类的下标整数（0-13），不要输出任何额外文字。\n\n"
-    "分类列表：\n"
-    + "\n".join(f"{idx} - {label}（大类: {major}）" for idx, label, major in _CATEGORIES)
-    + "\n\n输出格式：JSON 对象 {\"category_index\": <整数>}"
+    "你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下列分类中的哪一个，"
+    "只输出对应的 category_key 字符串，不要输出任何额外文字。\n\n"
+    "分类列表（格式：key — 名称 [大类]）：\n"
+    + "\n".join(
+        f"{key} — {label} [{MAJOR_LABELS[major]}]"
+        for key, label, major in _CATEGORIES
+    )
+    + "\n\n输出格式：JSON 对象 {\"category_key\": \"<key>\"}"
 )
 
 _RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": {
-        "category_index": {
-            "type": "INTEGER",
-            "minimum": 0,
-            "maximum": 13,
+        "category_key": {
+            "type": "STRING",
+            "enum": _ALL_KEYS,
         }
     },
-    "required": ["category_index"],
+    "required": ["category_key"],
 }
 
 # =============================================================================
@@ -75,18 +102,25 @@ _RESPONSE_SCHEMA = {
 # =============================================================================
 
 _DEFAULT_MIN_SAMPLE = 3
-_DEFAULT_SINGLE_TOP1 = 0.5
-_DEFAULT_SINGLE_DIFF = 0.15
-_DEFAULT_DUAL_TOP1_LOWER = 0.35
-_DEFAULT_DUAL_TOP1_UPPER = 0.5
-_DEFAULT_DUAL_TOP2 = 0.2
-_MAJOR_KEYS = ("display", "knowledge", "persona", "trending")
+# 各大类独立单核心阈值（占比 >= 该值即判为单核心）
+_DEFAULT_MAJOR_THRESHOLDS: dict[str, float] = {
+    "beauty":    0.75,
+    "method":    0.60,
+    "shopping":  0.55,
+    "lifestyle": 0.55,
+    "drama":     0.65,
+}
+# 双核心：Top1+Top2 合计占比 >= 该值（且均未达各自单核心阈值）
+_DEFAULT_DUAL_COMBINED = 0.80
+# unclassifiable 不参与判断，排除在外
+_MAJOR_KEYS = ("beauty", "method", "shopping", "lifestyle", "drama", "unclassifiable")
+_RANKABLE_MAJOR_KEYS = ("beauty", "method", "shopping", "lifestyle", "drama")
 
 # =============================================================================
 # 队列 / 内存状态
 # =============================================================================
 
-_CONCURRENCY = 17          # 单账号内视频并发数
+_CONCURRENCY = 100         # 单账号内视频并发数
 _PERSIST_INTERVAL = 2.0
 
 classification_states: dict[str, dict] = {}
@@ -209,16 +243,19 @@ async def _classify_one(video_source_id: str) -> None:
         if row is None or vs is None:
             logger.warning("classification row or video_source missing: %s", video_source_id)
             return
-        if not vs.local_video_url:
+        # GCS 签名 URL 续签（过期前自动刷新）
+        from app.utils.gcs_signing import ensure_video_source_signed_urls
+        await ensure_video_source_signed_urls(session, vs)
+        local_url = vs.local_video_url or vs.local_gcs_video_url
+        if not local_url:
             row.status = "failed"
-            row.error_message = "缺少 local_video_url"
+            row.error_message = "缺少 local_video_url / local_gcs_video_url"
             row.classified_at = _utcnow()
             await session.commit()
-            _set_state(video_source_id, "failed", error="缺少 local_video_url")
+            _set_state(video_source_id, "failed", error="缺少 local_video_url / local_gcs_video_url")
             await _trigger_summary_for_video(vs_uuid)
             return
         owner_id = vs.owner_id
-        local_url = vs.local_video_url
         row.status = "processing"
         row.error_message = None
         await session.commit()
@@ -247,10 +284,10 @@ async def _classify_one(video_source_id: str) -> None:
             response_schema=_RESPONSE_SCHEMA,
             timeout=180.0,
         )
-        category_index = _parse_category_index(text)
-        major = CATEGORY_MAJOR.get(category_index)
+        category_key = _parse_category_key(text)
+        major = CATEGORY_MAJOR.get(category_key)
         if major is None:
-            raise ValueError(f"category_index 越界: {category_index}")
+            raise ValueError(f"未知 category_key: {category_key}")
 
         async with SessionLocal() as session:
             row = await session.scalar(
@@ -259,14 +296,14 @@ async def _classify_one(video_source_id: str) -> None:
             if row is None:
                 return
             row.status = "success"
-            row.category_index = category_index
+            row.category_key = category_key
             row.major_category = major
             row.raw_response = text[:8000] if text else None
             row.error_message = None
             row.classified_at = _utcnow()
             await session.commit()
         _set_state(video_source_id, "success")
-        logger.info("[classify] %s -> idx=%d major=%s", video_source_id, category_index, major)
+        logger.info("[classify] %s -> key=%s major=%s", video_source_id, category_key, major)
     except Exception as exc:
         err_text = str(exc)[:1000]
         logger.warning("[classify] %s failed: %s", video_source_id, err_text)
@@ -284,7 +321,10 @@ async def _classify_one(video_source_id: str) -> None:
     await _trigger_summary_for_video(vs_uuid)
 
 
-def _parse_category_index(text: str) -> int:
+_VALID_KEYS_SET: frozenset[str] = frozenset(_ALL_KEYS)
+
+
+def _parse_category_key(text: str) -> str:
     if not text:
         raise ValueError("Gemini 返回空响应")
     text = text.strip()
@@ -295,20 +335,18 @@ def _parse_category_index(text: str) -> int:
     try:
         obj = json.loads(text)
     except json.JSONDecodeError:
-        # 兜底：直接抓数字
+        # 兜底：直接在文本中找合法 key
         import re
-        match = re.search(r"category_index\D*(\d+)", text)
-        if match:
-            return int(match.group(1))
-        match = re.search(r"\b(\d{1,2})\b", text)
-        if match:
-            return int(match.group(1))
+        for key in _ALL_KEYS:
+            if re.search(r'\b' + re.escape(key) + r'\b', text):
+                return key
         raise ValueError(f"无法解析分类响应：{text[:200]}")
-    if isinstance(obj, dict) and "category_index" in obj:
-        return int(obj["category_index"])
-    if isinstance(obj, int):
-        return obj
-    raise ValueError(f"分类响应缺少 category_index：{text[:200]}")
+    if isinstance(obj, dict) and "category_key" in obj:
+        key = str(obj["category_key"]).strip()
+        if key not in _VALID_KEYS_SET:
+            raise ValueError(f"无效 category_key: {key}")
+        return key
+    raise ValueError(f"分类响应缺少 category_key：{text[:200]}")
 
 
 async def _trigger_summary_for_video(video_source_id: uuid.UUID) -> None:
@@ -345,8 +383,7 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
         rows = (await session.execute(
             select(
                 VideoClassification.status,
-                VideoClassification.major_category,
-                VideoClassification.category_index,
+                VideoClassification.category_key,
             )
             .join(VideoSource, VideoSource.id == VideoClassification.video_source_id)
             .join(
@@ -363,23 +400,36 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
         processing = sum(1 for r in rows if r.status == "processing")
 
         major_counts: dict[str, int] = {k: 0 for k in _MAJOR_KEYS}
-        category_counts: dict[int, int] = {idx: 0 for idx in CATEGORY_LABELS}
+        category_counts: dict[str, int] = {key: 0 for key in CATEGORY_LABELS}
         for r in rows:
-            if r.status == "success":
-                if r.major_category in major_counts:
-                    major_counts[r.major_category] += 1
-                if r.category_index is not None and r.category_index in category_counts:
-                    category_counts[r.category_index] += 1
+            if r.status == "success" and r.category_key:
+                major = CATEGORY_MAJOR.get(r.category_key)
+                if major and major in major_counts:
+                    major_counts[major] += 1
+                if r.category_key in category_counts:
+                    category_counts[r.category_key] += 1
 
-        # 大类占比：仅供饼图展示
+        # unclassifiable 不计入占比分母
+        unclassifiable_count = major_counts.get("unclassifiable", 0)
+        rankable_success = success - unclassifiable_count
+
+        # 大类占比（含 unclassifiable，供饼图展示，分母用全部 success）
         major_ratios: dict[str, float] = {}
         if success > 0:
             major_ratios = {k: round(v / success, 4) for k, v in major_counts.items()}
 
-        # 小类占比：用于 single/dual/chaos 聚合判断
+        # 可排名大类占比（排除 unclassifiable，分母为 rankable_success，供聚合判断）
+        rankable_ratios: dict[str, float] = {}
+        if rankable_success > 0:
+            rankable_ratios = {
+                k: round(major_counts.get(k, 0) / rankable_success, 4)
+                for k in _RANKABLE_MAJOR_KEYS
+            }
+
+        # 小类占比（供展示）
         category_ratios: dict[str, float] = {}
         if success > 0:
-            category_ratios = {str(k): round(v / success, 4) for k, v in category_counts.items()}
+            category_ratios = {k: round(v / success, 4) for k, v in category_counts.items()}
 
         account = await session.get(Account, account_id)
         if account is None:
@@ -392,15 +442,7 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
             cfg = None
         thresholds = _resolve_thresholds(cfg)
 
-        cls_type, primary_key, secondary_key = _classify_aggregation(category_ratios, success, thresholds)
-
-        def _key_to_label(key: str | None) -> str | None:
-            if key is None:
-                return None
-            try:
-                return CATEGORY_LABELS[int(key)]
-            except (ValueError, KeyError):
-                return key
+        cls_type, primary_key, secondary_key = _classify_aggregation(rankable_ratios, rankable_success, thresholds)
 
         summary = {
             "total": total,
@@ -409,14 +451,15 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
             "pending": pending,
             "processing": processing,
             "type": cls_type,
-            "primary": _key_to_label(primary_key),
-            "primary_index": int(primary_key) if primary_key is not None else None,
-            "secondary": _key_to_label(secondary_key),
-            "secondary_index": int(secondary_key) if secondary_key is not None else None,
+            "primary": MAJOR_LABELS.get(primary_key) if primary_key else None,
+            "primary_key": primary_key,
+            "secondary": MAJOR_LABELS.get(secondary_key) if secondary_key else None,
+            "secondary_key": secondary_key,
             "ratios": major_ratios,
+            "rankable_ratios": rankable_ratios,
             "counts": major_counts,
             "category_ratios": category_ratios,
-            "category_counts": {str(k): v for k, v in category_counts.items()},
+            "category_counts": category_counts,
             "thresholds": thresholds,
             "updated_at": _utcnow_iso(),
         }
@@ -428,22 +471,30 @@ async def _recompute_account_summary(account_id: uuid.UUID) -> None:
         await session.commit()
 
 
-def _resolve_thresholds(cfg: Any) -> dict[str, float]:
+def _resolve_thresholds(cfg: Any) -> dict[str, Any]:
+    def _f(attr: str, default: float) -> float:
+        return float(getattr(cfg, attr, default) or default)
+
     return {
         "min_sample": int(getattr(cfg, "classify_min_sample", _DEFAULT_MIN_SAMPLE) or _DEFAULT_MIN_SAMPLE),
-        "single_top1": float(getattr(cfg, "classify_single_top1_threshold", _DEFAULT_SINGLE_TOP1) or _DEFAULT_SINGLE_TOP1),
-        "single_diff": float(getattr(cfg, "classify_single_diff_threshold", _DEFAULT_SINGLE_DIFF) or _DEFAULT_SINGLE_DIFF),
-        "dual_top1_lower": float(getattr(cfg, "classify_dual_top1_lower", _DEFAULT_DUAL_TOP1_LOWER) or _DEFAULT_DUAL_TOP1_LOWER),
-        "dual_top1_upper": float(getattr(cfg, "classify_dual_top1_upper", _DEFAULT_DUAL_TOP1_UPPER) or _DEFAULT_DUAL_TOP1_UPPER),
-        "dual_top2": float(getattr(cfg, "classify_dual_top2_threshold", _DEFAULT_DUAL_TOP2) or _DEFAULT_DUAL_TOP2),
+        "major": {
+            major: _f(f"classify_{major}_threshold", _DEFAULT_MAJOR_THRESHOLDS[major])
+            for major in _RANKABLE_MAJOR_KEYS
+        },
+        "dual_combined": _f("classify_dual_combined_threshold", _DEFAULT_DUAL_COMBINED),
     }
 
 
 def _classify_aggregation(
-    ratios: dict[str, float],
+    major_ratios: dict[str, float],
     success_count: int,
-    thresholds: dict[str, float] | None = None,
+    thresholds: dict[str, Any] | None = None,
 ) -> tuple[str, str | None, str | None]:
+    """
+    按大类占比判断账号分类类型。
+    major_ratios: 仅含 _RANKABLE_MAJOR_KEYS（已排除 unclassifiable）的占比，总和 <= 1.0。
+    返回 (cls_type, primary_major_key, secondary_major_key)
+    """
     t = thresholds or _resolve_thresholds(None)
 
     if success_count == 0:
@@ -451,19 +502,26 @@ def _classify_aggregation(
     if success_count < t["min_sample"]:
         return ("insufficient", None, None)
 
-    sorted_pairs = sorted(ratios.items(), key=lambda kv: kv[1], reverse=True)
-    top1_key, p1 = sorted_pairs[0]
-    top2_key, p2 = sorted_pairs[1] if len(sorted_pairs) > 1 else (None, 0.0)
+    major_thresholds: dict[str, float] = t["major"]
 
-    # 单核心
-    if p1 >= t["single_top1"] or (p1 - p2) >= t["single_diff"]:
-        return ("single", top1_key, None)
+    # 只排名可计算的大类，按占比降序
+    ranked = sorted(
+        [(k, major_ratios.get(k, 0.0)) for k in _RANKABLE_MAJOR_KEYS],
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    top1_key, p1 = ranked[0]
+    top2_key, p2 = ranked[1] if len(ranked) > 1 else (None, 0.0)
 
-    # 双核心
+    # 单核心：任何大类占比 >= 该大类的阈值
+    for major_key, ratio in ranked:
+        if ratio >= major_thresholds.get(major_key, 1.0):
+            return ("single", major_key, None)
+
+    # 双核心：Top1+Top2 合计 >= dual_combined 且两者均未达各自阈值
     if (
-        t["dual_top1_lower"] <= p1 < t["dual_top1_upper"]
-        and p2 >= t["dual_top2"]
-        and (p1 - p2) < t["single_diff"]
+        top2_key is not None
+        and (p1 + p2) >= t["dual_combined"]
     ):
         return ("dual", top1_key, top2_key)
 
@@ -566,7 +624,7 @@ async def enqueue_account_classification(
         to_queue: list[uuid.UUID] = []
         skipped = 0
         for vs in videos:
-            if not vs.local_video_url:
+            if not (vs.local_video_url or vs.local_gcs_video_url):
                 skipped += 1
                 continue
             existing = existing_by_vs.get(vs.id)
@@ -583,7 +641,7 @@ async def enqueue_account_classification(
             else:
                 existing.status = "pending"
                 existing.error_message = None
-                existing.category_index = None
+                existing.category_key = None
                 existing.major_category = None
                 existing.classified_at = None
                 to_queue.append(vs.id)
@@ -676,16 +734,17 @@ async def get_account_classification_view(
 
     items: list[dict[str, Any]] = []
     for vs in videos:
+        playable_url = vs.local_video_url or vs.local_gcs_video_url
         row = by_vs.get(vs.id)
         if row is None:
-            status = "not_started" if vs.local_video_url else "no_local_video"
-            category_index = None
+            status = "not_started" if playable_url else "no_local_video"
+            cat_key = None
             major = None
             error = None
             classified_at = None
         else:
             status = row.status
-            category_index = row.category_index
+            cat_key = row.category_key
             major = row.major_category
             error = row.error_message
             classified_at = row.classified_at.isoformat() if row.classified_at else None
@@ -694,12 +753,13 @@ async def get_account_classification_view(
             "video_source_id": str(vs.id),
             "video_title": vs.video_title,
             "local_video_url": vs.local_video_url,
+            "local_gcs_video_url": vs.local_gcs_video_url,
             "blogger_name": vs.blogger_name,
             "tiktok_blogger_id": str(vs.tiktok_blogger_id) if vs.tiktok_blogger_id else None,
-            "has_local_video": bool(vs.local_video_url),
+            "has_local_video": bool(playable_url),
             "status": status,
-            "category_index": category_index,
-            "category_label": CATEGORY_LABELS.get(category_index) if category_index is not None else None,
+            "category_key": cat_key,
+            "category_label": CATEGORY_LABELS.get(cat_key) if cat_key else None,
             "major_category": major,
             "error_message": error,
             "classified_at": classified_at,
@@ -797,6 +857,9 @@ async def stop_classification_queue_processor() -> None:
     logger.info("Video classification queue processor stopped")
 
 
+_BATCH_SIZE = 5000  # asyncpg 单次 IN 参数上限保守值
+
+
 async def recover_classification_on_startup() -> None:
     """启动恢复：把 pending/processing 行重置为 pending，按账号入队。"""
     async with SessionLocal() as session:
@@ -814,21 +877,29 @@ async def recover_classification_on_startup() -> None:
             return
 
         vs_ids = [r.video_source_id for r in rows]
-        await session.execute(
-            VideoClassification.__table__.update()
-            .where(VideoClassification.video_source_id.in_(vs_ids))
-            .values(status="pending", error_message=None)
-        )
 
-        # 查出涉及的 account_ids
+        # 分批 UPDATE，避免 asyncpg 32767 参数上限
+        for i in range(0, len(vs_ids), _BATCH_SIZE):
+            batch = vs_ids[i:i + _BATCH_SIZE]
+            await session.execute(
+                VideoClassification.__table__.update()
+                .where(VideoClassification.video_source_id.in_(batch))
+                .values(status="pending", error_message=None)
+            )
+
+        # 查出涉及的 account_ids（blogger_ids 同样分批）
         blogger_ids = list({r.tiktok_blogger_id for r in rows if r.tiktok_blogger_id})
         account_ids: list[uuid.UUID] = []
         if blogger_ids:
-            account_ids = (await session.scalars(
-                select(AccountBloggerBinding.account_id)
-                .where(AccountBloggerBinding.tiktok_blogger_id.in_(blogger_ids))
-                .distinct()
-            )).all()
+            for i in range(0, len(blogger_ids), _BATCH_SIZE):
+                batch = blogger_ids[i:i + _BATCH_SIZE]
+                chunk = (await session.scalars(
+                    select(AccountBloggerBinding.account_id)
+                    .where(AccountBloggerBinding.tiktok_blogger_id.in_(batch))
+                    .distinct()
+                )).all()
+                account_ids.extend(chunk)
+            account_ids = list(set(account_ids))
 
         await session.commit()
 

@@ -18,6 +18,10 @@
           <svg v-if="!downloadingAll" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           下载全部视频
         </el-button>
+        <el-button class="vl-export-xlsx-btn" :loading="exportingExcel" @click="handleExportExcel">
+          <svg v-if="!exportingExcel" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+          导出 Excel
+        </el-button>
         <el-button type="primary" class="vl-add-btn" @click="$router.push('/dashboard/video-library/new')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           添加视频
@@ -211,7 +215,7 @@
             <span class="vc-date">{{ formatDate(item.publish_date || item.created_at) }}</span>
             <div class="vc-actions">
               <button
-                v-if="!item.local_video_url && item.download_status !== 'downloading'"
+                v-if="!(item.local_video_url || item.local_gcs_video_url) && item.download_status !== 'downloading'"
                 class="vc-btn vc-btn-dl"
                 :class="{ loading: downloading === item.id }"
                 @click.stop="handleDownload(item)"
@@ -289,11 +293,12 @@
   >
     <div class="player-wrap">
       <video
-        v-if="playerItem?.local_video_url || playerItem?.video_url"
-        :src="playerItem.local_video_url || playerItem.video_url"
+        v-if="playerItem?.local_video_url || playerItem?.local_gcs_video_url || playerItem?.video_url"
+        :src="playerItem.local_video_url || playerItem.local_gcs_video_url || playerItem.video_url"
         controls
         autoplay
         class="player-video"
+        @error="handlePlayerVideoError"
       />
       <div v-else class="player-nourl">
         <el-empty description="暂无可播放地址，请先点击「下载上传」" :image-size="80" />
@@ -445,11 +450,11 @@
 </template>
 
 <script setup>
-import { computed, onActivated, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchVideoSources, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip } from '../api/video_sources'
+import { fetchVideoSources, fetchVideoSource, fetchVideoSourceStats, deleteVideoSource, downloadVideoSource, downloadAllVideosZip, startExportVideoUrlsExcel, fetchExportExcelStatus, downloadExportExcel } from '../api/video_sources'
 import { batchCreateAndStartTemplates, createVideoAITemplate, startVideoAITemplate, fetchTemplatesByVideoSourceIds } from '../api/video_ai_templates'
 import { fetchTags, createTag, updateTag, deleteTag } from '../api/tags'
 import { fetchBloggers } from '../api/tiktok_bloggers'
@@ -487,6 +492,7 @@ const templateMap = ref({})
 const playerVisible = ref(false)
 const playerItem = ref(null)
 const downloadingAll = ref(false)
+const exportingExcel = ref(false)
 
 // Tag manager state
 const tagMgrVisible = ref(false)
@@ -766,6 +772,26 @@ function openPlayer(item) {
   playerVisible.value = true
 }
 
+// GCS 签名 URL 过期等异常时，后端 lazy 续签——前端 <video> 报错就再拉一次最新数据
+const playerRetried = ref(false)
+async function handlePlayerVideoError() {
+  if (!playerItem.value?.id || playerRetried.value) return
+  playerRetried.value = true
+  try {
+    const fresh = await fetchVideoSource(playerItem.value.id)
+    if (fresh) {
+      playerItem.value = { ...playerItem.value, ...fresh }
+      // 同步列表里的 URL，避免下次播放又走过期链
+      const idx = items.value.findIndex(it => it.id === fresh.id)
+      if (idx >= 0) items.value[idx] = { ...items.value[idx], ...fresh }
+    }
+  } catch (err) {
+    ElMessage.warning('视频地址刷新失败，请稍后再试')
+  }
+}
+// 每次重新打开播放器时清除"已重试"标记
+watch(playerVisible, (v) => { if (v) playerRetried.value = false })
+
 function goToDetail(item) {
   syncUrl()
   openInNewTab(`/dashboard/video-library/${item.id}`)
@@ -842,6 +868,46 @@ async function handleDownloadAll() {
     ElMessage.error(err?.message || '下载失败')
   } finally {
     downloadingAll.value = false
+  }
+}
+
+async function handleExportExcel() {
+  exportingExcel.value = true
+  ElMessage.info('正在后台生成 Excel，请稍候…')
+  try {
+    const params = {}
+    if (platform.value) params.platform = platform.value
+    if (selectedBloggerId.value) params.tiktok_blogger_id = selectedBloggerId.value
+    if (selectedTagFilterIds.value.length) params.tag_ids = selectedTagFilterIds.value.join(',')
+
+    const { job_id } = await startExportVideoUrlsExcel(params)
+
+    // 轮询：最多 30 分钟，每 2 秒查一次（全量 + 并发签名足够覆盖）
+    const MAX_POLLS = 900
+    let polls = 0
+    while (polls < MAX_POLLS) {
+      await new Promise(r => setTimeout(r, 2000))
+      polls += 1
+      const { status, error } = await fetchExportExcelStatus(job_id)
+      if (status === 'done') break
+      if (status === 'failed') throw new Error(error || '导出失败')
+    }
+    if (polls >= MAX_POLLS) throw new Error('导出超时')
+
+    const blob = await downloadExportExcel(job_id)
+    const blobUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = `video_urls_${new Date().toISOString().slice(0, 10)}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000)
+    ElMessage.success('已导出 Excel')
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || err?.message || '导出失败')
+  } finally {
+    exportingExcel.value = false
   }
 }
 
@@ -1441,6 +1507,23 @@ onUnmounted(() => {
 .vl-create-tpl-btn:hover {
   background: #d1fae5;
   border-color: #34d399;
+}
+
+.vl-export-xlsx-btn {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+  background: #f0f9ff;
+}
+
+.vl-export-xlsx-btn:hover {
+  background: #e0f2fe;
+  border-color: #38bdf8;
 }
 
 .vl-add-btn {

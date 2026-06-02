@@ -23,6 +23,9 @@ from app.models.tag import Tag, VideoSourceTag
 from app.models.video_ai_template import VideoAITemplate
 from app.models.video_source import VideoSource
 from app.schemas.video_ai_template import (
+    LookbooksStateRead,
+    RemixRequest,
+    RemixResponse,
     TagRead,
     VideoAITemplateCreate,
     VideoAITemplateListItem,
@@ -103,6 +106,9 @@ async def _to_read(session: AsyncSession, tpl: VideoAITemplate) -> VideoAITempla
         tiktok_blogger_id=tpl.tiktok_blogger_id,
         tags=tags,
         extra=tpl.extra,
+        lookbooks=tpl.lookbooks,
+        remix_history=tpl.remix_history,
+        remix_count=tpl.remix_count or 0,
         created_at=tpl.created_at,
         updated_at=tpl.updated_at,
     )
@@ -626,8 +632,8 @@ async def get_template_stats(
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
-    """Return count per process_status."""
-    from sqlalchemy import func, text
+    """Return count per process_status. 所有 VideoAIProcessStatus 值都会出现（缺省为 0）。"""
+    from sqlalchemy import func
 
     stmt = select(
         VideoAITemplate.process_status,
@@ -636,7 +642,12 @@ async def get_template_stats(
     if owner_id is not None:
         stmt = stmt.where(VideoAITemplate.owner_id == owner_id)
     rows = (await session.execute(stmt)).all()
-    return {str(row[0].value if hasattr(row[0], "value") else row[0]): row[1] for row in rows}
+    # 全枚举默认 0，避免前端少卡片
+    result = {s.value: 0 for s in VideoAIProcessStatus}
+    for row in rows:
+        key = row[0].value if hasattr(row[0], "value") else str(row[0])
+        result[key] = row[1]
+    return result
 
 
 @router.get("/by-video-source-ids", response_model=dict[str, str])
@@ -823,6 +834,80 @@ async def mark_template_used(
     await session.commit()
     await session.refresh(tpl)
     return await _to_read(session, tpl)
+
+
+# ── 阶段 2.5 lookbook / 重洗 ───────────────────────────────────────────────────
+
+
+@router.get("/{tpl_id}/lookbooks", response_model=LookbooksStateRead)
+async def get_template_lookbooks(
+    tpl_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> LookbooksStateRead:
+    """返回当前模板的 lookbooks + remix_history + 状态。"""
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    return LookbooksStateRead(
+        lookbooks=tpl.lookbooks or [],
+        remix_history=tpl.remix_history or [],
+        remix_count=tpl.remix_count or 0,
+        process_status=tpl.process_status,
+    )
+
+
+@router.post("/{tpl_id}/remix", response_model=RemixResponse)
+async def trigger_template_remix(
+    tpl_id: uuid.UUID,
+    payload: RemixRequest | None = None,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> RemixResponse:
+    """触发一次重洗：选一个未用 panel → 后台跑下游 → 立即返回 remix_id。
+
+    Body 可全空（自动 round-robin 选下一个）；或指定 outfit_index / panel_index。
+    池子耗尽自动重生成该 outfit 的 lookbook。
+    """
+    from app.services.video_ai_service import remix_template
+
+    await _get_tpl_or_404(session, tpl_id, owner_id)
+    body = payload or RemixRequest()
+    try:
+        result = await remix_template(
+            str(tpl_id),
+            outfit_index=body.outfit_index,
+            panel_index=body.panel_index,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return RemixResponse(**result)
+
+
+@router.post("/{tpl_id}/lookbooks/{outfit_index}/regenerate", response_model=LookbooksStateRead)
+async def regenerate_lookbook_for_outfit(
+    tpl_id: uuid.UUID,
+    outfit_index: int,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> LookbooksStateRead:
+    """强制重生成指定 outfit 的 lookbook（panels 池子重置）。"""
+    from app.services.video_ai_service import _regenerate_outfit_lookbook
+
+    tpl = await _get_tpl_or_404(session, tpl_id, owner_id)
+    try:
+        await _regenerate_outfit_lookbook(template_id=str(tpl_id), outfit_index=outfit_index)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    await session.refresh(tpl)
+    return LookbooksStateRead(
+        lookbooks=tpl.lookbooks or [],
+        remix_history=tpl.remix_history or [],
+        remix_count=tpl.remix_count or 0,
+        process_status=tpl.process_status,
+    )
 
 
 @router.post("/{tpl_id}/upload-shot")

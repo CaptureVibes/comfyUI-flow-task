@@ -25,6 +25,16 @@ async def supplement_callback(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> SupplementCallbackResponse:
     """vendor 回调入口：按 request_id + X-API-Key 校验，再交给 service 入库。"""
+    logger.info(
+        "[ext_supp][callback] RAW REQUEST: x_api_key_present=%s request_id=%s mode=%s final=%s items=%d total_videos=%d body=%s",
+        bool(x_api_key),
+        body.request_id,
+        body.mode,
+        body.final,
+        len(body.items),
+        sum(len(it.videos) for it in body.items),
+        body.model_dump_json()[:5000],
+    )
     if not x_api_key:
         raise HTTPException(status_code=401, detail="missing X-API-Key")
 

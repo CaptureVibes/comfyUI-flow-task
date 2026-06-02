@@ -50,6 +50,13 @@ class AccountCreate(BaseModel):
     photo_url: str | None = None
     social_bindings: list[dict] | None = None
     hashtags: list[str] | None = None
+    defer_kol_provision: bool = Field(
+        default=False,
+        description=(
+            "为 True 时跳过即时 KOL 创建，适用于即将触发 AI 自动生成的账号；"
+            "KOL 创建将在 AI 生成完成后由 ai_account_service 自行调用。"
+        ),
+    )
 
 
 class AccountPatch(BaseModel):
@@ -76,6 +83,7 @@ class BulkUpdateAccountAttributesBody(BaseModel):
     gender: Literal["male", "female", "unisex"] | None = None
     product_code_mode: Literal["with_code", "without_code"] | None = None
     account_tier: Literal["test", "dev", "prod"] | None = None
+    hidden: bool | None = None
 
 
 class BulkUpdateAccountAttributesResponse(BaseModel):
@@ -205,6 +213,8 @@ class AccountPerformanceSnapshot(BaseModel):
     avg_views: int | float | None = None
     total_likes: int | float | None = None
     avg_like_rate: int | float | None = None
+    total_kol_link_clicks: int | None = None
+    avg_video_click_rate: float | None = None
     first_content_date: datetime | None = None
     latest_video_published_at: datetime | None = None
 
@@ -378,6 +388,22 @@ class ExternalBindOpenAPIChannelResponse(BaseModel):
     channel_reservations: list[ExternalChannelReservationRead]
 
 
+class SupplementStatusRead(BaseModel):
+    request_id: str
+    account_id: str
+    mode: str
+    status: str
+    target_count: int = 0
+    completed_count: int = 0
+    remaining_count: int = 0
+    failed_count: int = 0
+    rejected_count: int = 0
+    duplicated_count: int = 0
+    processing_count: int = 0
+    error_message: str | None = None
+    updated_at: datetime | None = None
+
+
 class AccountRead(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID | None
@@ -424,6 +450,8 @@ class AccountRead(BaseModel):
     kol_user_id: str | None = None
     kol_provision_status: str = "pending"
     kol_provision_error: str | None = None
+    hidden: bool = False
+    supplement_status: SupplementStatusRead | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -435,3 +463,28 @@ class AccountListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class ExternalAIAccountStatsResponse(BaseModel):
+    total: int
+    bound_tiktok: int
+    bound_youtube: int
+    bound_instagram: int
+    unbound: int
+    available: int
+
+
+class ChannelAnalyticsDayPoint(BaseModel):
+    dt: str  # YYYY-MM-DD
+
+
+class ChannelAnalyticsResponse(BaseModel):
+    platform: str
+    channel_id: str | None
+    kol_user_id: str | None
+    # 每日数据点，dt 为 YYYY-MM-DD，值为当天数字
+    daily_views: list[dict]          # [{dt, daily_view_increment, day_end_views}]
+    daily_clicks: list[dict]         # [{dt, daily_clicks}]
+    # 聚合值（用于计算转化率）
+    total_link_clicks: int           # 区间内 Link 历史累计点击（sum of daily_clicks）
+    total_video_views: int           # 该 channel 下所有已发布视频的 views 之和（来自 metrics_snapshot）

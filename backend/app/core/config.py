@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     # Open API 配置
     open_api_base_url: str = "http://192.168.199.28:8080"
+    # 发布视频 + 轮询发布状态用的 BaseUrl（独立于 open_api_base_url）
+    # 仅作用于 /open-api/v1/upload/task 与 /open-api/v1/upload/status；
+    # 其余端点（metrics / channels / health / channel authorization / kol）仍走 open_api_base_url
+    publish_api_base_url: str = ""
     open_api_client_id: str = "default_client"
     open_api_client_secret: str = ""
     open_api_callback_url: str | None = None  # 回调地址，由外部注入
@@ -68,6 +72,9 @@ class Settings(BaseSettings):
     rapidapi_key: str = ""        # RapidAPI key，用于 tiktok-api23 fallback
     apify_token: str = ""         # Apify API token，用于 clockworks/tiktok-scraper
     tiktok_search_use_rapidapi: bool = True  # False 则跳过 RapidAPI，直接用 Apify 搜索
+
+    # 外部 BigQuery（JetonAI 项目数据，只读，通过 ADC 认证）
+    ext_bigquery_project_id: str = "my-project-8584-jetonai"
 
     # Lark 通知
     lark_webhook_url: str = ""    # Lark 机器人 Webhook 地址（为空则不发通知）

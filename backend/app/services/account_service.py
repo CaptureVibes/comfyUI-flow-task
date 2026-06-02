@@ -67,8 +67,8 @@ async def create_account(
 async def list_accounts(
     session: AsyncSession,
     *,
-    page: int,
-    page_size: int,
+    page: int | None = 1,
+    page_size: int | None = 20,
     owner_id: UUID | None = None,
     flag_id: UUID | None = None,
     search: str | None = None,
@@ -81,7 +81,7 @@ async def list_accounts(
     account_tier: str | None = None,
     platform_binding_status: str | None = None,
     classification_type: str | None = None,
-    category_indices: list[int] | None = None,
+    category_keys: list[str] | None = None,
 ) -> tuple[list[Account], int]:
     # ── Determine sort order ──────────────────────────────────────────────────
     order_desc = (sort_order or "desc").lower() == "desc"
@@ -103,7 +103,9 @@ async def list_accounts(
     else:
         order_clause = Account.created_at.desc()
 
-    stmt = select(Account).order_by(order_clause).offset((page - 1) * page_size).limit(page_size)
+    stmt = select(Account).order_by(order_clause)
+    if page is not None and page_size is not None:
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     total_stmt = select(func.count(Account.id))
 
     # ── Filters ───────────────────────────────────────────────────────────────
@@ -156,15 +158,15 @@ async def list_accounts(
             stmt = stmt.where(Account.classification_type == classification_type)
             total_stmt = total_stmt.where(Account.classification_type == classification_type)
 
-    if category_indices and classification_type in ("single", "dual"):
-        primary_idx = cast(literal_column("classification_summary->>'primary_index'"), Integer)
-        secondary_idx = cast(literal_column("classification_summary->>'secondary_index'"), Integer)
+    if category_keys and classification_type in ("single", "dual"):
+        primary_key_col = literal_column("classification_summary->>'primary_key'")
+        secondary_key_col = literal_column("classification_summary->>'secondary_key'")
         if classification_type == "single":
-            stmt = stmt.where(primary_idx.in_(category_indices))
-            total_stmt = total_stmt.where(primary_idx.in_(category_indices))
-        else:  # dual: each selected index must match primary or secondary
-            for idx in category_indices:
-                cond = or_(primary_idx == idx, secondary_idx == idx)
+            stmt = stmt.where(primary_key_col.in_(category_keys))
+            total_stmt = total_stmt.where(primary_key_col.in_(category_keys))
+        else:  # dual: each selected key must match primary or secondary
+            for key in category_keys:
+                cond = or_(primary_key_col == key, secondary_key_col == key)
                 stmt = stmt.where(cond)
                 total_stmt = total_stmt.where(cond)
 

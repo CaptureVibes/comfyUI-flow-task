@@ -264,7 +264,7 @@
               placeholder="留空则使用内置默认提示词"
             />
             <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
-              <span style="color:#9ca3af;font-size:12px">无论是否自定义，系统都会通过 response_schema 限制返回 {"category_index": 0~13}。</span>
+              <span style="color:#9ca3af;font-size:12px">无论是否自定义，系统都会通过 response_schema 限制返回 {"category_key": "..."}。</span>
               <button type="button" class="ai-default-prompt-toggle" @click="showDefaultPrompt = !showDefaultPrompt">
                 {{ showDefaultPrompt ? '收起' : '查看内置默认提示词' }}
               </button>
@@ -276,32 +276,29 @@
         <!-- 分类聚合阈值 -->
         <div class="ai-cfg-section">
           <div class="ai-cfg-section-header">
-            <span class="ai-cfg-tag">聚合阈值</span>
-            <span class="ai-cfg-desc">基于成功分类视频的大类占比，将 AI 博主判定为单核心 / 双核心 / 混乱</span>
+            <span class="ai-cfg-tag">博主分类阈值</span>
+            <span class="ai-cfg-desc">基于大类占比（排除「不能分类」）将 AI 博主判定为单核心 / 双核心 / 混乱</span>
           </div>
           <el-form-item label="样本阈值">
             <el-input-number v-model="aiSettingsForm.classify_min_sample" :min="1" :max="50" style="width: 160px" />
             <span style="margin-left:8px;color:#6b7280;font-size:13px">成功分类数 &lt; 此值时记为「样本不足」</span>
           </el-form-item>
-          <el-form-item label="单核心 · Top1 占比">
-            <el-input-number v-model="aiSettingsForm.classify_single_top1_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 ≥ 此值即判为单核心</span>
-          </el-form-item>
-          <el-form-item label="单核心 · Top1−Top2 差">
-            <el-input-number v-model="aiSettingsForm.classify_single_diff_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 − Top2 ≥ 此值也判为单核心</span>
-          </el-form-item>
-          <el-form-item label="双核心 · Top1 下限">
-            <el-input-number v-model="aiSettingsForm.classify_dual_top1_lower" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 ≥ 此值才考虑双核心</span>
-          </el-form-item>
-          <el-form-item label="双核心 · Top1 上限">
-            <el-input-number v-model="aiSettingsForm.classify_dual_top1_upper" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top1 &lt; 此值才考虑双核心（达到则归单核心）</span>
-          </el-form-item>
-          <el-form-item label="双核心 · Top2 阈值">
-            <el-input-number v-model="aiSettingsForm.classify_dual_top2_threshold" :min="0" :max="1" :step="0.05" :precision="2" style="width: 160px" />
-            <span style="margin-left:8px;color:#6b7280;font-size:13px">Top2 ≥ 此值且差值 &lt; 单核心差，判双核心</span>
+          <div style="margin-bottom:8px;color:#374151;font-size:13px;font-weight:500">单核心阈值（某大类占比 ≥ 阈值即为单核心）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px 24px;margin-bottom:16px">
+            <div v-for="major in RANKABLE_MAJOR_KEYS" :key="major" style="display:flex;align-items:center;gap:8px">
+              <span :class="`al-supplement-major-dot is-${major}`" style="flex-shrink:0"></span>
+              <span style="color:#374151;font-size:13px;min-width:72px">{{ MAJOR_LABEL_MAP[major] }}</span>
+              <el-input-number
+                v-model="aiSettingsForm[`classify_${major}_threshold_pct`]"
+                :min="1" :max="100" :step="5" :precision="0"
+                style="width:120px"
+              />
+              <span style="color:#6b7280;font-size:12px">%</span>
+            </div>
+          </div>
+          <el-form-item label="双核心合计阈值">
+            <el-input-number v-model="aiSettingsForm.classify_dual_combined_threshold_pct" :min="1" :max="100" :step="5" :precision="0" style="width: 160px" />
+            <span style="margin-left:8px;color:#6b7280;font-size:13px">% &nbsp;Top1+Top2 大类占比合计 ≥ 此值（且均未达单核心阈值）判为双核心</span>
           </el-form-item>
         </div>
 
@@ -662,6 +659,32 @@
             未分类、混乱或样本不足的账号将跳过
           </div>
         </div>
+        <div v-if="supplementForm.templateType === 'exclusive'" class="al-supplement-config">
+          <div class="al-supplement-config-label">
+            视频分类
+            <span class="al-supplement-filter-hint">不选择 = 不启用分类过滤</span>
+          </div>
+          <div class="al-supplement-category-groups">
+            <div v-for="major in MAJOR_KEYS" :key="major" class="al-supplement-category-group">
+              <div class="al-supplement-category-major">
+                <span :class="`al-supplement-major-dot is-${major}`"></span>
+                <span>{{ MAJOR_LABEL_MAP[major] }}</span>
+              </div>
+              <div class="al-cat-filter-pills">
+                <button
+                  v-for="cat in CATEGORY_OPTIONS.filter(c => c.major === major)"
+                  :key="cat.key"
+                  type="button"
+                  class="al-cat-pill"
+                  :class="[`is-${cat.major}`, { active: supplementForm.categoryKeys.includes(cat.key) }]"
+                  @click="toggleSupplementCategory(cat.key)"
+                >
+                  {{ cat.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
         <!-- 数量配置 -->
         <div class="al-supplement-config">
           <div class="al-supplement-config-label">目标视频数量（每个博主）</div>
@@ -756,6 +779,92 @@
     </el-dialog>
 
     <!-- 视频分类弹窗 -->
+    <!-- 频道数据分析弹窗 -->
+    <el-dialog
+      v-model="showAnalyticsDialog"
+      :title="analyticsAccount ? `频道数据 · ${analyticsAccount.account_name}` : '频道数据'"
+      width="860px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @close="closeAnalyticsDialog"
+    >
+      <div class="ana-body">
+        <!-- 平台切换 + 日期选择 -->
+        <div class="ana-toolbar">
+          <div class="ana-platform-tabs">
+            <button
+              v-for="p in analyticsPlatforms"
+              :key="p"
+              class="ana-tab"
+              :class="{ active: analyticsActivePlatform === p }"
+              @click="switchAnalyticsPlatform(p)"
+            >{{ p }}</button>
+          </div>
+          <div class="ana-date-range">
+            <el-date-picker
+              v-model="analyticsDateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              :clearable="false"
+              size="small"
+              style="width:240px"
+              @change="loadAnalyticsData"
+            />
+          </div>
+        </div>
+
+        <!-- 加载 / 无数据 / 无绑定 -->
+        <div v-if="analyticsLoading" class="ana-loading">加载中...</div>
+        <div v-else-if="analyticsError" class="ana-error">{{ analyticsError }}</div>
+        <div v-else-if="!analyticsData" class="ana-empty">请选择平台和日期范围</div>
+        <template v-else>
+          <!-- 指标卡 -->
+          <div class="ana-metrics">
+            <div class="ana-metric-card">
+              <div class="ana-metric-label">Link 总点击</div>
+              <div class="ana-metric-value">{{ analyticsData.total_link_clicks.toLocaleString() }}</div>
+            </div>
+            <div class="ana-metric-card">
+              <div class="ana-metric-label">视频总 Views</div>
+              <div class="ana-metric-value">{{ analyticsData.total_video_views.toLocaleString() }}</div>
+            </div>
+            <div class="ana-metric-card">
+              <div class="ana-metric-label">Link 总转化率</div>
+              <div class="ana-metric-value">{{ analyticsLinkTotalConversion }}</div>
+            </div>
+          </div>
+
+          <!-- 5 条折线图 -->
+          <div class="ana-charts">
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">当日账号总 Views</div>
+              <div ref="anaChart1Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 总点击次数（累计）</div>
+              <div ref="anaChart2Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 当日点击次数</div>
+              <div ref="anaChart3Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 日转化率（当日点击 / 当日 Views）</div>
+              <div ref="anaChart4Ref" class="ana-chart-canvas"></div>
+            </div>
+            <div class="ana-chart-row">
+              <div class="ana-chart-title">Link 总转化率（累计点击 / 视频总 Views）</div>
+              <div ref="anaChart5Ref" class="ana-chart-canvas"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </el-dialog>
+
     <el-dialog
       v-model="showClassificationDialog"
       :title="classificationAccount ? `视频分类 · ${classificationAccount.account_name}` : '视频分类'"
@@ -830,18 +939,18 @@
             </div>
             <div class="vc-group-list">
               <div v-for="v in group.items" :key="v.video_source_id" class="vc-item" :class="`is-${v.status}`">
-                <div class="vc-item-thumb" @click="v.local_video_url && openVcFullscreen(v)">
+                <div class="vc-item-thumb" @click="(v.local_video_url || v.local_gcs_video_url) && openVcFullscreen(v)">
                   <video
-                    v-if="v.local_video_url"
-                    :src="v.local_video_url"
+                    v-if="v.local_video_url || v.local_gcs_video_url"
+                    :src="v.local_video_url || v.local_gcs_video_url"
                     preload="metadata"
                     playsinline
                     class="vc-thumb-video"
                   />
-                  <div class="vc-item-thumb-expand" v-if="v.local_video_url">
+                  <div class="vc-item-thumb-expand" v-if="v.local_video_url || v.local_gcs_video_url">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                   </div>
-                  <div v-if="!v.local_video_url" class="vc-item-thumb-placeholder">无视频</div>
+                  <div v-if="!(v.local_video_url || v.local_gcs_video_url)" class="vc-item-thumb-placeholder">无视频</div>
                 </div>
                 <div class="vc-item-info">
                   <div class="vc-item-title">{{ v.video_title || '(无标题)' }}</div>
@@ -857,7 +966,7 @@
                   </div>
                   <div v-else-if="v.status === 'processing'" class="vc-item-status">分类中...</div>
                   <div v-else-if="v.status === 'pending'" class="vc-item-status">排队中</div>
-                  <div v-else-if="v.status === 'no_local_video'" class="vc-item-status is-warn">无 local_video_url，跳过</div>
+                  <div v-else-if="v.status === 'no_local_video'" class="vc-item-status is-warn">无 local_video_url / local_gcs_video_url，跳过</div>
                   <div v-else class="vc-item-status is-muted">未开始</div>
                 </div>
               </div>
@@ -878,7 +987,7 @@
         </button>
         <video
           v-if="vcFullscreenItem"
-          :src="vcFullscreenItem.local_video_url"
+          :src="vcFullscreenItem.local_video_url || vcFullscreenItem.local_gcs_video_url"
           class="vc-fullscreen-video"
           controls
           autoplay
@@ -1022,15 +1131,15 @@
         <div class="al-cat-filter-pills">
           <button
             v-for="cat in CATEGORY_OPTIONS"
-            :key="cat.index"
+            :key="cat.key"
             type="button"
             class="al-cat-pill"
             :class="[
               `is-${cat.major}`,
-              { active: filterCategoryIndices.includes(cat.index) },
+              { active: filterCategoryIndices.includes(cat.key) },
             ]"
-            @click.prevent="toggleCategoryFilter(cat.index)"
-          >{{ cat.index }}. {{ cat.label }}</button>
+            @click.prevent="toggleCategoryFilter(cat.key)"
+          >{{ cat.label }}</button>
         </div>
       </div>
 
@@ -1136,6 +1245,8 @@
               <span class="al-th-label">点赞率</span>
               <span class="al-sort-icon"><SortIcon field="avg_like_rate" :sort-by="sortBy" :sort-order="sortOrder" /></span>
             </th>
+            <th class="al-th al-th-stat">Link总点击</th>
+            <th class="al-th al-th-stat">平均点击率</th>
             <th class="al-th al-th-date al-th-sortable" @click="toggleSort('latest_video_published_at')">
               <span class="al-th-label">最新发布</span>
               <span class="al-sort-icon"><SortIcon field="latest_video_published_at" :sort-by="sortBy" :sort-order="sortOrder" /></span>
@@ -1184,19 +1295,24 @@
 
             <!-- 账号名称 -->
             <td class="al-td al-td-name">
-              <div class="al-name-main">{{ item.account_name }}</div>
-              <div v-if="item.account_handle || item.account_signature" class="al-name-handle">
-                <span v-if="item.account_handle" class="al-handle">@{{ item.account_handle }}</span>
-                <span v-if="item.account_signature" class="al-signature">{{ item.account_signature }}</span>
+              <div class="al-account-card">
+              <div class="al-account-head">
+                <div class="al-account-title-wrap">
+                  <div class="al-name-main">{{ item.account_name }}</div>
+                  <div v-if="item.account_handle" class="al-handle">@{{ item.account_handle }}</div>
+                </div>
+                <span class="ac-type-badge" :class="`ac-tier-${item.account_tier || 'test'}`">
+                  {{ { test: '实验号', dev: '常规号', prod: '正式号' }[item.account_tier || 'test'] }}
+                </span>
               </div>
-              <div class="al-name-meta">
+              <div v-if="item.account_signature" class="al-signature">{{ item.account_signature }}</div>
+              <div class="al-identity-grid">
                 <span class="ac-type-badge" :class="`ac-type-${item.account_type || 'exclusive'}`">
                   {{ item.account_type === 'persona' ? '人设号' : item.account_type === 'exclusive' ? '独享号' : '共享号' }}
                 </span>
                 <span
                   class="ac-type-badge ac-face-badge"
                   :class="item.face_mode === 'no_face' ? 'ac-face-no' : 'ac-face-yes'"
-                  style="cursor:pointer"
                   @click.stop="toggleFaceMode(item)"
                 >
                   {{ item.face_mode === 'no_face' ? '非人脸' : '人脸' }}
@@ -1204,7 +1320,6 @@
                 <span
                   class="ac-type-badge"
                   :class="`ac-gender-${item.gender || 'female'}`"
-                  style="cursor:pointer"
                   @click.stop="cycleGender(item)"
                 >
                   {{ { male: '男', female: '女', unisex: '中性' }[item.gender || 'female'] }}
@@ -1215,15 +1330,27 @@
                 >
                   {{ item.product_code_mode === 'with_code' ? '带商品码' : '非商品码' }}
                 </span>
-                <span class="ac-type-badge" :class="`ac-tier-${item.account_tier || 'test'}`">
-                  {{ { test: '实验号', dev: '常规号', prod: '正式号' }[item.account_tier || 'test'] }}
-                </span>
                 <span v-if="item.ai_generation_status && item.ai_generation_status !== 'idle'" class="ac-ai-status" :class="`is-${item.ai_generation_status}`">
                   {{ aiGenerationStatusLabel(item.ai_generation_status) }}
                 </span>
+                <span v-if="item.hidden" class="ac-type-badge ac-hidden-badge">已隐藏</span>
               </div>
+
+              <div v-if="item.supplement_status" class="ac-supplement-row" :class="`is-${item.supplement_status.status}`">
+                <div class="ac-supplement-title">
+                  <span class="ac-supplement-dot"></span>
+                  <span>{{ supplementStatusLabel(item.supplement_status.status) }}</span>
+                  <span class="ac-supplement-mode">{{ supplementModeLabel(item.supplement_status.mode) }}</span>
+                </div>
+                <div class="ac-supplement-lines">
+                  <span>已补充 {{ item.supplement_status.completed_count || 0 }} 个</span>
+                  <span v-if="item.supplement_status.status === 'running'">还有 {{ item.supplement_status.remaining_count || 0 }} 个需要补充</span>
+                  <span v-else-if="item.supplement_status.status === 'failed'">应该补充 {{ item.supplement_status.target_count || 0 }} 个</span>
+                </div>
+              </div>
+
               <!-- 分类状态行 -->
-              <div class="ac-classify-row">
+              <div class="al-account-metrics">
                 <span v-if="item.classification_status === 'running'" class="ac-classify-badge is-running">分类中</span>
                 <template v-if="item.classification_summary">
                   <span class="ac-classify-badge" :class="`is-${item.classification_summary.type}`">
@@ -1233,15 +1360,15 @@
                     <template v-else-if="item.classification_summary.type === 'insufficient'">样本不足</template>
                     <template v-else>未分类</template>
                   </span>
-                  <span class="ac-classify-count">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}分类</span>
+                  <span class="ac-metric-item">{{ item.classification_summary.success }}/{{ item.classification_summary.total }}分类</span>
                 </template>
-                <span class="ac-classify-count">{{ item.linked_video_count ?? 0 }}个视频</span>
-                <span class="ac-classify-count" :title="`未使用 ${item.unused_template_count ?? 0} / 已使用 ${item.used_template_count ?? 0} 模板`">
+                <span class="ac-metric-item">{{ item.linked_video_count ?? 0 }}个视频</span>
+                <span class="ac-metric-item" :title="`未使用 ${item.unused_template_count ?? 0} / 已使用 ${item.used_template_count ?? 0} 模板`">
                   {{ item.unused_template_count ?? 0 }}/{{ item.used_template_count ?? 0 }}模板
                 </span>
                 <span
                   v-if="(item.sub_task_success_denom ?? 0) > 0"
-                  class="ac-classify-count"
+                  class="ac-metric-item"
                   :title="`最近 ${item.sub_task_success_sample ?? 0} 条子任务中：成功（暂存/队列中/已发布）${item.sub_task_success_numer ?? 0} / 决策样本（含待决策、决策未通过）${item.sub_task_success_denom ?? 0}`"
                 >
                   成功率 {{ ((item.sub_task_success_rate ?? 0) * 100).toFixed(0) }}%
@@ -1255,11 +1382,18 @@
                   class="ac-kol-badge ac-kol-pending"
                   title="站内 KOL 创建中"
                 >KOL 生成中</span>
-                <span
-                  v-else-if="item.kol_provision_status === 'failed'"
-                  class="ac-kol-badge ac-kol-failed"
-                  :title="item.kol_provision_error || '未知错误'"
-                >KOL 失败</span>
+                <template v-else-if="item.kol_provision_status === 'failed'">
+                  <span
+                    class="ac-kol-badge ac-kol-failed"
+                    :title="item.kol_provision_error || '未知错误'"
+                  >KOL 失败</span>
+                  <button
+                    class="ac-kol-retry-btn"
+                    :disabled="retryingKolId === item.id"
+                    :title="`重试 KOL 创建${item.kol_provision_error ? '\n错误: ' + item.kol_provision_error : ''}`"
+                    @click.stop="handleRetryKol(item)"
+                  >{{ retryingKolId === item.id ? '重试中…' : '重试' }}</button>
+                </template>
                 <template v-else>
                   <div v-if="kolReservationLinks(item).length" class="ac-kol-list">
                     <div
@@ -1288,6 +1422,7 @@
                     :title="`kol_user_id=${item.kol_user_id}`"
                   >KOL 已创建</span>
                 </template>
+              </div>
               </div>
             </td>
 
@@ -1325,6 +1460,12 @@
 
             <!-- 点赞率 -->
             <td class="al-td al-td-stat">{{ formatPercent(snapshotValue(item, 'avg_like_rate')) }}</td>
+
+            <!-- Link 总点击 -->
+            <td class="al-td al-td-stat">{{ formatCount(snapshotValue(item, 'total_kol_link_clicks')) }}</td>
+
+            <!-- 平均点击率 -->
+            <td class="al-td al-td-stat">{{ snapshotValue(item, 'avg_video_click_rate') != null ? formatPercent(snapshotValue(item, 'avg_video_click_rate') * 100) : '-' }}</td>
 
             <!-- 最新发布 -->
             <td class="al-td al-td-date">{{ formatSnapshotDate(snapshotValue(item, 'latest_video_published_at')) }}</td>
@@ -1374,6 +1515,7 @@
             <td class="al-td al-td-actions" @click.stop>
               <div class="al-row-actions">
                 <button class="ac-btn ac-btn-stats" @click="openInNewTab({ name: 'publication-stats', query: { account_id: item.id } })">统计</button>
+                <button class="ac-btn ac-btn-analytics" @click="openAnalyticsDialog(item)">数据</button>
                 <button class="ac-btn ac-btn-sync" :class="{ loading: syncingId === item.id }" @click="handleSyncAccount(item)">{{ syncingId === item.id ? '同步中' : '同步' }}</button>
                 <button class="ac-btn ac-btn-classify" @click="openClassificationDialog(item)">分类</button>
                 <button class="ac-btn ac-btn-edit" @click="openInNewTab(`/dashboard/accounts/${item.id}/edit`)">编辑</button>
@@ -1649,7 +1791,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision, fetchChannelAnalytics } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -1702,22 +1844,42 @@ const filterPlatformBindingStatus = ref('')
 const filterClassificationType = ref('')
 const filterCategoryIndices = ref([])
 
-// 14 个细分类（与后端 video_classification_service.CATEGORY_LABELS 保持一致）
+// 分类体系（与后端 video_classification_service._CATEGORIES 保持一致）
 const CATEGORY_OPTIONS = [
-  { index: 0, label: '单套衣服展示美', major: 'display' },
-  { index: 1, label: '换装展示美', major: 'display' },
-  { index: 2, label: '镜头感或表演型展示美', major: 'display' },
-  { index: 3, label: '生活场景中的展示美', major: 'display' },
-  { index: 4, label: '单品语言讲解', major: 'knowledge' },
-  { index: 5, label: '造型选择或对比', major: 'knowledge' },
-  { index: 6, label: '搭配教程或方法论', major: 'knowledge' },
-  { index: 7, label: '单品展示无人讲解', major: 'knowledge' },
-  { index: 8, label: '单品展示字幕讲解', major: 'knowledge' },
-  { index: 9, label: '人生故事', major: 'persona' },
-  { index: 10, label: '人生阶段', major: 'persona' },
-  { index: 11, label: '个人态度表达', major: 'persona' },
-  { index: 12, label: '热门梗段子反转梗流行文案', major: 'trending' },
-  { index: 13, label: '明星影视综艺节日社会话题相关穿搭', major: 'trending' },
+  // 美美展示类
+  { key: 'beauty_static_pose',    label: '静态 Pose / 镜头展示类',         major: 'beauty' },
+  { key: 'beauty_light_action',   label: '轻动作展示类',                   major: 'beauty' },
+  { key: 'beauty_dance',          label: '音乐跳舞类',                     major: 'beauty' },
+  { key: 'beauty_lipsync',        label: '歌曲对口型类',                   major: 'beauty' },
+  { key: 'beauty_drama_light',    label: '影视 / 台词轻演绎类',            major: 'beauty' },
+  // 穿搭方法类
+  { key: 'method_single_silent',  label: '不带语音单套逐件穿搭型',         major: 'method' },
+  { key: 'method_multi_look',     label: '不带语音多套完整 Look 切换型',   major: 'method' },
+  { key: 'method_multi_build',    label: '不带语音多套逐件搭建型',         major: 'method' },
+  { key: 'method_base_replace',   label: '不带语音 Base Look 替换单品型', major: 'method' },
+  { key: 'method_multiway',       label: '不带语音单品多穿型',             major: 'method' },
+  { key: 'method_before_after',   label: '不带语音 Before & After 优化型', major: 'method' },
+  { key: 'method_compare',        label: '不带语音左右对比 / 并列对比型', major: 'method' },
+  { key: 'method_voice_formula',  label: '带语音公式规则讲解型',           major: 'method' },
+  { key: 'method_voice_steps',    label: '带语音步骤流程讲解型',           major: 'method' },
+  { key: 'method_voice_diagnose', label: '带语音问题诊断 / 优化讲解型',   major: 'method' },
+  { key: 'method_voice_compare',  label: '带语音对比判断讲解型',           major: 'method' },
+  { key: 'method_voice_case',     label: '带语音案例拆解讲解型',           major: 'method' },
+  { key: 'method_voice_standard', label: '带语音选择标准讲解型',           major: 'method' },
+  { key: 'method_voice_system',   label: '带语音系统规划讲解型',           major: 'method' },
+  // 购物决策类
+  { key: 'shopping_brand',        label: '品牌导向型',                     major: 'shopping' },
+  { key: 'shopping_single_item',  label: '单品种草型',                     major: 'shopping' },
+  { key: 'shopping_dupe',         label: '大牌平替 / Dupe 型',             major: 'shopping' },
+  { key: 'shopping_scene',        label: '场景需求型',                     major: 'shopping' },
+  { key: 'shopping_list',         label: '清单合集型',                     major: 'shopping' },
+  { key: 'shopping_compare',      label: '对比选择型',                     major: 'shopping' },
+  // 人设生活类
+  { key: 'lifestyle',             label: '人设生活类',                     major: 'lifestyle' },
+  // 情景剧情类
+  { key: 'drama',                 label: '情景剧情类',                     major: 'drama' },
+  // 不能分类
+  { key: 'unclassifiable',        label: '不能分类',                       major: 'unclassifiable' },
 ]
 
 const hasActiveColFilters = computed(() =>
@@ -1734,15 +1896,15 @@ function onClassificationTypeChange() {
   onFilterChange()
 }
 
-function toggleCategoryFilter(idx) {
+function toggleCategoryFilter(key) {
   const max = filterClassificationType.value === 'dual' ? 2 : 1
   const list = filterCategoryIndices.value
-  const pos = list.indexOf(idx)
+  const pos = list.indexOf(key)
   if (pos >= 0) {
     list.splice(pos, 1)
   } else {
     if (list.length >= max) list.shift()
-    list.push(idx)
+    list.push(key)
   }
   page.value = 1
   loadData({ silent: true })
@@ -1766,6 +1928,33 @@ const deleting = ref(null)
 
 // 下载视频
 const downloading = ref(false)
+
+// KOL 失败重试
+const retryingKolId = ref(null)
+async function handleRetryKol(item) {
+  retryingKolId.value = item.id
+  // 本地立刻把状态切到 pending，UI 即时反馈
+  item.kol_provision_status = 'pending'
+  item.kol_provision_error = null
+  try {
+    const updated = await retryKolProvision(item.id)
+    // 用后端返回的字段覆盖本地
+    Object.assign(item, updated)
+    if (updated.kol_provision_status === 'success') {
+      ElMessage.success('KOL 重新创建成功')
+    } else if (updated.kol_provision_status === 'failed') {
+      ElMessage.error(updated.kol_provision_error || 'KOL 重试失败')
+    } else {
+      ElMessage.info('KOL 重试已提交')
+    }
+  } catch (err) {
+    item.kol_provision_status = 'failed'
+    item.kol_provision_error = err?.response?.data?.detail || err?.message || '重试失败'
+    ElMessage.error(item.kol_provision_error)
+  } finally {
+    retryingKolId.value = null
+  }
+}
 
 async function handleDownload() {
   if (downloading.value) return
@@ -2058,13 +2247,23 @@ async function confirmClassify() {
 
 async function _doBatchClassify() {
   if (bulkClassifying.value) return
-  const ids = selectedMap.value.size > 0
-    ? [...selectedMap.value.keys()]
-    : items.value.map(i => i.id)
-  if (!ids.length) { ElMessage.warning('没有可操作的账号'); return }
+  const isSelection = selectedMap.value.size > 0
+  const ids = isSelection ? [...selectedMap.value.keys()] : []
+  let accountListFilters = null
+  if (!isSelection) {
+    accountListFilters = {}
+    if (filterGender.value) accountListFilters.gender = filterGender.value
+    if (filterAccountType.value) accountListFilters.account_type = filterAccountType.value
+    if (filterFaceMode.value) accountListFilters.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) accountListFilters.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) accountListFilters.account_tier = filterAccountTier.value
+    if (filterPlatformBindingStatus.value) accountListFilters.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) accountListFilters.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) accountListFilters.category_keys = filterCategoryIndices.value
+  }
   bulkClassifying.value = true
   try {
-    const res = await batchClassifyVideos(ids, classifyForce.value)
+    const res = await batchClassifyVideos(ids, classifyForce.value, accountListFilters)
     ElMessage.success(`已入队 ${res.total_queued} 个视频，将逐账号依次分类`)
     showClassifyConfirmDialog.value = false
   } catch (e) {
@@ -2155,6 +2354,11 @@ const BULK_ATTRIBUTE_OPTIONS = {
     { label: '常规号', value: 'dev' },
     { label: '正式号', value: 'prod' },
   ],
+  hidden: [
+    { label: '不修改', value: '' },
+    { label: '显示', value: 'false' },
+    { label: '隐藏', value: 'true' },
+  ],
 }
 
 const BULK_ATTRIBUTE_FIELDS = [
@@ -2188,6 +2392,12 @@ const BULK_ATTRIBUTE_FIELDS = [
     tone: 'amber',
     icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 15 8.5 22 9.5l-5 4.8 1.2 7L12 17.8 5.8 21.3 7 14.3 2 9.5l7-1Z"/></svg>',
   },
+  {
+    key: 'hidden',
+    label: '隐藏',
+    tone: 'slate',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  },
 ]
 
 const showBulkAttributeDialog = ref(false)
@@ -2198,6 +2408,7 @@ const bulkAttributeForm = ref({
   gender: '',
   product_code_mode: '',
   account_tier: '',
+  hidden: '',
 })
 
 function resetBulkAttributeForm() {
@@ -2207,11 +2418,12 @@ function resetBulkAttributeForm() {
     gender: '',
     product_code_mode: '',
     account_tier: '',
+    hidden: '',
   }
 }
 
 const bulkAttributeChangedCount = computed(() =>
-  ['account_type', 'face_mode', 'gender', 'product_code_mode', 'account_tier']
+  ['account_type', 'face_mode', 'gender', 'product_code_mode', 'account_tier', 'hidden']
     .filter(key => !!bulkAttributeForm.value[key]).length
 )
 
@@ -2234,6 +2446,9 @@ function buildBulkAttributePayload() {
     if (bulkAttributeForm.value[key]) {
       payload[key] = bulkAttributeForm.value[key]
     }
+  }
+  if (bulkAttributeForm.value.hidden !== '') {
+    payload.hidden = bulkAttributeForm.value.hidden === 'true'
   }
   return payload
 }
@@ -2355,11 +2570,12 @@ const aiSettingsForm = ref({
   video_classify_prompt: '',
   video_classify_temperature: 0.7,
   classify_min_sample: 3,
-  classify_single_top1_threshold: 0.5,
-  classify_single_diff_threshold: 0.15,
-  classify_dual_top1_lower: 0.35,
-  classify_dual_top1_upper: 0.5,
-  classify_dual_top2_threshold: 0.2,
+  classify_beauty_threshold_pct: 75,
+  classify_method_threshold_pct: 60,
+  classify_shopping_threshold_pct: 55,
+  classify_lifestyle_threshold_pct: 55,
+  classify_drama_threshold_pct: 65,
+  classify_dual_combined_threshold_pct: 80,
   tier_video_sample_count: 7,
   tier_avg_play_threshold: 700,
   tier_activity_days: 7,
@@ -2394,11 +2610,12 @@ async function openAISettings() {
     aiSettingsForm.value.video_classify_prompt = data.video_classify_prompt || ''
     aiSettingsForm.value.video_classify_temperature = data.video_classify_temperature ?? 0.7
     aiSettingsForm.value.classify_min_sample = data.classify_min_sample ?? 3
-    aiSettingsForm.value.classify_single_top1_threshold = data.classify_single_top1_threshold ?? 0.5
-    aiSettingsForm.value.classify_single_diff_threshold = data.classify_single_diff_threshold ?? 0.15
-    aiSettingsForm.value.classify_dual_top1_lower = data.classify_dual_top1_lower ?? 0.35
-    aiSettingsForm.value.classify_dual_top1_upper = data.classify_dual_top1_upper ?? 0.5
-    aiSettingsForm.value.classify_dual_top2_threshold = data.classify_dual_top2_threshold ?? 0.2
+    aiSettingsForm.value.classify_beauty_threshold_pct = Math.round((data.classify_beauty_threshold ?? 0.75) * 100)
+    aiSettingsForm.value.classify_method_threshold_pct = Math.round((data.classify_method_threshold ?? 0.60) * 100)
+    aiSettingsForm.value.classify_shopping_threshold_pct = Math.round((data.classify_shopping_threshold ?? 0.55) * 100)
+    aiSettingsForm.value.classify_lifestyle_threshold_pct = Math.round((data.classify_lifestyle_threshold ?? 0.55) * 100)
+    aiSettingsForm.value.classify_drama_threshold_pct = Math.round((data.classify_drama_threshold ?? 0.65) * 100)
+    aiSettingsForm.value.classify_dual_combined_threshold_pct = Math.round((data.classify_dual_combined_threshold ?? 0.80) * 100)
     aiSettingsForm.value.tier_video_sample_count = data.tier_video_sample_count ?? 7
     aiSettingsForm.value.tier_avg_play_threshold = data.tier_avg_play_threshold ?? 700
     aiSettingsForm.value.tier_activity_days = data.tier_activity_days ?? 7
@@ -2439,11 +2656,12 @@ async function saveAISettings() {
       video_classify_prompt: aiSettingsForm.value.video_classify_prompt,
       video_classify_temperature: aiSettingsForm.value.video_classify_temperature,
       classify_min_sample: aiSettingsForm.value.classify_min_sample,
-      classify_single_top1_threshold: aiSettingsForm.value.classify_single_top1_threshold,
-      classify_single_diff_threshold: aiSettingsForm.value.classify_single_diff_threshold,
-      classify_dual_top1_lower: aiSettingsForm.value.classify_dual_top1_lower,
-      classify_dual_top1_upper: aiSettingsForm.value.classify_dual_top1_upper,
-      classify_dual_top2_threshold: aiSettingsForm.value.classify_dual_top2_threshold,
+      classify_beauty_threshold: (aiSettingsForm.value.classify_beauty_threshold_pct ?? 75) / 100,
+      classify_method_threshold: (aiSettingsForm.value.classify_method_threshold_pct ?? 60) / 100,
+      classify_shopping_threshold: (aiSettingsForm.value.classify_shopping_threshold_pct ?? 55) / 100,
+      classify_lifestyle_threshold: (aiSettingsForm.value.classify_lifestyle_threshold_pct ?? 55) / 100,
+      classify_drama_threshold: (aiSettingsForm.value.classify_drama_threshold_pct ?? 65) / 100,
+      classify_dual_combined_threshold: (aiSettingsForm.value.classify_dual_combined_threshold_pct ?? 80) / 100,
       tier_video_sample_count: aiSettingsForm.value.tier_video_sample_count,
       tier_avg_play_threshold: aiSettingsForm.value.tier_avg_play_threshold,
       tier_activity_days: aiSettingsForm.value.tier_activity_days,
@@ -2590,6 +2808,24 @@ function aiGenerationStatusLabel(status) {
   return map[status] || status
 }
 
+function supplementStatusLabel(status) {
+  const map = {
+    running: '补充中',
+    completed: '补充完成',
+    failed: '补充失败',
+  }
+  return map[status] || status
+}
+
+function supplementModeLabel(mode) {
+  const map = {
+    auto: '自动补充',
+    exclusive: '人设补充',
+    shared: '共享补充',
+  }
+  return map[mode] || mode
+}
+
 function formatCount(value) {
   if (value == null || value === '') return '-'
   const n = Number(value)
@@ -2646,7 +2882,7 @@ async function loadData({ silent = false } = {}) {
     if (filterAccountTier.value) params.account_tier = filterAccountTier.value
     if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
     if (filterClassificationType.value) params.classification_type = filterClassificationType.value
-    if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
+    if (filterCategoryIndices.value.length > 0) params.category_keys = filterCategoryIndices.value.join(',')
     const data = await fetchAccounts(params)
     items.value = data.items || []
     total.value = data.total || 0
@@ -2808,29 +3044,23 @@ async function startBulkVideoGenerate() {
   try {
     const isSelection = selectedMap.value.size > 0
     let accountIds = []
+    let filters = null
 
     if (isSelection) {
       accountIds = [...selectedMap.value.values()].map(a => a.id)
     } else {
-      const params = { page: 1, page_size: 9999 }
-      if (filterGender.value) params.gender = filterGender.value
-      if (filterAccountType.value) params.account_type = filterAccountType.value
-      if (filterFaceMode.value) params.face_mode = filterFaceMode.value
-      if (filterProductCodeMode.value) params.product_code_mode = filterProductCodeMode.value
-      if (filterAccountTier.value) params.account_tier = filterAccountTier.value
-      if (filterPlatformBindingStatus.value) params.platform_binding_status = filterPlatformBindingStatus.value
-      if (filterClassificationType.value) params.classification_type = filterClassificationType.value
-      if (filterCategoryIndices.value.length > 0) params.category_indices = filterCategoryIndices.value.join(',')
-      const data = await fetchAccounts(params)
-      accountIds = (data.items || []).map(a => a.id)
+      filters = {}
+      if (filterGender.value) filters.gender = filterGender.value
+      if (filterAccountType.value) filters.account_type = filterAccountType.value
+      if (filterFaceMode.value) filters.face_mode = filterFaceMode.value
+      if (filterProductCodeMode.value) filters.product_code_mode = filterProductCodeMode.value
+      if (filterAccountTier.value) filters.account_tier = filterAccountTier.value
+      if (filterPlatformBindingStatus.value) filters.platform_binding_status = filterPlatformBindingStatus.value
+      if (filterClassificationType.value) filters.classification_type = filterClassificationType.value
+      if (filterCategoryIndices.value.length > 0) filters.category_keys = filterCategoryIndices.value
     }
 
-    if (accountIds.length === 0) {
-      ElMessage.info('没有可操作的账号')
-      return
-    }
-
-    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount, fill_mode)
+    const result = await bulkGenerateVideoTasks(accountIds, mode, limit, bulkGenForm.value.subtaskCount, fill_mode, filters)
     const skipMsg = result.skipped_accounts > 0 ? `，${result.skipped_accounts} 个账号无可用模板` : ''
     ElMessage.success(result.message || `后台已启动，预计创建 ${result.planned || 0} 个生成任务${skipMsg}`)
   } catch (err) {
@@ -2884,43 +3114,38 @@ async function handleBulkSchedule() {
 
   savingBulkSchedule.value = true
 
-  // 使用已选账号或拉取全部账号
   const isSelection = selectedMap.value.size > 0
-  let allAccounts = []
-  if (isSelection) {
-    allAccounts = [...selectedMap.value.values()]
-  } else {
-    try {
-      const data = await fetchAccounts({ page: 1, page_size: 9999 })
-      allAccounts = data.items || []
-    } catch {
-      ElMessage.error('加载账号列表失败')
-      savingBulkSchedule.value = false
-      return
-    }
+  const accountIds = isSelection ? [...selectedMap.value.values()].map(a => a.id) : []
+  let filters = null
+  if (!isSelection) {
+    filters = {}
+    if (filterGender.value) filters.gender = filterGender.value
+    if (filterAccountType.value) filters.account_type = filterAccountType.value
+    if (filterFaceMode.value) filters.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) filters.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) filters.account_tier = filterAccountTier.value
+    if (filterPlatformBindingStatus.value) filters.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) filters.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) filters.category_keys = filterCategoryIndices.value
   }
 
-  const results = await Promise.allSettled(
-    allAccounts.map(account =>
-      updateScheduledPublish(account.id, {
-        publish_enabled: true,
-        publish_cron: bulkScheduleForm.value.publish_cron,
-        publish_window_minutes: bulkScheduleForm.value.publish_window_minutes,
-        publish_count: bulkScheduleForm.value.publish_count,
-      })
-    )
-  )
-
-  const successCount = results.filter(r => r.status === 'fulfilled').length
-  const failCount = results.filter(r => r.status === 'rejected').length
-
-  savingBulkSchedule.value = false
-  showBulkScheduleDialog.value = false
-
-  const failMsg = failCount > 0 ? `，${failCount} 个失败` : ''
-  ElMessage.success(`已为 ${successCount} 个账号启用定时发布${failMsg}`)
-  await loadData()
+  try {
+    const result = await bulkUpdateScheduledPublish(accountIds, {
+      publish_enabled: true,
+      publish_cron: bulkScheduleForm.value.publish_cron,
+      publish_window_minutes: bulkScheduleForm.value.publish_window_minutes,
+      publish_count: bulkScheduleForm.value.publish_count,
+    }, filters)
+    ElMessage.success(`已为 ${result.updated_count} 个账号设置定时发布`)
+    showBulkScheduleDialog.value = false
+    await loadData({ silent: true })
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '批量定时失败')
+  } finally {
+    savingBulkSchedule.value = false
+  }
 }
+
 
 // ── 补充模板 ────────────────────────────────────────────────────────────────
 
@@ -2932,8 +3157,8 @@ const supplementForm = ref({
   minViewCount: 10000,
   publishedAfter: '2024-01-01',
   maxDurationSeconds: 30,
+  categoryKeys: [],
 })
-
 
 function openSupplementDialog() {
   supplementForm.value = {
@@ -2942,8 +3167,18 @@ function openSupplementDialog() {
     minViewCount: 10000,
     publishedAfter: '2024-01-01',
     maxDurationSeconds: 30,
+    categoryKeys: [],
   }
   showSupplementDialog.value = true
+}
+
+function toggleSupplementCategory(key) {
+  const values = supplementForm.value.categoryKeys || []
+  if (values.includes(key)) {
+    supplementForm.value.categoryKeys = values.filter(v => v !== key)
+  } else {
+    supplementForm.value.categoryKeys = [...values, key]
+  }
 }
 
 async function handleSupplement() {
@@ -2951,18 +3186,18 @@ async function handleSupplement() {
   supplementing.value = true
 
   const isSelection = selectedMap.value.size > 0
-  let accountIds = []
-  if (isSelection) {
-    accountIds = [...selectedMap.value.keys()]
-  } else {
-    try {
-      const data = await fetchAccounts({ page: 1, page_size: 9999 })
-      accountIds = (data.items || []).map(a => a.id)
-    } catch {
-      ElMessage.error('加载账号列表失败')
-      supplementing.value = false
-      return
-    }
+  const accountIds = isSelection ? [...selectedMap.value.keys()] : []
+  let accountListFilters = null
+  if (!isSelection) {
+    accountListFilters = {}
+    if (filterGender.value) accountListFilters.gender = filterGender.value
+    if (filterAccountType.value) accountListFilters.account_type = filterAccountType.value
+    if (filterFaceMode.value) accountListFilters.face_mode = filterFaceMode.value
+    if (filterProductCodeMode.value) accountListFilters.product_code_mode = filterProductCodeMode.value
+    if (filterAccountTier.value) accountListFilters.account_tier = filterAccountTier.value
+    if (filterPlatformBindingStatus.value) accountListFilters.platform_binding_status = filterPlatformBindingStatus.value
+    if (filterClassificationType.value) accountListFilters.classification_type = filterClassificationType.value
+    if (filterCategoryIndices.value.length > 0) accountListFilters.category_keys = filterCategoryIndices.value
   }
 
   // shared 模式不使用弹窗过滤条件（走内部 pipeline_settings 默认）
@@ -2972,22 +3207,27 @@ async function handleSupplement() {
         min_view_count: supplementForm.value.minViewCount,
         published_after: supplementForm.value.publishedAfter,
         max_duration_seconds: supplementForm.value.maxDurationSeconds,
+        category_keys: supplementForm.value.templateType === 'exclusive'
+          ? [...(supplementForm.value.categoryKeys || [])]
+          : [],
       }
   const target = supplementForm.value.targetVideoCount
   try {
     let result
     if (supplementForm.value.templateType === 'auto') {
-      result = await autoSupplementTemplates(accountIds, target, filters)
+      result = await autoSupplementTemplates(accountIds, target, filters, accountListFilters)
     } else {
       result = await supplementTemplates(
         accountIds,
         supplementForm.value.templateType,
         target,
         filters,
+        accountListFilters,
       )
     }
     showSupplementDialog.value = false
-    ElMessage.success(result.message || `已为 ${accountIds.length} 个账号启动补充模板任务`)
+    ElMessage.success(result.message || '已启动补充模板任务')
+    await loadData({ silent: true })
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '启动补充模板失败')
   } finally {
@@ -2997,35 +3237,21 @@ async function handleSupplement() {
 
 // ── 视频分类 ────────────────────────────────────────────────────────────────
 
-const MAJOR_KEYS = ['display', 'knowledge', 'persona', 'trending']
+const MAJOR_KEYS = ['beauty', 'method', 'shopping', 'lifestyle', 'drama', 'unclassifiable']
+const RANKABLE_MAJOR_KEYS = ['beauty', 'method', 'shopping', 'lifestyle', 'drama']
 const MAJOR_LABEL_MAP = {
-  display: '展示美',
-  knowledge: '知识',
-  persona: '人设',
-  trending: '热点',
+  beauty:         '美美展示类',
+  method:         '穿搭方法类',
+  shopping:       '购物决策类',
+  lifestyle:      '人设生活类',
+  drama:          '情景剧情类',
+  unclassifiable: '不能分类',
 }
 
-const _CLASSIFY_CATEGORIES = [
-  [0, '单套衣服展示美', 'display'],
-  [1, '换装展示美', 'display'],
-  [2, '镜头感或表演型展示美', 'display'],
-  [3, '生活场景中的展示美', 'display'],
-  [4, '单品语言讲解', 'knowledge'],
-  [5, '造型选择或对比', 'knowledge'],
-  [6, '搭配教程或方法论', 'knowledge'],
-  [7, '单品展示无人讲解', 'knowledge'],
-  [8, '单品展示字幕讲解', 'knowledge'],
-  [9, '人生故事', 'persona'],
-  [10, '人生阶段', 'persona'],
-  [11, '个人态度表达', 'persona'],
-  [12, '热门梗段子反转梗流行文案', 'trending'],
-  [13, '明星影视综艺节日社会话题相关穿搭', 'trending'],
-]
-
-const DEFAULT_CLASSIFY_PROMPT = '你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下面 14 个分类中的哪一个，'
-  + '只输出该分类的下标整数（0-13），不要输出任何额外文字。\n\n分类列表：\n'
-  + _CLASSIFY_CATEGORIES.map(([idx, label, major]) => `${idx} - ${label}（大类: ${major}）`).join('\n')
-  + '\n\n输出格式：JSON 对象 {"category_index": <整数>}'
+const DEFAULT_CLASSIFY_PROMPT = '你将看到一个穿搭/时尚类短视频，请判断视频内容最贴合下列分类中的哪一个，'
+  + '只输出对应的 category_key 字符串，不要输出任何额外文字。\n\n分类列表（格式：key — 名称 [大类]）：\n'
+  + CATEGORY_OPTIONS.map(c => `${c.key} — ${c.label} [${MAJOR_LABEL_MAP[c.major]}]`).join('\n')
+  + '\n\n输出格式：JSON 对象 {"category_key": "<key>"}'
 
 const showDefaultPrompt = ref(false)
 
@@ -3038,12 +3264,202 @@ function topSubLabel(summary, majorKey) {
   if (!counts) return majorLabel(majorKey)
   let bestLabel = null
   let bestCount = 0
-  for (const [idx, label, major] of _CLASSIFY_CATEGORIES) {
-    if (major !== majorKey) continue
-    const c = Number(counts[String(idx)] || 0)
-    if (c > bestCount) { bestCount = c; bestLabel = label }
+  for (const cat of CATEGORY_OPTIONS) {
+    if (cat.major !== majorKey) continue
+    const c = Number(counts[cat.key] || 0)
+    if (c > bestCount) { bestCount = c; bestLabel = cat.label }
   }
   return bestLabel || majorLabel(majorKey)
+}
+
+// ── 频道数据分析弹窗 ──────────────────────────────────────────────────────────
+const showAnalyticsDialog = ref(false)
+const analyticsAccount = ref(null)
+const analyticsActivePlatform = ref('')
+const analyticsPlatforms = ref([])
+const analyticsDateRange = ref([
+  (() => { const d = new Date(); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10) })(),
+  new Date().toISOString().slice(0, 10),
+])
+const analyticsLoading = ref(false)
+const analyticsError = ref('')
+const analyticsData = ref(null)
+
+const anaChart1Ref = ref(null)
+const anaChart2Ref = ref(null)
+const anaChart3Ref = ref(null)
+const anaChart4Ref = ref(null)
+const anaChart5Ref = ref(null)
+let _anaCharts = []
+let _anaResizeHandler = null
+
+const analyticsLinkTotalConversion = computed(() => {
+  const d = analyticsData.value
+  if (!d || !d.total_video_views) return '0.00%'
+  return ((d.total_link_clicks / d.total_video_views) * 100).toFixed(2) + '%'
+})
+
+function _getAnalyticsPlatforms(account) {
+  return (account.channel_reservations || [])
+    .filter(r => r.status === 'bound')
+    .map(r => r.platform)
+}
+
+async function openAnalyticsDialog(item) {
+  analyticsAccount.value = item
+  const platforms = _getAnalyticsPlatforms(item)
+  analyticsPlatforms.value = platforms
+  analyticsActivePlatform.value = platforms[0] || ''
+  analyticsData.value = null
+  analyticsError.value = ''
+  showAnalyticsDialog.value = true
+  if (analyticsActivePlatform.value) {
+    await loadAnalyticsData()
+  }
+}
+
+function closeAnalyticsDialog() {
+  showAnalyticsDialog.value = false
+  analyticsAccount.value = null
+  analyticsData.value = null
+  analyticsError.value = ''
+  disposeAnaCharts()
+}
+
+async function switchAnalyticsPlatform(p) {
+  analyticsActivePlatform.value = p
+  await loadAnalyticsData()
+}
+
+async function loadAnalyticsData() {
+  if (!analyticsAccount.value || !analyticsActivePlatform.value) return
+  const [startDate, endDate] = analyticsDateRange.value || []
+  if (!startDate || !endDate) return
+
+  analyticsLoading.value = true
+  analyticsError.value = ''
+  analyticsData.value = null
+  disposeAnaCharts()
+  try {
+    const data = await fetchChannelAnalytics(analyticsAccount.value.id, {
+      platform: analyticsActivePlatform.value,
+      startDate,
+      endDate,
+    })
+    analyticsData.value = data
+    await nextTick()
+    // el-dialog 有淡入动画，nextTick 只保证 vdom diff，需等动画结束 canvas 才有实际尺寸
+    setTimeout(() => renderAnaCharts(data), 150)
+  } catch (e) {
+    analyticsError.value = e?.response?.data?.detail || '加载失败'
+  } finally {
+    analyticsLoading.value = false
+  }
+}
+
+function _lineChartOption(title, dates, values, { yFormatter = v => v, color = '#3b82f6' } = {}) {
+  return {
+    tooltip: {
+      trigger: 'axis',
+      formatter: params => {
+        const p = params[0]
+        return `${p.axisValue}<br/>${p.marker}${yFormatter(p.value)}`
+      },
+    },
+    grid: { top: 12, right: 20, bottom: 40, left: 60 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLabel: { fontSize: 11, rotate: 30 },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { fontSize: 11, formatter: yFormatter },
+    },
+    series: [{
+      type: 'line',
+      data: values,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 4,
+      lineStyle: { color, width: 2 },
+      itemStyle: { color },
+      areaStyle: { color: color + '22' },
+    }],
+  }
+}
+
+function renderAnaCharts(data) {
+  disposeAnaCharts()
+  const refs = [anaChart1Ref, anaChart2Ref, anaChart3Ref, anaChart4Ref, anaChart5Ref]
+  _anaCharts = refs.map(r => r.value ? echarts.init(r.value) : null)
+
+  // 对齐日期轴：以 views 日期为主轴，clicks 按日期 map
+  const viewsByDt = Object.fromEntries((data.daily_views || []).map(d => [d.dt, d]))
+  const clicksByDt = Object.fromEntries((data.daily_clicks || []).map(d => [d.dt, d.daily_clicks]))
+
+  // 合并所有日期
+  const allDates = [...new Set([
+    ...(data.daily_views || []).map(d => d.dt),
+    ...(data.daily_clicks || []).map(d => d.dt),
+  ])].sort()
+
+  const dailyViews = allDates.map(dt => viewsByDt[dt]?.daily_view_increment ?? 0)
+
+  // Link 累计点击（按时间累加）
+  let cumClicks = 0
+  const cumulativeClicks = allDates.map(dt => {
+    cumClicks += clicksByDt[dt] ?? 0
+    return cumClicks
+  })
+  const dailyClicks = allDates.map(dt => clicksByDt[dt] ?? 0)
+
+  // 日转化率
+  const dailyConversion = allDates.map((dt, i) => {
+    const views = dailyViews[i]
+    const clicks = dailyClicks[i]
+    if (!views) return 0
+    return +((clicks / views) * 100).toFixed(4)
+  })
+
+  // 总转化率（累计点击 / 截至当天 day_end_views）
+  const totalConversion = allDates.map((dt, i) => {
+    const totalViews = viewsByDt[dt]?.day_end_views ?? 0
+    const clicks = cumulativeClicks[i]
+    if (!totalViews) return 0
+    return +((clicks / totalViews) * 100).toFixed(4)
+  })
+
+  const pctFmt = v => v + '%'
+  const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444']
+  const configs = [
+    { values: dailyViews, color: colors[0] },
+    { values: cumulativeClicks, color: colors[1] },
+    { values: dailyClicks, color: colors[2] },
+    { values: dailyConversion, color: colors[3], yFormatter: pctFmt },
+    { values: totalConversion, color: colors[4], yFormatter: pctFmt },
+  ]
+
+  _anaCharts.forEach((chart, i) => {
+    if (!chart) return
+    const cfg = configs[i]
+    chart.setOption(_lineChartOption('', allDates, cfg.values, { color: cfg.color, yFormatter: cfg.yFormatter }))
+    chart.resize()
+  })
+
+  if (!_anaResizeHandler) {
+    _anaResizeHandler = () => _anaCharts.forEach(c => c?.resize())
+    window.addEventListener('resize', _anaResizeHandler)
+  }
+}
+
+function disposeAnaCharts() {
+  if (_anaResizeHandler) {
+    window.removeEventListener('resize', _anaResizeHandler)
+    _anaResizeHandler = null
+  }
+  _anaCharts.forEach(c => c?.dispose())
+  _anaCharts = []
 }
 
 const showClassificationDialog = ref(false)
@@ -3821,7 +4237,7 @@ onMounted(() => {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  min-width: 1440px;
+  min-width: 1660px;
   table-layout: fixed;
 }
 
@@ -3850,10 +4266,10 @@ onMounted(() => {
 .al-th:last-child  { border-top-right-radius: 14px; }
 
 .al-th-check    { width: 44px; text-align: center; left: 0; border-right: 1px solid #e8edf5; }
-.al-th-media    { width: 110px; left: 44px; border-right: 1px solid #e8edf5; }
-.al-th-name     { width: 280px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
+.al-th-media    { width: 118px; left: 44px; border-right: 1px solid #e8edf5; }
+.al-th-name     { width: 420px; left: 162px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #e8edf5; }
 .al-th-platform { width: 180px; }
-.al-th-stat     { width: 90px; text-align: right; }
+.al-th-stat     { width: 100px; text-align: right; }
 .al-th-date     { width: 130px; }
 .al-th-flags    { width: 160px; }
 .al-th-tags     { width: 220px; }
@@ -4067,7 +4483,7 @@ onMounted(() => {
 .al-tr:hover { background: #f8faff; }
 
 .al-td {
-  padding: 10px 14px;
+  padding: 16px 14px;
   vertical-align: middle;
   font-size: 13px;
   color: #1e293b;
@@ -4083,21 +4499,31 @@ onMounted(() => {
 }
 
 .al-td-check  { text-align: center; width: 44px; left: 0; border-right: 1px solid #f1f5f9; }
-.al-td-media  { width: 110px; left: 44px; border-right: 1px solid #f1f5f9; }
-.al-td-name   { width: 280px; left: 154px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
+.al-td-media  { width: 118px; left: 44px; border-right: 1px solid #f1f5f9; }
+.al-td-name   { width: 420px; left: 162px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1); border-right: 1px solid #f1f5f9; }
 .al-td-flags   { width: 160px; }
 .al-td-actions { text-align: center; width: 160px; }
 
 /* Name cell adjustments for fixed layout */
-.al-name-main {
-  font-size: 14px;
-  font-weight: 700;
-  color: #0f172a;
-  margin-bottom: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
+.al-account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-width: 392px;
+}
+
+.al-account-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.al-account-title-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 .al-name-handle {
   display: flex;
@@ -4232,21 +4658,47 @@ onMounted(() => {
 
 /* Name cell */
 .al-name-main {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 750;
   color: #0f172a;
-  margin-bottom: 4px;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 200px;
+  max-width: 270px;
 }
 
-.al-name-meta {
+.al-handle {
+  font-size: 12px;
+  line-height: 1.2;
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+.al-signature {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.al-identity-grid {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
+}
+
+.al-account-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
 }
 
 .al-style-desc {
@@ -4258,7 +4710,7 @@ onMounted(() => {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  max-width: 200px;
+  max-width: 360px;
 }
 
 /* Platform cell */
@@ -4417,11 +4869,11 @@ onMounted(() => {
 .ac-type-badge {
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 20px;
-  letter-spacing: .02em;
+  padding: 4px 9px;
+  border-radius: 8px;
   flex-shrink: 0;
   white-space: nowrap;
+  line-height: 1.15;
 }
 
 .ac-type-persona {
@@ -4494,8 +4946,8 @@ onMounted(() => {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 4px 9px;
+  border-radius: 8px;
   background: #e2e8f0;
   color: #475569;
   white-space: nowrap;
@@ -4525,6 +4977,76 @@ onMounted(() => {
   color: #15803d;
 }
 
+.ac-hidden-badge {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+.ac-supplement-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  max-width: 100%;
+}
+
+.ac-supplement-row.is-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.ac-supplement-row.is-completed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.ac-supplement-row.is-failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.ac-supplement-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.ac-supplement-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.ac-supplement-row.is-running .ac-supplement-dot { background: #2563eb; }
+.ac-supplement-row.is-completed .ac-supplement-dot { background: #16a34a; }
+.ac-supplement-row.is-failed .ac-supplement-dot { background: #dc2626; }
+
+.ac-supplement-mode {
+  font-weight: 600;
+  color: #64748b;
+}
+
+.ac-supplement-lines {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
 .ac-classify-row {
   display: flex;
   align-items: center;
@@ -4534,18 +5056,28 @@ onMounted(() => {
 }
 .ac-classify-badge {
   font-size: 11px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 8px;
   background: #f1f5f9;
   color: #64748b;
+  line-height: 1.15;
 }
 .ac-classify-badge.is-running { background: #ede9fe; color: #6d28d9; }
 .ac-classify-badge.is-single  { background: #dcfce7; color: #15803d; }
 .ac-classify-badge.is-dual    { background: #dbeafe; color: #1d4ed8; }
 .ac-classify-badge.is-chaos   { background: #fee2e2; color: #b91c1c; }
 .ac-classify-badge.is-insufficient { background: #fef3c7; color: #b45309; }
-.ac-classify-count { font-size: 11px; color: #94a3b8; }
+.ac-classify-count,
+.ac-metric-item {
+  font-size: 11px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 4px 8px;
+  line-height: 1.15;
+}
 
 /* 分类确认弹窗 */
 .al-classify-confirm-option {
@@ -5176,6 +5708,42 @@ onMounted(() => {
   color: #92400e;
 }
 .al-auto-supplement-tip-warn svg { flex-shrink: 0; color: #d97706; }
+
+.al-supplement-category-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.al-supplement-category-group {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.al-supplement-category-major {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.al-supplement-major-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.al-supplement-major-dot.is-display { background: #ec4899; }
+.al-supplement-major-dot.is-knowledge { background: #3b82f6; }
+.al-supplement-major-dot.is-persona { background: #f59e0b; }
+.al-supplement-major-dot.is-trending { background: #10b981; }
 
 .al-supplement-types {
   display: grid;
@@ -6204,8 +6772,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
   font-size: 12px;
+  min-width: 0;
 }
 .ac-kol-badge {
   display: inline-block;
@@ -6217,11 +6785,34 @@ onMounted(() => {
 .ac-kol-pending { background: #fef3c7; color: #b45309; }
 .ac-kol-failed  { background: #fee2e2; color: #b91c1c; }
 .ac-kol-success { background: #dcfce7; color: #15803d; }
+.ac-kol-retry-btn {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid #fca5a5;
+  background: #fff;
+  color: #b91c1c;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.ac-kol-retry-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+.ac-kol-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .ac-kol-link {
   color: #2563eb;
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
   text-decoration: none;
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ac-kol-link:hover { text-decoration: underline; }
 .ac-kol-link-empty {
@@ -6233,28 +6824,116 @@ onMounted(() => {
 .ac-kol-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
   flex: 1;
+  min-width: 0;
 }
 .ac-kol-platform-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  min-width: 0;
 }
 .ac-kol-platform-tag {
   display: inline-block;
   font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 3px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
   background: #e2e8f0;
   color: #334155;
   text-transform: uppercase;
   min-width: 24px;
   text-align: center;
-  line-height: 1.4;
+  line-height: 1.35;
+  flex-shrink: 0;
 }
 .ac-kol-platform-youtube   { background: #fee2e2; color: #b91c1c; }
 .ac-kol-platform-tiktok    { background: #1e293b; color: #f8fafc; }
 .ac-kol-platform-instagram { background: #fce7f3; color: #9d174d; }
+
+/* ── ac-btn-analytics ─────────────────────────────────────────────────── */
+.ac-btn-analytics {
+  background: #ede9fe;
+  color: #6d28d9;
+  border-color: #c4b5fd;
+}
+.ac-btn-analytics:hover { background: #ddd6fe; }
+
+/* ── 频道数据分析弹窗 (ana-*) ─────────────────────────────────────────── */
+.ana-body { padding: 0 2px; }
+
+.ana-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.ana-platform-tabs {
+  display: flex;
+  gap: 6px;
+}
+.ana-tab {
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background .15s, color .15s;
+}
+.ana-tab.active {
+  background: #6d28d9;
+  color: #fff;
+  border-color: #6d28d9;
+}
+.ana-tab:hover:not(.active) { background: #ede9fe; color: #6d28d9; }
+
+.ana-metrics {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.ana-metric-card {
+  flex: 1;
+  min-width: 160px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.ana-metric-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.ana-metric-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.ana-charts { display: flex; flex-direction: column; gap: 20px; }
+.ana-chart-row {}
+.ana-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.ana-chart-canvas { height: 160px; width: 100%; display: block; }
+
+.ana-loading, .ana-error, .ana-empty {
+  text-align: center;
+  padding: 40px 0;
+  color: #94a3b8;
+  font-size: 14px;
+}
+.ana-error { color: #ef4444; }
 </style>

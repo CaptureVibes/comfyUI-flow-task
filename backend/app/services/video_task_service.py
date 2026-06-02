@@ -8,7 +8,6 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-import httpx
 from fastapi import HTTPException, status
 from google.cloud import storage
 from sqlalchemy import select
@@ -1181,25 +1180,33 @@ class VideoTaskService:
         root = f"videos_{date_str}"
         zip_filename = f"videos_{date_str}.zip"
 
+        from app.utils.gcs_download import download_url_to_local
+
         buf = io.BytesIO()
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for task, sub_task, publication, account in rows:
-                    folder = sanitize(account.account_name)
-                    pub_time = publication.completed_at or publication.updated_at or task.created_at
-                    pub_str = pub_time.strftime("%Y%m%d_%H%M%S")
-                    filename = f"{account.id}_{sanitize(account.account_name)}_{pub_str}.mp4"
-                    arc_path = f"{root}/{folder}/{filename}"
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for task, sub_task, publication, account in rows:
+                folder = sanitize(account.account_name)
+                pub_time = publication.completed_at or publication.updated_at or task.created_at
+                pub_str = pub_time.strftime("%Y%m%d_%H%M%S")
+                filename = f"{account.id}_{sanitize(account.account_name)}_{pub_str}.mp4"
+                arc_path = f"{root}/{folder}/{filename}"
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+                os.close(tmp_fd)
+                try:
+                    await download_url_to_local(sub_task.result_video_url, tmp_path, timeout=60.0)
+                    with open(tmp_path, "rb") as f:
+                        zf.writestr(arc_path, f.read())
+                    logger.info("Packed video %s → %s", sub_task.result_video_url, arc_path)
+                except Exception as exc:
+                    logger.warning(
+                        "Skip video for task %s (account %s): %s",
+                        task.id, account.account_name, exc,
+                    )
+                finally:
                     try:
-                        resp = await client.get(sub_task.result_video_url)
-                        resp.raise_for_status()
-                        zf.writestr(arc_path, resp.content)
-                        logger.info("Packed video %s → %s", sub_task.result_video_url, arc_path)
-                    except Exception as exc:
-                        logger.warning(
-                            "Skip video for task %s (account %s): %s",
-                            task.id, account.account_name, exc,
-                        )
+                        os.unlink(tmp_path)
+                    except FileNotFoundError:
+                        pass
 
         buf.seek(0)
         return buf, zip_filename
@@ -1269,28 +1276,36 @@ class VideoTaskService:
         root = "videos_latest"
         zip_filename = "videos_latest.zip"
 
+        from app.utils.gcs_download import download_url_to_local
+
         buf = io.BytesIO()
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for task, sub_task, publication, account in latest_rows:
-                    folder = sanitize(account.account_name)
-                    pub_time = sub_task.updated_at or task.created_at
-                    pub_str = pub_time.strftime("%Y%m%d_%H%M%S")
-                    base_name = f"{account.id}_{sanitize(account.account_name)}_{pub_str}"
-                    video_path = f"{root}/{folder}/{base_name}.mp4"
-                    txt_path = f"{root}/{folder}/{base_name}_caption.txt"
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for task, sub_task, publication, account in latest_rows:
+                folder = sanitize(account.account_name)
+                pub_time = sub_task.updated_at or task.created_at
+                pub_str = pub_time.strftime("%Y%m%d_%H%M%S")
+                base_name = f"{account.id}_{sanitize(account.account_name)}_{pub_str}"
+                video_path = f"{root}/{folder}/{base_name}.mp4"
+                txt_path = f"{root}/{folder}/{base_name}_caption.txt"
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+                os.close(tmp_fd)
+                try:
+                    await download_url_to_local(sub_task.result_video_url, tmp_path, timeout=60.0)
+                    with open(tmp_path, "rb") as f:
+                        zf.writestr(video_path, f.read())
+                    caption_text = build_caption_txt(publication.request_payload)
+                    zf.writestr(txt_path, caption_text.encode("utf-8"))
+                    logger.info("Packed latest video for account %s → %s", account.account_name, video_path)
+                except Exception as exc:
+                    logger.warning(
+                        "Skip latest video for account %s: %s",
+                        account.account_name, exc,
+                    )
+                finally:
                     try:
-                        resp = await client.get(sub_task.result_video_url)
-                        resp.raise_for_status()
-                        zf.writestr(video_path, resp.content)
-                        caption_text = build_caption_txt(publication.request_payload)
-                        zf.writestr(txt_path, caption_text.encode("utf-8"))
-                        logger.info("Packed latest video for account %s → %s", account.account_name, video_path)
-                    except Exception as exc:
-                        logger.warning(
-                            "Skip latest video for account %s: %s",
-                            account.account_name, exc,
-                        )
+                        os.unlink(tmp_path)
+                    except FileNotFoundError:
+                        pass
 
         buf.seek(0)
         return buf, zip_filename

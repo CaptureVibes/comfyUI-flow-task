@@ -3,6 +3,7 @@ Publication metrics scheduler
 ==============================
 每天北京时间 11:30 — 同步最近一个月已发布视频的指标快照（completed + partial）
 每天北京时间 12:30 — 根据 video_publications 数据聚合计算每个 Account 的 performance_snapshot
+每天北京时间 13:30 — 收集 completed_at ≥24h 且 kol_link_clicks 为空的发布记录的 KOL Link 点击数
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ _TZ = pytz.timezone("Asia/Shanghai")
 # 每日定时任务触发时间（北京时间，24小时制；HH, MM）
 _TRIGGER_SYNC_METRICS = (11, 30)        # 同步视频指标快照
 _TRIGGER_SYNC_ACCOUNT_SNAPSHOT = (12, 30)  # 计算账号 performance_snapshot（指标同步后1小时）
+_TRIGGER_COLLECT_KOL_CLICKS = (13, 30)  # 收集发布后 24h KOL Link 点击数
 
 _scheduler_task: asyncio.Task | None = None
 _scheduler_stop_event: asyncio.Event | None = None
@@ -102,6 +104,14 @@ async def _check_and_run() -> None:
             _last_run["sync_account_snapshot"] = key
             logger.info("【指标同步调度器】触发账号快照计算（北京时间 %s）", now_bj.strftime("%H:%M"))
             asyncio.get_running_loop().create_task(_run_sync_account_snapshots())
+
+    # 每天 13:30 收集发布后 24h KOL Link 点击数
+    if _is_in_window(now_bj, _TRIGGER_COLLECT_KOL_CLICKS):
+        key = _today_key("collect_kol_clicks")
+        if _last_run.get("collect_kol_clicks") != key:
+            _last_run["collect_kol_clicks"] = key
+            logger.info("【指标同步调度器】触发 KOL Link 点击数收集（北京时间 %s）", now_bj.strftime("%H:%M"))
+            asyncio.get_running_loop().create_task(_run_collect_kol_clicks())
 
 
 async def _run_sync_metrics() -> None:
@@ -272,7 +282,9 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
 
             total_views = 0
             total_likes = 0
+            total_kol_link_clicks = 0
             like_rate_values: list[float] = []
+            click_rate_values: list[float] = []
             published_dates: list[datetime] = []
             video_count = 0
 
@@ -311,6 +323,12 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 if pub_views > 0 and pub_likes >= 0:
                     like_rate_values.append(pub_likes / pub_views * 100)
 
+                # kol_link_clicks 是 account 维度的，所有平台共用同一个 kol_user_id
+                if pub.kol_link_clicks is not None:
+                    total_kol_link_clicks += pub.kol_link_clicks
+                    if pub_views > 0:
+                        click_rate_values.append(pub.kol_link_clicks / pub_views * 100)
+
                 if pub.completed_at:
                     published_dates.append(pub.completed_at)
 
@@ -319,6 +337,7 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
 
             avg_views = round(total_views / video_count, 1) if video_count else None
             avg_like_rate = round(sum(like_rate_values) / len(like_rate_values), 2) if like_rate_values else None
+            avg_video_click_rate = round(sum(click_rate_values) / len(click_rate_values), 4) if click_rate_values else None
             latest = max(published_dates) if published_dates else None
             first = min(published_dates) if published_dates else None
 
@@ -330,6 +349,8 @@ async def sync_account_performance_snapshots(db, account_id=None) -> dict:
                 "total_likes": total_likes,
                 "avg_views": avg_views,
                 "avg_like_rate": avg_like_rate,
+                "total_kol_link_clicks": total_kol_link_clicks if click_rate_values else None,
+                "avg_video_click_rate": avg_video_click_rate,
                 "latest_video_published_at": latest.isoformat() if latest else None,
                 "first_content_date": first.isoformat() if first else None,
             }
@@ -352,3 +373,85 @@ def _to_int(value) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return 0
+
+
+async def _run_collect_kol_clicks() -> None:
+    """收集 completed_at ≥ 24h 且 kol_link_clicks 为 NULL 的发布记录的 KOL Link 点击数"""
+    try:
+        async with SessionLocal() as db:
+            result = await collect_kol_link_clicks(db)
+            logger.info(
+                "【指标同步调度器】KOL Link 点击数收集完成：updated=%d skipped=%d failed=%d total=%d",
+                result["updated"], result["skipped"], result["failed"], result["total"],
+            )
+    except Exception:
+        logger.exception("【指标同步调度器】KOL Link 点击数收集异常")
+
+
+async def collect_kol_link_clicks(db, *, publication_id=None) -> dict:
+    """
+    扫描 completed_at ≥ 24h 且 kol_link_clicks IS NULL 的发布记录，
+    查询 BigQuery 中 [completed_at 当天, completed_at+1天] 的 KOL Link 点击数并写回。
+
+    publication_id: 若传入则只处理该条记录（用于手动触发单条补采）。
+    """
+    from datetime import date as date_type
+    from sqlalchemy import select
+    from app.models.account import Account
+    from app.models.video_publication import VideoPublication
+    from app.models.video_task import VideoSubTask, VideoTask
+    from app.services.ext.bigquery_service.kol_analytics import get_kol_clicks_in_window
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+
+    stmt = (
+        select(VideoPublication, Account.kol_user_id)
+        .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+        .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+        .join(Account, Account.id == VideoTask.account_id)
+        .where(VideoPublication.status.in_(["completed", "partial"]))
+        .where(VideoPublication.completed_at.isnot(None))
+        .where(VideoPublication.completed_at <= cutoff)
+        .where(VideoPublication.kol_link_clicks.is_(None))
+        .where(Account.kol_user_id.isnot(None))
+    )
+    if publication_id is not None:
+        stmt = stmt.where(VideoPublication.id == publication_id)
+
+    rows = (await db.execute(stmt)).all()
+
+    updated = skipped = failed = 0
+    loop = asyncio.get_running_loop()
+
+    for pub, kol_user_id in rows:
+        if not kol_user_id:
+            skipped += 1
+            continue
+        try:
+            completed_day: date_type = pub.completed_at.date()
+            window_end: date_type = (pub.completed_at + timedelta(days=1)).date()
+            clicks = await loop.run_in_executor(
+                None,
+                get_kol_clicks_in_window,
+                kol_user_id,
+                completed_day,
+                window_end,
+            )
+            pub.kol_link_clicks = clicks
+            updated += 1
+            logger.debug(
+                "【KOL点击收集】publication_id=%s kol_user_id=%s clicks=%d",
+                pub.id, kol_user_id, clicks,
+            )
+        except Exception:
+            logger.exception(
+                "【KOL点击收集】BigQuery 查询失败: publication_id=%s kol_user_id=%s",
+                pub.id, kol_user_id,
+            )
+            failed += 1
+
+    if updated:
+        await db.commit()
+
+    return {"updated": updated, "skipped": skipped, "failed": failed, "total": len(rows)}

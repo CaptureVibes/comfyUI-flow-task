@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 from google import genai
 from google.genai import types
 
@@ -106,11 +105,6 @@ async def _run_with_quota_retries(operation: str, call):
             await asyncio.sleep(_QUOTA_RETRY_DELAY_SECONDS)
 
 
-def _is_bad_request_error(exc: Exception) -> bool:
-    exc_str = str(exc)
-    return "400" in exc_str or "Cannot fetch content" in exc_str
-
-
 def _file_state_name(file: object) -> str:
     state = getattr(file, "state", None)
     return getattr(state, "name", None) or getattr(state, "value", None) or str(state)
@@ -137,43 +131,27 @@ async def _download_media_to_temp_file(
     fallback_mime_type: str,
     timeout: float,
 ) -> _DownloadedMedia:
+    """下载远端媒体到本地临时文件。
+
+    GCS（gs:// 或 storage.googleapis.com 公网链）走 SDK，其它走 httpx。
+    """
     fallback_extension = mimetypes.guess_extension(fallback_mime_type) or ".bin"
     filename = _filename_from_url(url, fallback_extension)
     suffix = Path(filename).suffix or fallback_extension
 
+    from app.utils.gcs_download import download_url_to_local
     from app.utils.tmp_storage import disk_namedtempfile
     with disk_namedtempfile(suffix=suffix, delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
-    total = 0
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=30.0),
-            follow_redirects=True,
-            headers=_MEDIA_DOWNLOAD_HEADERS,
-            trust_env=False,
-        ) as client:
-            async with client.stream("GET", url) as response:
-                if response.status_code >= 400:
-                    body = await response.aread()
-                    preview = body[:500].decode("utf-8", errors="ignore")
-                    raise RuntimeError(
-                        f"download media failed: status={response.status_code}, "
-                        f"url={response.url}, body={preview}"
-                    )
-
-                mime_type = _normalize_mime_type(
-                    response.headers.get("content-type"),
-                    filename,
-                    fallback_mime_type,
-                )
-                with tmp_path.open("wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                        if not chunk:
-                            continue
-                        f.write(chunk)
-                        total += len(chunk)
-
+        total = await download_url_to_local(
+            url,
+            str(tmp_path),
+            http_headers=_MEDIA_DOWNLOAD_HEADERS,
+            timeout=timeout,
+        )
+        mime_type = _normalize_mime_type(None, filename, fallback_mime_type)
         return _DownloadedMedia(
             path=tmp_path,
             filename=filename,
@@ -217,7 +195,7 @@ async def _upload_url_to_gemini_file(
     )
     try:
         logger.info(
-            "Uploading media fallback to Gemini Files: url=%s size=%d mime=%s",
+            "Uploading media to Gemini Files: url=%s size=%d mime=%s",
             url[:160],
             media.size,
             media.mime_type,
@@ -253,53 +231,6 @@ async def _delete_gemini_files(client: genai.Client, files: list[object]) -> Non
             logger.warning("Failed to delete Gemini fallback file %s: %s", name, exc)
 
 
-async def _generate_content_with_uploaded_media(
-    client: genai.Client,
-    *,
-    model_name: str,
-    prompt: str,
-    media_urls: list[tuple[str, str, str | None]],
-    config: types.GenerateContentConfig,
-    timeout: float,
-    require_text: bool,
-) -> str:
-    uploaded_files: list[object] = []
-    parts: list[types.Part] = []
-    try:
-        for url, fallback_mime_type, label in media_urls:
-            if label:
-                parts.append(types.Part.from_text(text=label))
-            file = await _upload_url_to_gemini_file(
-                client,
-                url,
-                fallback_mime_type=fallback_mime_type,
-                timeout=timeout,
-            )
-            uploaded_files.append(file)
-            file_uri = getattr(file, "uri", None)
-            file_mime_type = getattr(file, "mime_type", None) or fallback_mime_type
-            if not file_uri:
-                raise RuntimeError(f"Gemini uploaded file has no uri: {file}")
-            parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=file_mime_type))
-
-        parts.append(types.Part.from_text(text=prompt))
-        response = await _run_with_quota_retries(
-            "Google SDK media fallback generate_content",
-            lambda: client.aio.models.generate_content(
-                model=model_name,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
-            ),
-        )
-        text = response.text or ""
-        logger.info("Google SDK media fallback response: %s", text[:500])
-        if require_text and not text:
-            raise ValueError(f"模型 {model_name} 返回空响应")
-        return text
-    finally:
-        await _delete_gemini_files(client, uploaded_files)
-
-
 def _extract_image_bytes(response: object) -> bytes | None:
     for candidate in getattr(response, "candidates", None) or []:
         content = getattr(candidate, "content", None)
@@ -312,51 +243,6 @@ def _extract_image_bytes(response: object) -> bytes | None:
                 return bytes(data)
             return base64.b64decode(data)
     return None
-
-
-async def _generate_image_with_uploaded_media(
-    client: genai.Client,
-    *,
-    model_name: str,
-    prompt: str,
-    image_urls: list[str],
-    config: types.GenerateContentConfig,
-    timeout: float,
-) -> bytes:
-    uploaded_files: list[object] = []
-    parts: list[types.Part] = []
-    try:
-        for i, url in enumerate(image_urls):
-            parts.append(types.Part.from_text(text=f"参考图{i + 1}"))
-            file = await _upload_url_to_gemini_file(
-                client,
-                url,
-                fallback_mime_type="image/jpeg",
-                timeout=timeout,
-            )
-            uploaded_files.append(file)
-            file_uri = getattr(file, "uri", None)
-            file_mime_type = getattr(file, "mime_type", None) or "image/jpeg"
-            if not file_uri:
-                raise RuntimeError(f"Gemini uploaded file has no uri: {file}")
-            parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=file_mime_type))
-
-        parts.append(types.Part.from_text(text=prompt))
-        response = await _run_with_quota_retries(
-            "Google SDK image fallback generate_content",
-            lambda: client.aio.models.generate_content(
-                model=model_name,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
-            ),
-        )
-        image_bytes = _extract_image_bytes(response)
-        if image_bytes is not None:
-            logger.info("Google SDK image gen fallback success: %d bytes", len(image_bytes))
-            return image_bytes
-        raise ValueError(f"Google SDK image gen fallback: no image in response — {response}")
-    finally:
-        await _delete_gemini_files(client, uploaded_files)
 
 
 # =============================================================================
@@ -376,16 +262,12 @@ async def call_google_gemini_api(
     """
     Call Google Gemini SDK for text generation.
 
-    Supports text-only and video+text calls (via file URI).
+    Supports text-only and video+text calls. Any provided video is downloaded
+    locally and uploaded via the Gemini Files API (no URL hand-off).
     Pass response_schema (JSON Schema dict) to enable structured JSON output.
     Returns extracted text content. Retries on transient errors.
     """
     client = _make_client(api_key)
-
-    parts: list[types.Part] = []
-    if video_url:
-        parts.append(types.Part.from_uri(file_uri=video_url, mime_type="video/mp4"))
-    parts.append(types.Part.from_text(text=prompt))
 
     config_kwargs: dict = {"temperature": temperature}
     if response_schema is not None:
@@ -399,56 +281,58 @@ async def call_google_gemini_api(
         model_name, masked_key, bool(video_url), prompt[:200],
     )
 
-    attempt = 0
-    max_attempts = 3
-    while attempt < _max_loop_attempts(max_attempts):
-        attempt += 1
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
+    uploaded_files: list[object] = []
+    try:
+        parts: list[types.Part] = []
+        if video_url:
+            file = await _upload_url_to_gemini_file(
+                client,
+                video_url,
+                fallback_mime_type="video/mp4",
+                timeout=timeout,
             )
-            text = response.text
-            logger.info("Google SDK text response: %s", (text or "")[:500])
-            if not text:
-                raise ValueError(f"模型 {model_name} 返回空响应")
-            return text
+            uploaded_files.append(file)
+            file_uri = getattr(file, "uri", None)
+            file_mime_type = getattr(file, "mime_type", None) or "video/mp4"
+            if not file_uri:
+                raise RuntimeError(f"Gemini uploaded file has no uri: {file}")
+            parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=file_mime_type))
+        parts.append(types.Part.from_text(text=prompt))
 
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            # 4xx 不重试（配置错误）
-            exc_str = str(exc)
-            if video_url and _is_bad_request_error(exc):
-                logger.warning(
-                    "Google SDK text got 400, fallback to Gemini Files immediately: "
-                    "model=%s video=%s error=%s",
-                    model_name,
-                    video_url[:160],
-                    exc,
-                )
-                return await _generate_content_with_uploaded_media(
-                    client,
-                    model_name=model_name,
-                    prompt=prompt,
-                    media_urls=[(video_url, "video/mp4", None)],
+        attempt = 0
+        max_attempts = 3
+        while attempt < _max_loop_attempts(max_attempts):
+            attempt += 1
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[types.Content(role="user", parts=parts)],
                     config=config,
-                    timeout=timeout,
-                    require_text=True,
                 )
-            if any(code in exc_str for code in ["400", "401", "403", "404"]):
-                logger.error(
-                    "Google SDK 4xx error (不重试): model=%s video=%s prompt=%s\n%s",
-                    model_name, video_url, prompt[:300], exc,
-                )
+                text = response.text
+                logger.info("Google SDK text response: %s", (text or "")[:500])
+                if not text:
+                    raise ValueError(f"模型 {model_name} 返回空响应")
+                return text
+
+            except asyncio.CancelledError:
                 raise
-            if not _should_retry_error(exc, attempt, max_attempts):
-                logger.error("Google SDK text 已达最大重试次数 %s，放弃: model=%s %s", _retry_limit_label(exc, max_attempts), model_name, exc)
-                raise
-            delay = _retry_delay_seconds(exc, attempt)
-            logger.warning("Google SDK text attempt %d/%s failed (%ds后重试): %s", attempt, _retry_limit_label(exc, max_attempts), delay, exc)
-            await asyncio.sleep(delay)
+            except Exception as exc:
+                exc_str = str(exc)
+                if any(code in exc_str for code in ["400", "401", "403", "404"]):
+                    logger.error(
+                        "Google SDK 4xx error (不重试): model=%s video=%s prompt=%s\n%s",
+                        model_name, video_url, prompt[:300], exc,
+                    )
+                    raise
+                if not _should_retry_error(exc, attempt, max_attempts):
+                    logger.error("Google SDK text 已达最大重试次数 %s，放弃: model=%s %s", _retry_limit_label(exc, max_attempts), model_name, exc)
+                    raise
+                delay = _retry_delay_seconds(exc, attempt)
+                logger.warning("Google SDK text attempt %d/%s failed (%ds后重试): %s", attempt, _retry_limit_label(exc, max_attempts), delay, exc)
+                await asyncio.sleep(delay)
+    finally:
+        await _delete_gemini_files(client, uploaded_files)
 
 
 # =============================================================================
@@ -468,16 +352,11 @@ async def call_google_gemini_api_with_images(
     """
     Call Google Gemini SDK for text generation with reference images.
 
+    All reference images are uploaded via the Gemini Files API (no URL hand-off).
     Supports structured JSON output via response_schema (passed as dict).
     Returns extracted text content.
     """
     client = _make_client(api_key)
-
-    parts: list[types.Part] = []
-    for i, url in enumerate(image_urls):
-        parts.append(types.Part.from_text(text=f"参考图{i + 1}"))
-        parts.append(types.Part.from_uri(file_uri=url, mime_type="image/jpeg"))
-    parts.append(types.Part.from_text(text=prompt))
 
     config_kwargs: dict = {"temperature": temperature}
     if response_schema is not None:
@@ -491,54 +370,54 @@ async def call_google_gemini_api_with_images(
         model_name, len(image_urls), bool(response_schema), prompt[:200],
     )
 
-    attempt = 0
-    max_attempts = 3
-    while attempt < _max_loop_attempts(max_attempts):
-        attempt += 1
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
+    uploaded_files: list[object] = []
+    try:
+        parts: list[types.Part] = []
+        for i, url in enumerate(image_urls):
+            parts.append(types.Part.from_text(text=f"参考图{i + 1}"))
+            file = await _upload_url_to_gemini_file(
+                client,
+                url,
+                fallback_mime_type="image/jpeg",
+                timeout=timeout,
             )
-            text = response.text
-            logger.info("Google SDK text+images response: %s", (text or "")[:500])
-            return text or ""
+            uploaded_files.append(file)
+            file_uri = getattr(file, "uri", None)
+            file_mime_type = getattr(file, "mime_type", None) or "image/jpeg"
+            if not file_uri:
+                raise RuntimeError(f"Gemini uploaded file has no uri: {file}")
+            parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=file_mime_type))
+        parts.append(types.Part.from_text(text=prompt))
 
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            exc_str = str(exc)
-            if image_urls and _is_bad_request_error(exc):
-                logger.warning(
-                    "Google SDK text+images got 400, fallback to Gemini Files immediately: "
-                    "model=%s images=%d error=%s",
-                    model_name,
-                    len(image_urls),
-                    exc,
-                )
-                fallback_media = [
-                    (url, "image/jpeg", f"参考图{i + 1}")
-                    for i, url in enumerate(image_urls)
-                ]
-                return await _generate_content_with_uploaded_media(
-                    client,
-                    model_name=model_name,
-                    prompt=prompt,
-                    media_urls=fallback_media,
+        attempt = 0
+        max_attempts = 3
+        while attempt < _max_loop_attempts(max_attempts):
+            attempt += 1
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[types.Content(role="user", parts=parts)],
                     config=config,
-                    timeout=timeout,
-                    require_text=False,
                 )
-            if any(code in exc_str for code in ["400", "401", "403", "404"]):
-                logger.error("Google SDK 4xx error (不重试): model=%s %s", model_name, exc)
+                text = response.text
+                logger.info("Google SDK text+images response: %s", (text or "")[:500])
+                return text or ""
+
+            except asyncio.CancelledError:
                 raise
-            if not _should_retry_error(exc, attempt, max_attempts):
-                logger.error("Google SDK text+images 已达最大重试次数 %s，放弃: %s", _retry_limit_label(exc, max_attempts), exc)
-                raise
-            delay = _retry_delay_seconds(exc, attempt)
-            logger.warning("Google SDK text+images attempt %d/%s failed (%ds后重试): %s", attempt, _retry_limit_label(exc, max_attempts), delay, exc)
-            await asyncio.sleep(delay)
+            except Exception as exc:
+                exc_str = str(exc)
+                if any(code in exc_str for code in ["400", "401", "403", "404"]):
+                    logger.error("Google SDK 4xx error (不重试): model=%s %s", model_name, exc)
+                    raise
+                if not _should_retry_error(exc, attempt, max_attempts):
+                    logger.error("Google SDK text+images 已达最大重试次数 %s，放弃: %s", _retry_limit_label(exc, max_attempts), exc)
+                    raise
+                delay = _retry_delay_seconds(exc, attempt)
+                logger.warning("Google SDK text+images attempt %d/%s failed (%ds后重试): %s", attempt, _retry_limit_label(exc, max_attempts), delay, exc)
+                await asyncio.sleep(delay)
+    finally:
+        await _delete_gemini_files(client, uploaded_files)
 
 
 async def generate_image_google(
@@ -554,16 +433,11 @@ async def generate_image_google(
     """
     Generate an image using Google Gemini SDK with reference images.
 
+    All reference images are uploaded via the Gemini Files API (no URL hand-off).
     Passes all reference images + prompt to the model with response_modalities=['IMAGE'].
     Returns raw image bytes (PNG/JPEG).
     """
     client = _make_client(api_key)
-
-    parts: list[types.Part] = []
-    for i, url in enumerate(image_urls):
-        parts.append(types.Part.from_text(text=f"参考图{i + 1}"))
-        parts.append(types.Part.from_uri(file_uri=url, mime_type="image/jpeg"))
-    parts.append(types.Part.from_text(text=prompt))
 
     config = types.GenerateContentConfig(
         temperature=temperature,
@@ -579,59 +453,62 @@ async def generate_image_google(
         model_name, len(image_urls), aspect_ratio, image_size, prompt[:200],
     )
 
-    attempt = 0
-    max_attempts = 10
-    while attempt < _max_loop_attempts(max_attempts):
-        attempt += 1
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
+    uploaded_files: list[object] = []
+    try:
+        parts: list[types.Part] = []
+        for i, url in enumerate(image_urls):
+            parts.append(types.Part.from_text(text=f"参考图{i + 1}"))
+            file = await _upload_url_to_gemini_file(
+                client,
+                url,
+                fallback_mime_type="image/jpeg",
+                timeout=180.0,
             )
+            uploaded_files.append(file)
+            file_uri = getattr(file, "uri", None)
+            file_mime_type = getattr(file, "mime_type", None) or "image/jpeg"
+            if not file_uri:
+                raise RuntimeError(f"Gemini uploaded file has no uri: {file}")
+            parts.append(types.Part.from_uri(file_uri=file_uri, mime_type=file_mime_type))
+        parts.append(types.Part.from_text(text=prompt))
 
-            # 从响应中提取图片 bytes
-            image_bytes = _extract_image_bytes(response)
-            if image_bytes is not None:
-                logger.info("Google SDK image gen success: %d bytes", len(image_bytes))
-                return image_bytes
-
-            # 检查是否被内容安全策略拦截，拦截时无需重试
-            prompt_feedback = getattr(response, "prompt_feedback", None)
-            block_reason = getattr(prompt_feedback, "block_reason", None) if prompt_feedback else None
-            if block_reason:
-                logger.error("Google SDK image gen blocked (不重试): block_reason=%s", block_reason)
-                raise ValueError(f"Google SDK image gen: blocked by safety filter — block_reason={block_reason}")
-            raise ValueError(f"Google SDK image gen: no image in response — {response}")
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            exc_str = str(exc)
-            if image_urls and _is_bad_request_error(exc):
-                logger.warning(
-                    "Google SDK image gen got 400, fallback to Gemini Files immediately: "
-                    "model=%s images=%d error=%s",
-                    model_name,
-                    len(image_urls),
-                    exc,
-                )
-                return await _generate_image_with_uploaded_media(
-                    client,
-                    model_name=model_name,
-                    prompt=prompt,
-                    image_urls=image_urls,
+        attempt = 0
+        max_attempts = 10
+        while attempt < _max_loop_attempts(max_attempts):
+            attempt += 1
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[types.Content(role="user", parts=parts)],
                     config=config,
-                    timeout=180.0,
                 )
-            if any(code in exc_str for code in ["400", "401", "403", "404"]):
-                logger.error("Google SDK image gen 4xx (不重试): %s", exc)
+
+                image_bytes = _extract_image_bytes(response)
+                if image_bytes is not None:
+                    logger.info("Google SDK image gen success: %d bytes", len(image_bytes))
+                    return image_bytes
+
+                prompt_feedback = getattr(response, "prompt_feedback", None)
+                block_reason = getattr(prompt_feedback, "block_reason", None) if prompt_feedback else None
+                if block_reason:
+                    logger.error("Google SDK image gen blocked (不重试): block_reason=%s", block_reason)
+                    raise ValueError(f"Google SDK image gen: blocked by safety filter — block_reason={block_reason}")
+                raise ValueError(f"Google SDK image gen: no image in response — {response}")
+
+            except asyncio.CancelledError:
                 raise
-            if "blocked by safety filter" in exc_str:
-                raise
-            if not _should_retry_error(exc, attempt, max_attempts):
-                logger.error("Google SDK image gen 已达最大重试次数 %s，放弃: %s", _retry_limit_label(exc, max_attempts), exc)
-                raise
-            delay = _retry_delay_seconds(exc, attempt)
-            logger.warning("Google SDK image gen attempt %d/%s failed (%ds后重试): %s", attempt, _retry_limit_label(exc, max_attempts), delay, exc)
-            await asyncio.sleep(delay)
+            except Exception as exc:
+                exc_str = str(exc)
+                if any(code in exc_str for code in ["400", "401", "403", "404"]):
+                    logger.error("Google SDK image gen 4xx (不重试): %s", exc)
+                    raise
+                if "blocked by safety filter" in exc_str:
+                    raise
+                if not _should_retry_error(exc, attempt, max_attempts):
+                    logger.error("Google SDK image gen 已达最大重试次数 %s，放弃: %s", _retry_limit_label(exc, max_attempts), exc)
+                    raise
+                delay = _retry_delay_seconds(exc, attempt)
+                logger.warning("Google SDK image gen attempt %d/%s failed (%ds后重试): %s", attempt, _retry_limit_label(exc, max_attempts), delay, exc)
+                await asyncio.sleep(delay)
+    finally:
+        await _delete_gemini_files(client, uploaded_files)

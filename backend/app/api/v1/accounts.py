@@ -7,8 +7,8 @@ from datetime import date, datetime, timezone
 
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
-from sqlalchemy import exists, func, or_, select
+from pydantic import BaseModel, Field
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.models.tag import VideoSourceTag
 from app.models.tiktok_blogger import TiktokBlogger
 from app.models.video_source import VideoSource
 from app.models.video_task import VideoSubTask, VideoTask
+from app.models.video_publication import VideoPublication
 from app.schemas.account import (
     AccountCreate, AccountListResponse, AccountPatch, AccountRead,
     BoundBloggerRead, BoundFlagRead, BoundTagRead, ScheduledPublishConfig,
@@ -34,6 +35,7 @@ from app.schemas.account import (
     AccountChannelReservationRead, BindOpenAPIChannelBody, ConfirmChannelReservationsBody,
     ConfirmChannelReservationsResponse, ReserveAIAccountsBody, ReserveAIAccountsResponse,
     BulkUpdateAccountAttributesBody, BulkUpdateAccountAttributesResponse,
+    SupplementStatusRead, ChannelAnalyticsResponse,
 )
 from app.schemas.tiktok_blogger import TiktokBloggerRead
 from app.services.account_service import (
@@ -310,6 +312,7 @@ def _account_read(
     unused_template_count: int = 0,
     used_template_count: int = 0,
     sub_task_success: tuple[int, int, int] = (0, 0, 0),
+    supplement_status: dict | None = None,
 ) -> AccountRead:
     data = AccountRead.model_validate(account)
     data.tiktok_bloggers = bloggers
@@ -325,6 +328,7 @@ def _account_read(
     data.sub_task_success_sample = sample
     data.sub_task_success_rate = (numer / denom) if denom > 0 else None
     data.channel_reservations = channel_reservations or []
+    data.supplement_status = SupplementStatusRead(**supplement_status) if supplement_status else None
     data.social_bindings = None
     return data
 
@@ -357,7 +361,10 @@ async def create_account_endpoint(
     creator_id: uuid.UUID = Depends(_get_creator_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountRead:
-    account = await create_account(session, payload, creator_id)
+    account = await create_account(
+        session, payload, creator_id,
+        defer_kol_provision=payload.defer_kol_provision,
+    )
     if payload.social_bindings is not None:
         await _sync_channel_reservations_from_bindings(session, account, payload.social_bindings)
     reservations = await _load_channel_reservations(session, account.id)
@@ -379,19 +386,13 @@ async def list_accounts_endpoint(
     account_tier: str | None = Query(None),
     platform_binding_status: str | None = Query(None),
     classification_type: str | None = Query(None),
-    category_indices: str | None = Query(None),
+    category_keys: str | None = Query(None),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> AccountListResponse:
-    parsed_category_indices: list[int] | None = None
-    if category_indices:
-        try:
-            parsed_category_indices = [int(x) for x in category_indices.split(",") if x.strip() != ""]
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="category_indices 必须是逗号分隔的整数",
-            ) from exc
+    parsed_category_keys: list[str] | None = None
+    if category_keys:
+        parsed_category_keys = [x.strip() for x in category_keys.split(",") if x.strip()]
     items, total = await list_accounts(
         session,
         page=page,
@@ -408,7 +409,7 @@ async def list_accounts_endpoint(
         account_tier=account_tier or None,
         platform_binding_status=platform_binding_status or None,
         classification_type=classification_type or None,
-        category_indices=parsed_category_indices or None,
+        category_keys=parsed_category_keys or None,
     )
     # Batch-load bound bloggers, tags, flags for all accounts.
     account_ids = [a.id for a in items]
@@ -418,7 +419,15 @@ async def list_accounts_endpoint(
     reservation_map: dict[uuid.UUID, list[AccountChannelReservationRead]] = {aid: [] for aid in account_ids}
     pending_publish_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
     video_count_map: dict[uuid.UUID, int] = {aid: 0 for aid in account_ids}
+    supplement_status_map: dict[uuid.UUID, dict] = {}
     if account_ids:
+        from app.services.supplement_status_service import latest_statuses_for_accounts
+        supplement_status_map = await latest_statuses_for_accounts(
+            session,
+            account_ids=account_ids,
+            owner_id=owner_id,
+        )
+
         blogger_stmt = (
             select(AccountBloggerBinding.account_id, TiktokBlogger)
             .join(TiktokBlogger, AccountBloggerBinding.tiktok_blogger_id == TiktokBlogger.id)
@@ -510,6 +519,7 @@ async def list_accounts_endpoint(
             unused_template_count=template_counts[a.id][0],
             used_template_count=template_counts[a.id][1],
             sub_task_success=success_rate_map.get(a.id, (0, 0, 0)),
+            supplement_status=supplement_status_map.get(a.id),
         )
         for a in items
     ]
@@ -868,6 +878,69 @@ async def update_scheduled_publish(
     return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
 
 
+class BulkScheduledPublishFilters(BaseModel):
+    gender: str | None = None
+    account_type: str | None = None
+    face_mode: str | None = None
+    product_code_mode: str | None = None
+    account_tier: str | None = None
+    platform_binding_status: str | None = None
+    classification_type: str | None = None
+    category_keys: list[str] | None = None
+    flag_id: uuid.UUID | None = None
+
+
+class BulkScheduledPublishBody(BaseModel):
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    filters: BulkScheduledPublishFilters | None = None  # account_ids 为空时用此条件查全量
+    config: ScheduledPublishConfig
+
+
+@router.post("/bulk-update-scheduled-publish", status_code=200)
+async def bulk_update_scheduled_publish(
+    body: BulkScheduledPublishBody,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """批量更新 AI 博主定时发布配置。account_ids 为空时用 filters 查全量。"""
+    account_ids = list(body.account_ids)
+    if not account_ids:
+        if body.filters:
+            f = body.filters
+            all_accounts, _ = await list_accounts(
+                session,
+                page=None,
+                page_size=None,
+                owner_id=owner_id,
+                gender=f.gender,
+                account_type=f.account_type,
+                face_mode=f.face_mode,
+                product_code_mode=f.product_code_mode,
+                account_tier=f.account_tier,
+                platform_binding_status=f.platform_binding_status,
+                classification_type=f.classification_type,
+                category_keys=f.category_keys,
+                flag_id=f.flag_id,
+            )
+            account_ids = [a.id for a in all_accounts]
+        if not account_ids:
+            return {"status": "ok", "updated": 0}
+
+    stmt = select(Account).where(Account.id.in_(account_ids))
+    if owner_id is not None:
+        stmt = stmt.where(Account.owner_id == owner_id)
+    accounts = list((await session.execute(stmt)).scalars().all())
+
+    for account in accounts:
+        account.publish_enabled = body.config.publish_enabled
+        account.publish_cron = body.config.publish_cron
+        account.publish_window_minutes = body.config.publish_window_minutes
+        account.publish_count = body.config.publish_count
+
+    await session.commit()
+    return {"status": "ok", "updated_count": len(accounts)}
+
+
 # ── 账号-博主绑定 ─────────────────────────────────────────────────────────────
 
 @router.get("/{account_id}/bloggers", response_model=list[TiktokBloggerRead])
@@ -973,6 +1046,34 @@ async def trigger_ai_generation(
         )
         if not existing:
             session.add(AccountTag(account_id=account_id, tag_id=tag_id))
+
+    # 自动绑定 TikTok 博主：从每个标签关联的视频里找 tiktok_blogger_id，
+    # 与批量一键生成 (bulk_generate_ai_bloggers) 保持一致。
+    # 已绑定的不重复添加（幂等）。
+    for tag_id in body.tag_ids:
+        blogger_id_row = (
+            await session.execute(
+                select(VideoSource.tiktok_blogger_id)
+                .join(VideoSourceTag, VideoSourceTag.video_source_id == VideoSource.id)
+                .where(VideoSourceTag.tag_id == tag_id)
+                .where(VideoSource.tiktok_blogger_id.is_not(None))
+                .limit(1)
+            )
+        ).first()
+        if not blogger_id_row:
+            continue
+        tiktok_blogger_id = blogger_id_row[0]
+        already_bound = await session.scalar(
+            select(AccountBloggerBinding)
+            .where(AccountBloggerBinding.account_id == account_id)
+            .where(AccountBloggerBinding.tiktok_blogger_id == tiktok_blogger_id)
+        )
+        if not already_bound:
+            session.add(AccountBloggerBinding(
+                account_id=account_id,
+                tiktok_blogger_id=tiktok_blogger_id,
+            ))
+
     await session.commit()
 
     await enqueue_ai_account_generation(str(account_id), tag_ids_str)
@@ -1252,6 +1353,61 @@ async def list_account_tags(
     return await _load_bound_tags(session, account_id)
 
 
+@router.post("/{account_id}/kol/retry", response_model=AccountRead)
+async def retry_kol_provision(
+    account_id: uuid.UUID,
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> AccountRead:
+    """重试 KOL 创建（仅当当前 status 不是 success 时允许）。
+
+    同步调 ``provision_kol_for_account``，成功后写入 ``kol_user_id`` 和
+    ``kol_provision_status='success'``；失败则把错误写到 ``kol_provision_error``。
+    """
+    from app.services.kol_service import provision_kol_for_account
+
+    account = await get_account_or_404(session, account_id, owner_id)
+
+    # 若 AI 自动生成尚未完成，名称/头像/签名可能仍是占位符，不允许重试
+    ai_status = account.ai_generation_status or "idle"
+    if ai_status == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="AI 博主生成仍在进行中，请等待生成完成后再重试 KOL 创建",
+        )
+    if ai_status == "idle" and (account.account_name or "").startswith("AI博主生成中"):
+        raise HTTPException(
+            status_code=409,
+            detail="AI 博主尚未生成完成（名称仍为占位符），KOL 创建将在生成完成后自动触发",
+        )
+
+    if account.kol_user_id:
+        # 已有 kol_user_id 直接校正状态返回（兼容历史脏数据）
+        if account.kol_provision_status != "success":
+            account.kol_provision_status = "success"
+            account.kol_provision_error = None
+            await session.commit()
+            await session.refresh(account)
+    else:
+        if account.kol_provision_status == "success":
+            raise HTTPException(status_code=409, detail="KOL 已成功创建，无需重试")
+        # 切回 pending，前端立刻看到"KOL 生成中"
+        account.kol_provision_status = "pending"
+        account.kol_provision_error = None
+        await session.commit()
+
+        # provision_kol_for_account 自带 session + try/except，不抛回
+        await provision_kol_for_account(account_id)
+
+        await session.refresh(account)
+
+    bloggers = await _load_bound_bloggers(session, account_id)
+    tags = await _load_bound_tags(session, account_id)
+    flags = await _load_bound_flags(session, account_id)
+    reservations = await _load_channel_reservations(session, account_id)
+    return _account_read(account, bloggers, tags, flags, channel_reservations=reservations)
+
+
 @router.post("/{account_id}/tags", status_code=201)
 async def bind_tag_to_account(
     account_id: uuid.UUID,
@@ -1305,10 +1461,24 @@ class SupplementFiltersBody(BaseModel):
     min_view_count: int | None = None
     published_after: date | None = None
     max_duration_seconds: int | None = None
+    category_keys: list[str] | None = None
+
+    def normalized_category_keys(self) -> list[str]:
+        from app.services.video_classification_service import _VALID_KEYS_SET
+        if not self.category_keys:
+            return []
+        values: list[str] = []
+        for key in self.category_keys:
+            if key not in _VALID_KEYS_SET:
+                raise ValueError(f"无效 category_key: {key}")
+            if key not in values:
+                values.append(key)
+        return values
 
 
 class SupplementTemplatesBody(BaseModel):
-    account_ids: list[uuid.UUID]
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    account_list_filters: AccountListFilters | None = None  # account_ids 为空时后端自查全量
     template_type: str = "shared"  # "shared" | "exclusive"
     # 新版字段 + 兼容旧前端
     target_video_count: int | None = None
@@ -1320,8 +1490,22 @@ class SupplementTemplatesBody(BaseModel):
 # 一键生成视频任务
 # ---------------------------------------------------------------------------
 
+class AccountListFilters(BaseModel):
+    """前端筛选条件，供无 account_ids 时后端自查全量。"""
+    gender: str | None = None
+    account_type: str | None = None
+    face_mode: str | None = None
+    product_code_mode: str | None = None
+    account_tier: str | None = None
+    platform_binding_status: str | None = None
+    classification_type: str | None = None
+    category_keys: list[str] | None = None
+    flag_id: uuid.UUID | None = None
+
+
 class BulkGenerateVideoTasksBody(BaseModel):
-    account_ids: list[uuid.UUID]
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    filters: AccountListFilters | None = None  # account_ids 为空时用此条件查全量
     mode: str = "unused"         # "unused" | "used"
     fill_mode: str = "count"     # "count" = 每号补 limit 个；"target_total" = 每号补到 limit 个 queued 任务
     limit: int = 0               # 数量值（fill_mode=count 时是新增数；target_total 时是目标 queued 总数）
@@ -1408,13 +1592,24 @@ async def _load_bulk_video_task_templates(
 ):
     from app.models.video_ai_template import VideoAITemplate
 
+    # ── 按分类类型决定允许的小类（category_key）──────────────────────────────
     account = await session.get(Account, account_id)
+    allowed_keys: list[str] | None = None  # None = 不限制
 
     if account is None:
         return ([], "account_missing") if with_reason else []
 
-    # single / dual 走分类硬过滤。兼容旧小类 category_index 与新版大类 major_category。
-    allowed_indices, allowed_major_keys = _account_allowed_classification_filters(account)
+    cls_type = account.classification_type
+    summary = account.classification_summary or {}
+    # 仅 single / dual 走小类硬过滤；chaos / insufficient / None 不限分类（仅靠标签交集）
+    if cls_type == "single":
+        primary_key = summary.get("primary_key")
+        if primary_key is not None:
+            allowed_keys = [str(primary_key)]
+    elif cls_type == "dual":
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
+        allowed_keys = [k for k in [primary_key, secondary_key] if k is not None]
 
     # ── 按标签查模板池 ────────────────────────────────────────────────────────
     tagged_tpls: list[VideoAITemplate] = []
@@ -1467,16 +1662,21 @@ async def _load_bulk_video_task_templates(
     if not unique_tpls:
         return ([], mode_skip_reason) if with_reason else []
 
-    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 分类匹配的模板
+    # 单核心 / 双核心账号：只允许使用与账号 primary/secondary 小类（category_key）
     # 完全匹配的模板，没有匹配则跳过该账号（不再回退到全部候选）。
-    if allowed_indices or allowed_major_keys:
+    if allowed_keys is not None:
         vs_ids = list({tpl.video_source_id for tpl in unique_tpls if tpl.video_source_id})
-        matched_vs_ids = await _matched_classified_video_source_ids(
-            session,
-            video_source_ids=vs_ids,
-            allowed_indices=allowed_indices,
-            allowed_major_keys=allowed_major_keys,
-        )
+        matched_vs_ids: set[uuid.UUID] = set()
+        if vs_ids:
+            rows = (
+                await session.execute(
+                    select(VideoClassification.video_source_id)
+                    .where(VideoClassification.video_source_id.in_(vs_ids))
+                    .where(VideoClassification.status == "success")
+                    .where(VideoClassification.category_key.in_(allowed_keys))
+                )
+            ).scalars().all()
+            matched_vs_ids = set(rows)
         unique_tpls = [tpl for tpl in unique_tpls if tpl.video_source_id in matched_vs_ids]
         if not unique_tpls:
             return ([], "no_classification_match") if with_reason else []
@@ -1511,7 +1711,17 @@ async def _count_account_templates(
     """
     from app.models.video_ai_template import VideoAITemplate
 
-    allowed_indices, allowed_major_keys = _account_allowed_classification_filters(account)
+    cls_type = account.classification_type
+    summary = account.classification_summary or {}
+    allowed_keys: list[str] | None = None
+    if cls_type == "single":
+        primary_key = summary.get("primary_key")
+        if primary_key is not None:
+            allowed_keys = [str(primary_key)]
+    elif cls_type == "dual":
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
+        allowed_keys = [k for k in [primary_key, secondary_key] if k is not None]
 
     tag_ids = list((await session.execute(
         select(AccountTag.tag_id).where(AccountTag.account_id == account.id)
@@ -1532,14 +1742,17 @@ async def _count_account_templates(
         tpl_stmt = tpl_stmt.where(VideoAITemplate.owner_id == owner_id)
     tpls = list((await session.execute(tpl_stmt)).scalars().all())
 
-    if allowed_indices or allowed_major_keys:
+    if allowed_keys is not None:
         vs_ids = list({t.video_source_id for t in tpls if t.video_source_id})
-        matched_vs_ids = await _matched_classified_video_source_ids(
-            session,
-            video_source_ids=vs_ids,
-            allowed_indices=allowed_indices,
-            allowed_major_keys=allowed_major_keys,
-        )
+        matched_vs_ids: set[uuid.UUID] = set()
+        if vs_ids:
+            rows = (await session.execute(
+                select(VideoClassification.video_source_id)
+                .where(VideoClassification.video_source_id.in_(vs_ids))
+                .where(VideoClassification.status == "success")
+                .where(VideoClassification.category_key.in_(allowed_keys))
+            )).scalars().all()
+            matched_vs_ids = set(rows)
         tpls = [t for t in tpls if t.video_source_id in matched_vs_ids]
 
     used_count = sum(1 for t in tpls if t.is_used)
@@ -1694,11 +1907,32 @@ async def bulk_generate_video_tasks(
     - fill_mode=target_total：每账号补到 limit 个 status='queued' 任务；够了就跳过
     - 模板按对应 video_source.view_count 从高到低排序后取需求量
     - chaos / insufficient / 未分类账号不再被分类硬阻断；仅按标签交集出候选
-    - single / dual 仍按小类(category_index)硬过滤
+    - single / dual 仍按小类(category_key)硬过滤
     先计算预计创建的任务数并立即返回，真正创建过程放到后台执行。
     """
-    if not body.account_ids:
-        return {"status": "no_accounts", "planned": 0, "skipped_accounts": 0, "account_count": 0}
+    # 无 account_ids 时用 filters 查全量
+    account_ids = list(body.account_ids)
+    if not account_ids:
+        if body.filters:
+            f = body.filters
+            all_accounts, _ = await list_accounts(
+                session,
+                page=None,
+                page_size=None,
+                owner_id=owner_id,
+                gender=f.gender,
+                account_type=f.account_type,
+                face_mode=f.face_mode,
+                product_code_mode=f.product_code_mode,
+                account_tier=f.account_tier,
+                platform_binding_status=f.platform_binding_status,
+                classification_type=f.classification_type,
+                category_keys=f.category_keys,
+                flag_id=f.flag_id,
+            )
+            account_ids = [a.id for a in all_accounts]
+        if not account_ids:
+            return {"status": "no_accounts", "planned": 0, "skipped_accounts": 0, "account_count": 0}
     if body.fill_mode not in ("count", "target_total"):
         raise HTTPException(status_code=422, detail="fill_mode 必须是 'count' 或 'target_total'")
     if body.fill_mode == "target_total" and body.limit <= 0:
@@ -1709,7 +1943,7 @@ async def bulk_generate_video_tasks(
     total_skipped = 0
     skip_reasons: dict[str, int] = {}
 
-    for account_id in body.account_ids:
+    for account_id in account_ids:
         try:
             items_to_use, _vs_map, skip_reason = await _resolve_account_pool(
                 session,
@@ -1743,7 +1977,7 @@ async def bulk_generate_video_tasks(
 
     asyncio.create_task(
         _run_bulk_generate_video_tasks(
-            account_ids=body.account_ids,
+            account_ids=account_ids,
             owner_id=owner_id,
             user_id=current_user.user_id,
             mode=body.mode,
@@ -1758,9 +1992,39 @@ async def bulk_generate_video_tasks(
         "planned": total_planned,
         "skipped_accounts": total_skipped,
         "skip_reasons": skip_reasons,
-        "account_count": len(body.account_ids),
+        "account_count": len(account_ids),
         "message": f"后台已启动，预计创建 {total_planned} 个生成任务{skipped_text}",
     }
+
+
+async def _resolve_account_ids(
+    body_account_ids: list[uuid.UUID],
+    body_account_list_filters: AccountListFilters | None,
+    session: AsyncSession,
+    owner_id: uuid.UUID | None,
+) -> list[uuid.UUID]:
+    """account_ids 非空直接返回；为空时用 account_list_filters 查全量。"""
+    if body_account_ids:
+        return list(body_account_ids)
+    if body_account_list_filters:
+        f = body_account_list_filters
+        accounts, _ = await list_accounts(
+            session,
+            page=None,
+            page_size=None,
+            owner_id=owner_id,
+            gender=f.gender,
+            account_type=f.account_type,
+            face_mode=f.face_mode,
+            product_code_mode=f.product_code_mode,
+            account_tier=f.account_tier,
+            platform_binding_status=f.platform_binding_status,
+            classification_type=f.classification_type,
+            category_keys=f.category_keys,
+            flag_id=f.flag_id,
+        )
+        return [a.id for a in accounts]
+    return []
 
 
 def _resolve_target_count(body: SupplementTemplatesBody | "AutoSupplementBody") -> int:
@@ -1774,6 +2038,7 @@ async def supplement_templates(
     body: SupplementTemplatesBody,
     creator_id: uuid.UUID = Depends(_get_creator_id),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     为指定账号批量补充模板（后台异步执行，立即返回）。
@@ -1787,13 +2052,25 @@ async def supplement_templates(
     )
     import asyncio as _asyncio
 
-    if not body.account_ids:
+    account_ids = await _resolve_account_ids(
+        body.account_ids, body.account_list_filters, session, owner_id
+    )
+    if not account_ids:
         return {"message": "无账号，跳过", "count": 0}
 
     template_type = body.template_type if body.template_type in ("shared", "exclusive") else "shared"
     target_count = _resolve_target_count(body)
     effective_owner = owner_id if owner_id is not None else creator_id
     filters_dict = body.filters.model_dump(mode="json", exclude_none=True) if body.filters else {}
+    if body.filters and body.filters.category_keys is not None:
+        try:
+            category_keys = body.filters.normalized_category_keys()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if category_keys:
+            filters_dict["category_keys"] = category_keys
+        else:
+            filters_dict.pop("category_keys", None)
 
     # exclusive 模式：只走 vendor，失败/未配置直接报错
     if template_type == "exclusive":
@@ -1802,7 +2079,7 @@ async def supplement_templates(
         try:
             result = await submit_supplement_request(
                 owner_id=effective_owner,
-                account_ids=body.account_ids,
+                account_ids=account_ids,
                 mode="exclusive",
                 target_video_count=target_count,
                 filters=filters_dict,
@@ -1820,20 +2097,21 @@ async def supplement_templates(
     # shared 模式：内部 candidate_service
     _asyncio.create_task(
         supplement_templates_for_accounts(
-            account_ids=body.account_ids,
+            account_ids=account_ids,
             owner_id=effective_owner,
             template_type=template_type,
             max_new_videos=target_count,
         )
     )
     return {
-        "message": f"已为 {len(body.account_ids)} 个账号启动共享补充模板任务（内部路径）",
-        "count": len(body.account_ids),
+        "message": f"已为 {len(account_ids)} 个账号启动共享补充模板任务（内部路径）",
+        "count": len(account_ids),
     }
 
 
 class AutoSupplementBody(BaseModel):
-    account_ids: list[uuid.UUID]
+    account_ids: list[uuid.UUID] = Field(default_factory=list)
+    account_list_filters: AccountListFilters | None = None  # account_ids 为空时后端自查全量
     target_video_count: int | None = None
     max_new_videos: int | None = None
     filters: SupplementFiltersBody | None = None
@@ -1844,6 +2122,7 @@ async def auto_supplement_templates(
     body: AutoSupplementBody,
     creator_id: uuid.UUID = Depends(_get_creator_id),
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     根据 AI 博主分类类型自动补充匹配视频模板。
@@ -1853,7 +2132,10 @@ async def auto_supplement_templates(
         submit_supplement_request, _vendor_configured,
     )
 
-    if not body.account_ids:
+    account_ids = await _resolve_account_ids(
+        body.account_ids, body.account_list_filters, session, owner_id
+    )
+    if not account_ids:
         return {"message": "无账号，跳过", "count": 0}
 
     target_count = _resolve_target_count(body)
@@ -1865,7 +2147,7 @@ async def auto_supplement_templates(
     try:
         result = await submit_supplement_request(
             owner_id=effective_owner,
-            account_ids=body.account_ids,
+            account_ids=account_ids,
             mode="auto",
             target_video_count=target_count,
             filters=filters_dict,
@@ -2011,16 +2293,20 @@ async def export_video_urls(
 
         for blogger in bloggers:
             vs_stmt = (
-                select(VideoSource.local_video_url)
+                select(VideoSource.local_video_url, VideoSource.local_gcs_video_url)
                 .where(VideoSource.tiktok_blogger_id == blogger.id)
-                .where(VideoSource.local_video_url.is_not(None))
-                .where(VideoSource.local_video_url != "")
+                .where(
+                    or_(
+                        and_(VideoSource.local_video_url.is_not(None), VideoSource.local_video_url != ""),
+                        and_(VideoSource.local_gcs_video_url.is_not(None), VideoSource.local_gcs_video_url != ""),
+                    )
+                )
                 .order_by(VideoSource.created_at.asc())
             )
-            urls = (await session.execute(vs_stmt)).scalars().all()
-            if urls:
-                for url in urls:
-                    rows.append((acc, blogger, url))
+            url_pairs = (await session.execute(vs_stmt)).all()
+            if url_pairs:
+                for cdn_url, gcs_url in url_pairs:
+                    rows.append((acc, blogger, cdn_url or gcs_url or ""))
             else:
                 rows.append((acc, blogger, ""))
 
@@ -2148,7 +2434,8 @@ async def get_account_classification(
 
 
 class BatchClassifyRequest(BaseModel):
-    ids: list[uuid.UUID]
+    ids: list[uuid.UUID] = Field(default_factory=list)
+    account_list_filters: AccountListFilters | None = None  # ids 为空时后端自查全量
     force: bool = False
 
 
@@ -2156,11 +2443,18 @@ class BatchClassifyRequest(BaseModel):
 async def batch_classify_videos(
     body: BatchClassifyRequest,
     owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from app.services.video_classification_service import enqueue_account_classification
 
+    account_ids = await _resolve_account_ids(
+        body.ids, body.account_list_filters, session, owner_id
+    )
+    if not account_ids:
+        return {"status": "queued", "total_queued": 0, "results": []}
+
     results: list[dict] = []
-    for account_id in body.ids:
+    for account_id in account_ids:
         try:
             r = await enqueue_account_classification(account_id, owner_id, force=body.force)
             results.append({"account_id": str(account_id), **r})
@@ -2168,3 +2462,116 @@ async def batch_classify_videos(
             results.append({"account_id": str(account_id), "queued": 0, "skipped": 0, "error": "not_found"})
     total_queued = sum(r.get("queued", 0) for r in results)
     return {"status": "queued", "total_queued": total_queued, "results": results}
+
+
+@router.get("/{account_id}/channel-analytics", response_model=ChannelAnalyticsResponse)
+async def get_channel_analytics(
+    account_id: uuid.UUID,
+    platform: str = Query(..., description="youtube / tiktok / instagram"),
+    start_date: date = Query(..., description="YYYY-MM-DD"),
+    end_date: date = Query(..., description="YYYY-MM-DD"),
+    owner_id: uuid.UUID | None = Depends(_get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> ChannelAnalyticsResponse:
+    """返回指定账号、平台的频道数据分析（views 趋势 + Link 点击趋势）。"""
+    import asyncio
+    from app.services.ext.bigquery_service.kol_analytics import (
+        get_channel_daily_views,
+        get_kol_daily_clicks,
+    )
+
+    account = await get_account_or_404(session, account_id, owner_id)
+
+    reservation = await session.scalar(
+        select(AccountChannelReservation)
+        .where(AccountChannelReservation.account_id == account_id)
+        .where(AccountChannelReservation.platform == platform.lower())
+    )
+    if not reservation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"该账号未绑定 {platform} 平台",
+        )
+
+    channel_id = reservation.channel_id
+    kol_user_id = account.kol_user_id
+
+    # 并发查询两个 BigQuery 数据源（同步阻塞函数放到线程池）
+    loop = asyncio.get_event_loop()
+
+    async def _fetch_daily_views():
+        if not channel_id:
+            return []
+        return await loop.run_in_executor(
+            None,
+            get_channel_daily_views,
+            channel_id,
+            platform.lower(),
+            start_date,
+            end_date,
+        )
+
+    async def _fetch_daily_clicks():
+        if not kol_user_id:
+            return []
+        return await loop.run_in_executor(
+            None,
+            get_kol_daily_clicks,
+            kol_user_id,
+            start_date,
+            end_date,
+        )
+
+    # 从本地 DB 查询该 channel 下已发布视频的总 views
+    # 路径：video_publications.completed_at IS NOT NULL
+    #        → video_sub_tasks.task_id → video_tasks.account_id == account_id
+    #        + metrics_snapshot.channels[].{platform, channel_id, stats.view_count/views}
+    async def _fetch_total_video_views() -> int:
+        if not channel_id:
+            return 0
+        target_platform = platform.lower()
+        target_channel_id = channel_id
+
+        pubs = (await session.execute(
+            select(VideoPublication)
+            .join(VideoSubTask, VideoSubTask.id == VideoPublication.sub_task_id)
+            .join(VideoTask, VideoTask.id == VideoSubTask.task_id)
+            .where(VideoTask.account_id == account_id)
+            .where(VideoPublication.completed_at.isnot(None))
+            .where(VideoPublication.metrics_snapshot.isnot(None))
+        )).scalars().all()
+
+        total = 0
+        for pub in pubs:
+            snapshot = pub.metrics_snapshot
+            if not isinstance(snapshot, dict):
+                continue
+            for ch in (snapshot.get("channels") or []):
+                if not isinstance(ch, dict):
+                    continue
+                if str(ch.get("platform") or "").lower() != target_platform:
+                    continue
+                if str(ch.get("channel_id") or "") != target_channel_id:
+                    continue
+                stats = ch.get("stats") or {}
+                v = stats.get("views") if target_platform == "youtube" else stats.get("view_count")
+                total += int(v or 0)
+        return total
+
+    daily_views, daily_clicks, total_video_views = await asyncio.gather(
+        _fetch_daily_views(),
+        _fetch_daily_clicks(),
+        _fetch_total_video_views(),
+    )
+
+    total_link_clicks = sum(p["daily_clicks"] for p in daily_clicks)
+
+    return ChannelAnalyticsResponse(
+        platform=platform.lower(),
+        channel_id=channel_id,
+        kol_user_id=kol_user_id,
+        daily_views=daily_views,
+        daily_clicks=daily_clicks,
+        total_link_clicks=total_link_clicks,
+        total_video_views=total_video_views,
+    )

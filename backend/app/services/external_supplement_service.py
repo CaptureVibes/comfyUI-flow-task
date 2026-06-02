@@ -26,12 +26,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.external_supplement_request import ExternalSupplementRequest
+from app.models.external_supplement_request_item import ExternalSupplementRequestItem
 
 logger = logging.getLogger("app.external_supplement_service")
 
@@ -135,6 +136,7 @@ async def _build_outbound_payload(
         "target_video_count": target_video_count,
         "filters": filters or {},
         "items": items,
+        "_skipped_account_ids": skipped,
     }
     return payload
 
@@ -146,15 +148,25 @@ async def submit_supplement_request(
     mode: str,                        # "exclusive" | "auto"
     target_video_count: int,
     filters: dict | None = None,
+    business_context: dict | None = None,
 ) -> dict:
     """构造 outbound payload → POST 给 vendor → 写一条 external_supplement_requests。
 
     返回 vendor 响应 + 我们生成的 request_id（便于 UI 显示）。
+
+    business_context: 调用方写入的业务元数据，不传给 vendor，仅用于 callback 时的 dispatch。
+      示例（候选库）：{"source_domain": "candidate", "keyword_id": "...", "keyword_text": "..."}
+      示例（AI博主）：{"source_domain": "ai_blogger"}
+      若未传入，默认补充 source_domain="ai_blogger" 以兼容存量逻辑。
     """
     if mode not in ("exclusive", "auto"):
         raise ValueError(f"mode 必须是 exclusive 或 auto，收到: {mode}")
     if not _vendor_configured():
         raise RuntimeError("VENDOR_SUPPLEMENT_API_URL / VENDOR_SUPPLEMENT_API_KEY 未配置")
+
+    # 补充默认 source_domain，确保 callback dispatch 始终有据可查
+    ctx = dict(business_context or {})
+    ctx.setdefault("source_domain", "ai_blogger")
 
     request_id = uuid.uuid4()
     callback_secret = f"ec_cb_{secrets.token_urlsafe(24)}"
@@ -175,6 +187,7 @@ async def submit_supplement_request(
             raise ValueError("所有账号都没有绑定博主，无法发起补充请求")
 
         # 持久化（先写一行，状态 pending；vendor 调用失败也能记录到）
+        skipped_account_ids = list(payload.pop("_skipped_account_ids", []))
         row = ExternalSupplementRequest(
             request_id=request_id,
             owner_id=owner_id,
@@ -185,8 +198,19 @@ async def submit_supplement_request(
             callback_secret=callback_secret,
             status="pending",
             vendor_request_payload=payload,
+            business_context=ctx,
         )
         session.add(row)
+        from app.services.supplement_status_service import create_request_items
+        await create_request_items(
+            session,
+            request_id=request_id,
+            owner_id=owner_id,
+            mode=mode,
+            target_video_count=target_video_count,
+            payload_items=payload["items"],
+            skipped_account_ids=skipped_account_ids,
+        )
         await session.commit()
 
     # 调 vendor
@@ -244,6 +268,12 @@ async def submit_supplement_request(
             if r is not None:
                 r.status = "failed"
                 r.vendor_response = {"error": str(exc)}
+                from app.services.supplement_status_service import mark_request_failed
+                await mark_request_failed(
+                    session,
+                    request_id=request_id,
+                    error_message=str(exc),
+                )
                 await session.commit()
         raise
 
@@ -256,6 +286,12 @@ async def submit_supplement_request(
                 isinstance(vendor_body, dict) and vendor_body.get("status") == "rejected"
             ):
                 r.status = "failed"
+                from app.services.supplement_status_service import mark_request_failed
+                await mark_request_failed(
+                    session,
+                    request_id=request_id,
+                    error_message=f"vendor 返回失败: {vendor_body}",
+                )
             await session.commit()
 
     return {
@@ -323,6 +359,73 @@ async def handle_supplement_callback(
         owner_id = req.owner_id
         request_account_ids = {str(aid) for aid in (req.account_ids or [])}
 
+        # 鉴权通过后立刻持久化原始 callback payload，方便排查问题
+        # 与后续业务处理解耦：无论下游逻辑走到哪，原始数据都已落库
+        import json as _json
+        _raw_log_entry = {
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+            "final": final,
+            "items": [
+                {
+                    "account_id": str(it.account_id),
+                    "status": it.status,
+                    "error": it.error,
+                    "videos": [v.model_dump(mode="json") for v in it.videos],
+                }
+                for it in items
+            ],
+        }
+        try:
+            async with SessionLocal() as _log_session:
+                await _log_session.execute(
+                    sa_text(
+                        "UPDATE external_supplement_requests "
+                        "SET callbacks_log = cast(callbacks_log as jsonb) || cast(:entry as jsonb) "
+                        "WHERE request_id = cast(:rid as uuid)"
+                    ),
+                    {
+                        "entry": _json.dumps([_raw_log_entry], ensure_ascii=False),
+                        "rid": str(request_id),
+                    },
+                )
+                await _log_session.commit()
+        except Exception as _log_exc:
+            logger.warning("[ext_supp][callback] callbacks_log 写入失败（不影响主流程）: %s", _log_exc)
+
+        # 已达到 target 数量则直接跳过，不走任何业务逻辑
+        # 用 videos_accepted（已调度入 pipeline 的数量）判断，不依赖异步 pipeline 的结果
+        #
+        # ⚠️ req.target_video_count 是单个账号的 target（如 100），
+        # 整个 request 的总 target 是各 item.target_video_count 之和。
+        # 必须对比「所有 item 的 target 合计」，否则多账号场景下总 accepted 超过
+        # 单账号 target 就会被错误截断。
+        _items_for_target = (await session.execute(
+            select(ExternalSupplementRequestItem.target_video_count)
+            .where(ExternalSupplementRequestItem.request_id == request_id)
+            .where(ExternalSupplementRequestItem.status != "skipped")
+        )).scalars().all()
+        total_target_count = sum(int(t or 0) for t in _items_for_target)
+        already_accepted = int(req.videos_accepted or 0)
+        if total_target_count > 0 and already_accepted >= total_target_count:
+            logger.info(
+                "[ext_supp][callback] total target already reached (%d/%d across %d items), skip all processing: request_id=%s",
+                already_accepted, total_target_count, len(_items_for_target), request_id,
+            )
+            req.callbacks_received = (req.callbacks_received or 0) + 1
+            if req.status not in ("completed", "failed"):
+                req.status = "completed"
+                req.completed_at = datetime.now(timezone.utc)
+            await session.commit()
+            return {
+                "request_id": str(request_id),
+                "accepted": 0,
+                "duplicated": 0,
+                "rejected": 0,
+                "message": "target already reached",
+                "http_status": 200,
+            }
+
         import json as _json
         total_videos = sum(len(it.videos) for it in items)
         logger.info(
@@ -348,20 +451,27 @@ async def handle_supplement_callback(
         duplicated = 0
         rejected = 0
         to_process: list[dict] = []  # 每条记录的所有必要字段
+        progress_by_account: dict[uuid.UUID, dict[str, Any]] = {}
 
         for it in items:
             account_id = it.account_id
+            progress_by_account.setdefault(
+                account_id,
+                {"scheduled": 0, "duplicated": 0, "rejected": 0, "error": it.error},
+            )
             if str(account_id) not in request_account_ids:
                 logger.warning(
                     "supplement-callback: account_id %s 不在本 request %s 范围内，跳过",
                     account_id, request_id,
                 )
                 rejected += len(it.videos)
+                progress_by_account[account_id]["rejected"] += len(it.videos)
                 continue
 
             for v in it.videos:
                 if not v.source_url or not v.local_video_url:
                     rejected += 1
+                    progress_by_account[account_id]["rejected"] += 1
                     continue
                 # 同步快速 dedup
                 existing = await session.scalar(
@@ -369,34 +479,52 @@ async def handle_supplement_callback(
                 )
                 if existing is not None:
                     duplicated += 1
+                    progress_by_account[account_id]["duplicated"] += 1
                     continue
                 to_process.append({
                     "account_id": account_id,
                     "video": v.model_dump(),  # 全部字段，async 阶段需要
                 })
                 scheduled += 1
+                progress_by_account[account_id]["scheduled"] += 1
+
+        if final:
+            for aid in request_account_ids:
+                account_uuid = uuid.UUID(str(aid))
+                # setdefault：只对本次 callback items 里完全没有出现的账号补一条
+                # final 信号到达时通知这些账号关闭 processing，不写 error（之前的回调已正常处理）
+                progress_by_account.setdefault(
+                    account_uuid,
+                    {
+                        "scheduled": 0,
+                        "duplicated": 0,
+                        "rejected": 0,
+                        "error": None,   # 不覆盖之前已经正常处理过账号的状态
+                    },
+                )
 
         req.callbacks_received = (req.callbacks_received or 0) + 1
         req.videos_accepted = (req.videos_accepted or 0) + scheduled
         req.videos_duplicated = (req.videos_duplicated or 0) + duplicated
         req.videos_rejected = (req.videos_rejected or 0) + rejected
         if final:
-            req.status = "completed"
             req.completed_at = datetime.now(timezone.utc)
+            # 不在这里强制 completed，由 refresh_request_rollup 根据 item 汇总决定
 
-        # 把本次回调的摘要追加到 callbacks_log（JSON 列需重新赋值才会写库）
-        callback_log_entry = {
-            "received_at": datetime.now(timezone.utc).isoformat(),
-            "mode": mode,
-            "final": final,
-            "items_count": len(items),
-            "videos_count": total_videos,
-            "scheduled": scheduled,
-            "duplicated": duplicated,
-            "rejected": rejected,
-            "items": callback_preview,
-        }
-        req.callbacks_log = list(req.callbacks_log or []) + [callback_log_entry]
+        # 其余标量字段通过 ORM 写入
+        from app.services.supplement_status_service import mark_callback_seen
+        for aid, counters in progress_by_account.items():
+            await mark_callback_seen(
+                session,
+                request_id=request_id,
+                account_id=aid,
+                scheduled_count=int(counters.get("scheduled") or 0),
+                duplicated_count=int(counters.get("duplicated") or 0),
+                rejected_count=int(counters.get("rejected") or 0),
+                final_received=final,
+                error_message=counters.get("error"),
+                _req=req,
+            )
         await session.commit()
 
     logger.info(
@@ -405,17 +533,39 @@ async def handle_supplement_callback(
         req.callbacks_received, req.videos_accepted, req.videos_duplicated, req.videos_rejected,
     )
 
-    # 异步：每条 video 单独跑 AI 审核 + 可能的分类过滤 + 写库 + enqueue
-    for entry in to_process:
+    # 按 source_domain 分发给对应业务域处理
+    business_context = req.business_context or {}
+    source_domain = business_context.get("source_domain", "ai_blogger")
+
+    logger.info(
+        "[ext_supp][callback] dispatch: request_id=%s source_domain=%s entries=%d",
+        request_id, source_domain, len(to_process),
+    )
+
+    if source_domain == "candidate":
+        # 候选库：整批交给 candidate_service 统一处理（内含共享/独享判断）
+        from app.services.candidate_service import on_vendor_callback as _candidate_on_vendor_callback
         asyncio.create_task(
-            _post_callback_pipeline(
-                account_id=entry["account_id"],
-                video=entry["video"],
-                owner_id=owner_id,
+            _candidate_on_vendor_callback(
+                to_process=to_process,
                 mode=mode,
+                owner_id=owner_id,
                 request_id=request_id,
+                business_context=business_context,
             )
         )
+    else:
+        # AI博主补充（默认）：每条 video 单独跑 AI 审核 + 分类过滤 + 写库 + enqueue
+        for entry in to_process:
+            asyncio.create_task(
+                _post_callback_pipeline(
+                    account_id=entry["account_id"],
+                    video=entry["video"],
+                    owner_id=owner_id,
+                    mode=mode,
+                    request_id=request_id,
+                )
+            )
 
     return {
         "request_id": str(request_id),
@@ -448,11 +598,33 @@ async def _append_rejected_video(
             current = list(req.rejected_videos or [])
             current.append(entry)
             req.rejected_videos = current
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(req, "rejected_videos")
             req.videos_rejected = (req.videos_rejected or 0) + 1
             # handle_supplement_callback 在调度时已把这条计入 videos_accepted（=已调度），
             # 现在终因 AI 审核 / 分类未过被丢弃，回退该计数以保持总和一致
             if (req.videos_accepted or 0) > 0:
                 req.videos_accepted = req.videos_accepted - 1
+
+
+async def _mark_callback_video_failed(
+    *,
+    request_id: uuid.UUID,
+    account_id: uuid.UUID,
+    reason: str,
+    rejected: bool = False,
+) -> None:
+    from app.services.supplement_status_service import mark_video_failed
+
+    async with SessionLocal() as session:
+        await mark_video_failed(
+            session,
+            request_id=request_id,
+            account_id=account_id,
+            reason=reason,
+            rejected=rejected,
+        )
+        await session.commit()
 
 
 def _rejected_entry(video: dict, account_id: uuid.UUID, **extras) -> dict:
@@ -467,6 +639,18 @@ def _rejected_entry(video: dict, account_id: uuid.UUID, **extras) -> dict:
         "rejected_at": datetime.now(timezone.utc).isoformat(),
         **extras,
     }
+
+
+def _normalize_category_keys(raw: Any) -> list[str]:
+    from app.services.video_classification_service import _VALID_KEYS_SET
+    if not isinstance(raw, list):
+        return []
+    values: list[str] = []
+    for item in raw:
+        key = str(item).strip() if item else ""
+        if key in _VALID_KEYS_SET and key not in values:
+            values.append(key)
+    return values
 
 
 async def _post_callback_pipeline(
@@ -509,13 +693,25 @@ async def _post_callback_pipeline(
     source_uri = str(video.get("local_video_url") or "")
     if not source_url or not source_uri:
         logger.warning("[ext_supp] 缺少 source_url 或 local_video_url，跳过")
+        await _mark_callback_video_failed(
+            request_id=request_id,
+            account_id=account_id,
+            reason="缺少 source_url 或 local_video_url",
+        )
         return
 
     # 反查账号信息（绑定博主 + 第一个 tag + 分类配置）
     async with SessionLocal() as session:
+        req = await fetch_request_by_id(session, request_id)
+        request_filters = req.filters if req is not None and isinstance(req.filters, dict) else {}
         account = await session.get(Account, account_id)
         if account is None:
             logger.warning("[ext_supp] account_id %s 不存在，跳过", account_id)
+            await _mark_callback_video_failed(
+                request_id=request_id,
+                account_id=account_id,
+                reason="账号不存在",
+            )
             return
         tiktok_blogger_id = await session.scalar(
             select(AccountBloggerBinding.tiktok_blogger_id)
@@ -549,26 +745,43 @@ async def _post_callback_pipeline(
     ai_review_prompt = search_cfg.ai_review_prompt if search_cfg else ""
     retry_delay = search_cfg.retry_delay if search_cfg else 30.0
 
-    # auto 模式：解出允许的小类 index（single → primary_index；dual → primary + secondary）
-    allowed_indices: list[int] = []
+    # auto 模式：解出允许的小类 key（single → primary_key；dual → primary + secondary）
+    allowed_keys: list[str] = []
     if mode == "auto":
         cls_type = account.classification_type
         summary = account.classification_summary or {}
-        primary_index = summary.get("primary_index")
-        secondary_index = summary.get("secondary_index")
+        primary_key = summary.get("primary_key")
+        secondary_key = summary.get("secondary_key")
         if cls_type not in ("single", "dual"):
             logger.info(
                 "[ext_supp] auto 模式但账号 %s 分类=%s，跳过",
                 account_id, cls_type,
             )
+            await _mark_callback_video_failed(
+                request_id=request_id,
+                account_id=account_id,
+                reason=f"账号分类类型为 {cls_type or '未分类'}，自动补充仅支持单核心/双核心账号",
+                rejected=True,
+            )
             return
-        if isinstance(primary_index, int):
-            allowed_indices.append(primary_index)
-        if cls_type == "dual" and isinstance(secondary_index, int):
-            allowed_indices.append(secondary_index)
-        if not allowed_indices:
+        if isinstance(primary_key, str) and primary_key:
+            allowed_keys.append(primary_key)
+        if cls_type == "dual" and isinstance(secondary_key, str) and secondary_key:
+            allowed_keys.append(secondary_key)
+        if not allowed_keys:
             logger.info("[ext_supp] auto 模式但 account %s 无法确定允许小类，跳过", account_id)
+            await _mark_callback_video_failed(
+                request_id=request_id,
+                account_id=account_id,
+                reason="无法确定允许的视频小类",
+                rejected=True,
+            )
             return
+    exclusive_filter_keys = (
+        _normalize_category_keys(request_filters.get("category_keys"))
+        if mode == "exclusive"
+        else []
+    )
 
     try:
         ensure_free_space(min_bytes=500 * 1024 * 1024, label="external_supplement")
@@ -598,11 +811,18 @@ async def _post_callback_pipeline(
 
             actual_path = await _compress_video_if_needed(actual_path, tmpdir)
             permanent_url = await upload_video_file(actual_path, filename)
+            from app.utils.video_upload import current_upload_backend
+            upload_backend = current_upload_backend()
     except Exception as exc:
         logger.exception("[ext_supp] 下载/上传失败 source_url=%s: %s", source_url, exc)
+        await _mark_callback_video_failed(
+            request_id=request_id,
+            account_id=account_id,
+            reason=f"下载/上传失败: {exc}",
+        )
         return
 
-    logger.info("[ext_supp] uploaded → %s (source_url=%s)", permanent_url, source_url)
+    logger.info("[ext_supp] uploaded (%s) → %s (source_url=%s)", upload_backend, permanent_url, source_url)
 
     # 2. AI 审核（如启用）
     if ai_review_enabled:
@@ -628,39 +848,58 @@ async def _post_callback_pipeline(
                 reason_type="ai_review",
                 reason=reason,
             ))
+            await _mark_callback_video_failed(
+                request_id=request_id,
+                account_id=account_id,
+                reason=str(reason or "AI 审核未通过"),
+                rejected=True,
+            )
             return
         logger.info("[ext_supp] AI 审核通过 source_url=%s", source_url)
 
-    # 3. auto 模式：Gemini 分类 + 小类 index 严格匹配
-    if mode == "auto":
+    # 3. 分类过滤：auto 使用账号 single/dual 小类；exclusive 可使用手选小类。
+    classify_allowed_keys = allowed_keys if mode == "auto" else exclusive_filter_keys
+    if classify_allowed_keys:
         try:
-            category_index = await _classify_video_for_auto_supplement(permanent_url, owner_id)
+            category_key = await _classify_video_for_auto_supplement(permanent_url, owner_id)
         except Exception as exc:
             logger.warning("[ext_supp] 分类异常 source_url=%s: %s", source_url, exc)
-            category_index = None
-        if category_index is None:
-            logger.info("[ext_supp] auto 分类失败，丢弃 source_url=%s", source_url)
+            category_key = None
+        if category_key is None:
+            logger.info("[ext_supp] 分类失败，丢弃 source_url=%s mode=%s", source_url, mode)
             await _append_rejected_video(request_id, _rejected_entry(
                 video, account_id,
                 reason_type="classify_failed",
                 reason="Gemini 分类未返回结果",
-                allowed_indices=allowed_indices,
+                allowed_keys=classify_allowed_keys,
             ))
+            await _mark_callback_video_failed(
+                request_id=request_id,
+                account_id=account_id,
+                reason="Gemini 分类未返回结果",
+                rejected=True,
+            )
             return
-        if category_index not in allowed_indices:
+        if category_key not in classify_allowed_keys:
             logger.info(
-                "[ext_supp] auto 分类 idx=%s ∉ 允许 %s，丢弃 source_url=%s",
-                category_index, allowed_indices, source_url,
+                "[ext_supp] 分类 key=%s ∉ 允许 %s，丢弃 source_url=%s mode=%s",
+                category_key, classify_allowed_keys, source_url, mode,
             )
             await _append_rejected_video(request_id, _rejected_entry(
                 video, account_id,
                 reason_type="classify_unmatched",
-                reason=f"分类 idx={category_index} 不在允许小类 {allowed_indices}",
-                category_index=category_index,
-                allowed_indices=allowed_indices,
+                reason=f"分类 key={category_key} 不在允许小类 {classify_allowed_keys}",
+                category_key=category_key,
+                allowed_keys=classify_allowed_keys,
             ))
+            await _mark_callback_video_failed(
+                request_id=request_id,
+                account_id=account_id,
+                reason=f"分类 key={category_key} 不在允许小类 {classify_allowed_keys}",
+                rejected=True,
+            )
             return
-        logger.info("[ext_supp] auto 分类匹配 idx=%s source_url=%s", category_index, source_url)
+        logger.info("[ext_supp] 分类匹配 key=%s source_url=%s mode=%s", category_key, source_url, mode)
 
     # 4. 写库（写 video_sources + template + 绑 tag）
     try:
@@ -671,6 +910,14 @@ async def _post_callback_pipeline(
             )
             if existing is not None:
                 logger.info("[ext_supp] 写入前再校验：已有 source_url=%s，跳过", source_url)
+                from app.services.supplement_status_service import mark_video_failed
+                await mark_video_failed(
+                    session,
+                    request_id=request_id,
+                    account_id=account_id,
+                    reason="视频已存在",
+                )
+                await session.commit()
                 return
 
             vs = VideoSource(
@@ -692,7 +939,8 @@ async def _post_callback_pipeline(
                 height=video.get("height"),
                 aspect_ratio=video.get("aspect_ratio"),
                 extra=video.get("extra"),
-                local_video_url=permanent_url,
+                local_video_url=permanent_url if upload_backend != "gcs" else None,
+                local_gcs_video_url=permanent_url if upload_backend == "gcs" else None,
                 download_status="done",
                 tiktok_blogger_id=tiktok_blogger_id,
             )
@@ -724,7 +972,20 @@ async def _post_callback_pipeline(
         # 5. enqueue
         from app.services.video_ai_service import enqueue_template
         await enqueue_template(str(tpl_id))
+        async with SessionLocal() as session:
+            from app.services.supplement_status_service import mark_video_completed
+            await mark_video_completed(
+                session,
+                request_id=request_id,
+                account_id=account_id,
+            )
+            await session.commit()
         logger.info("[ext_supp] enqueued template tpl_id=%s vs_id=%s", tpl_id, vs_id)
 
     except Exception as exc:
         logger.exception("[ext_supp] 写库/触发 pipeline 失败 source_url=%s: %s", source_url, exc)
+        await _mark_callback_video_failed(
+            request_id=request_id,
+            account_id=account_id,
+            reason=f"写库/触发 pipeline 失败: {exc}",
+        )

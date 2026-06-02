@@ -114,7 +114,7 @@ curl -H "Authorization: Bearer <token>" \
 |------|------|------|
 | `id` | UUID | 子任务 ID |
 | `status` | string | 子任务状态（见下方状态说明） |
-| `result_video_url` | string \| null | 视频 CDN 链接，可直接播放/下载 |
+| `result_video_url` | string \| null | 视频可播放/下载链接。GCS 私有桶里的视频是 **V4 签名 URL（7 天有效）**；后端会在每次返回前校验剩余有效期，剩余 < 1 天时自动续签新的 7 天 URL，调用方无需关心刷新——拿到的链接就用，过期后再次请求接口拿到的就是续签后的新链接。 |
 | `operator` | string \| null | 审核人用户名 |
 | `has_ng` | boolean \| null | 是否存在穿帮，`true`=有穿帮，`false`=无穿帮，`null`=未审核 |
 | `ng_timestamps` | array \| null | 穿帮时间点列表，格式：`[{"second": 10, "frame": 5}]` |
@@ -275,6 +275,7 @@ HTTP 200
 curl "http://localhost:8000/api/v1/video-tasks?target_date=2026-03-31&page=1&page_size=20"
 
 # 2. 从响应中找到 status=reviewing 的子任务，播放其 result_video_url
+#    （GCS 视频返回 V4 签名 URL，7 天内可直接 GET；过期前 1 天后端会自动续签）
 
 # 3. 提交审核结果（无 Token 示例）
 curl -X PATCH "http://localhost:8000/api/v1/video-tasks/subtasks/{sub_task_id}/note" \

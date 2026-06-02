@@ -70,6 +70,8 @@ class CandidateVideo(Base):
     )
     ai_reviewed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     ai_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 手动隐藏标记：True 时前后端查询均过滤掉，不影响 status 状态机，可随时恢复
+    hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
