@@ -26,25 +26,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_video_publications_completed_at",
-        "video_publications",
-        ["completed_at"],
-    )
-    # 部分索引：只覆盖 kol_link_clicks IS NULL 的行，收集完后自动失效
     op.execute(
-        "CREATE INDEX ix_video_publications_kol_link_clicks_null "
+        "CREATE INDEX IF NOT EXISTS ix_video_publications_completed_at "
+        "ON video_publications (completed_at)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_video_publications_kol_link_clicks_null "
         "ON video_publications (id) "
         "WHERE kol_link_clicks IS NULL"
     )
-    op.create_index(
-        "ix_accounts_kol_user_id",
-        "accounts",
-        ["kol_user_id"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_accounts_kol_user_id "
+        "ON accounts (kol_user_id)"
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_accounts_kol_user_id", table_name="accounts")
-    op.drop_index("ix_video_publications_kol_link_clicks_null", table_name="video_publications")
-    op.drop_index("ix_video_publications_completed_at", table_name="video_publications")
+    op.execute("DROP INDEX IF EXISTS ix_accounts_kol_user_id")
+    op.execute("DROP INDEX IF EXISTS ix_video_publications_kol_link_clicks_null")
+    op.execute("DROP INDEX IF EXISTS ix_video_publications_completed_at")
