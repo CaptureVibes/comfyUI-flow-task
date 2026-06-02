@@ -880,26 +880,30 @@ async def _post_callback_pipeline(
                 rejected=True,
             )
             return
-        if category_key not in classify_allowed_keys:
+        # classify_allowed_keys 是大类 key（"beauty"/"method"/...），
+        # category_key 是细分类 key（"beauty_showcase"/...），需先转成大类再比对
+        from app.services.video_classification_service import CATEGORY_MAJOR
+        category_major = CATEGORY_MAJOR.get(category_key, category_key)
+        if category_major not in classify_allowed_keys:
             logger.info(
-                "[ext_supp] 分类 key=%s ∉ 允许 %s，丢弃 source_url=%s mode=%s",
-                category_key, classify_allowed_keys, source_url, mode,
+                "[ext_supp] 分类 key=%s major=%s ∉ 允许 %s，丢弃 source_url=%s mode=%s",
+                category_key, category_major, classify_allowed_keys, source_url, mode,
             )
             await _append_rejected_video(request_id, _rejected_entry(
                 video, account_id,
                 reason_type="classify_unmatched",
-                reason=f"分类 key={category_key} 不在允许小类 {classify_allowed_keys}",
+                reason=f"分类 key={category_key}(major={category_major}) 不在允许大类 {classify_allowed_keys}",
                 category_key=category_key,
                 allowed_keys=classify_allowed_keys,
             ))
             await _mark_callback_video_failed(
                 request_id=request_id,
                 account_id=account_id,
-                reason=f"分类 key={category_key} 不在允许小类 {classify_allowed_keys}",
+                reason=f"分类 key={category_key}(major={category_major}) 不在允许大类 {classify_allowed_keys}",
                 rejected=True,
             )
             return
-        logger.info("[ext_supp] 分类匹配 key=%s source_url=%s mode=%s", category_key, source_url, mode)
+        logger.info("[ext_supp] 分类匹配 key=%s major=%s source_url=%s mode=%s", category_key, category_major, source_url, mode)
 
     # 4. 写库（写 video_sources + template + 绑 tag）
     try:
