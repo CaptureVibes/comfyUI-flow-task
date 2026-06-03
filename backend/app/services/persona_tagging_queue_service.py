@@ -163,7 +163,13 @@ async def _run_video_task(task_id: uuid.UUID) -> None:
             if not video_url:
                 raise RuntimeError("no usable video URL (local_gcs_video_url / local_video_url both empty)")
 
+            logger.info(
+                "[video_tagging] start task_id=%s video_id=%s url=%.80s",
+                task_id, task.video_id, video_url,
+            )
+
             # 阶段1：生成描述单元（需要视频内容）
+            logger.info("[video_tagging] stage1/description_unit task_id=%s", task_id)
             unit_result = await analyze_video_description_unit(
                 video_url=video_url,
                 gcs_url=video_url,
@@ -175,8 +181,10 @@ async def _run_video_task(task_id: uuid.UUID) -> None:
             if unit_result.get("error"):
                 raise RuntimeError(f"video_description_unit: {unit_result['error']}")
             unit = unit_result.get("parsed") or {}
+            logger.info("[video_tagging] stage1 done task_id=%s", task_id)
 
             # 阶段3：10 属性分类（纯文本，用描述单元）
+            logger.info("[video_tagging] stage3/classification task_id=%s", task_id)
             classification_result = await analyze_video_classification(
                 video_url=video_url,
                 caption=caption,
@@ -187,8 +195,10 @@ async def _run_video_task(task_id: uuid.UUID) -> None:
             if classification_result.get("error"):
                 raise RuntimeError(f"personal_tags: {classification_result['error']}")
             personal_tags = classification_result.get("parsed") or {}
+            logger.info("[video_tagging] stage3 done task_id=%s", task_id)
 
             # 阶段4：32 维风格向量
+            logger.info("[video_tagging] stage4/style_vector task_id=%s", task_id)
             style_vector_result = await analyze_video_style_vector(
                 video_url=video_url,
                 caption=caption,
@@ -199,8 +209,10 @@ async def _run_video_task(task_id: uuid.UUID) -> None:
             if style_vector_result.get("error"):
                 raise RuntimeError(f"style_vector: {style_vector_result['error']}")
             style_vector = style_vector_result.get("parsed") or {}
+            logger.info("[video_tagging] stage4 done task_id=%s", task_id)
 
             # 阶段5：风格签名
+            logger.info("[video_tagging] stage5/style_signature task_id=%s", task_id)
             style_signature_result = await analyze_video_style_signature(
                 video_url=video_url,
                 caption=caption,
@@ -212,6 +224,7 @@ async def _run_video_task(task_id: uuid.UUID) -> None:
             if style_signature_result.get("error"):
                 raise RuntimeError(f"style_signature: {style_signature_result['error']}")
             style_signature = style_signature_result.get("parsed") or {}
+            logger.info("[video_tagging] stage5 done task_id=%s", task_id)
 
             now = datetime.now(timezone.utc)
             task.status = "success"
@@ -367,6 +380,11 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             tiktok_blogger_id = task.tiktok_blogger_id
             min_count = task.min_video_count or 15
 
+            logger.info(
+                "[blogger_tagging] start task_id=%s blogger_id=%s min_video_count=%d",
+                task_id, tiktok_blogger_id, min_count,
+            )
+
             # 检查博主是否存在
             blogger_result = await db.execute(
                 select(TiktokBlogger).where(TiktokBlogger.id == tiktok_blogger_id)
@@ -380,11 +398,20 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             available = len(videos)
             now = datetime.now(timezone.utc)
 
+            logger.info(
+                "[blogger_tagging] videos available=%d required=%d task_id=%s",
+                available, min_count, task_id,
+            )
+
             task.available_video_count = available
             task.usable_video_count = available
             task.updated_at = now
 
             if available < min_count:
+                logger.warning(
+                    "[blogger_tagging] insufficient videos, failing task_id=%s blogger_id=%s",
+                    task_id, tiktok_blogger_id,
+                )
                 task.status = "failed"
                 task.result_code = 4202
                 task.result_message = "insufficient videos"
@@ -404,6 +431,10 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             existing_by_video = {str(t.video_id): t for t in existing_result.scalars().all()}
 
             success_tasks = [t for t in existing_by_video.values() if t.status == "success"]
+            logger.info(
+                "[blogger_tagging] video_tasks success=%d/%d task_id=%s",
+                len(success_tasks), min_count, task_id,
+            )
 
             if len(success_tasks) < min_count:
                 # 提交缺少的视频打标任务
@@ -426,6 +457,10 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
                     )
                     video_task_ids.append(vt.id)
 
+                logger.info(
+                    "[blogger_tagging] submitted %d video tasks, waiting... task_id=%s",
+                    len(video_task_ids), task_id,
+                )
                 await db.commit()
 
                 task.status = "waiting_videos"
@@ -442,6 +477,7 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
                 return
 
             # 已有足够成功视频，开始聚合
+            logger.info("[blogger_tagging] aggregating task_id=%s selected=%d", task_id, min_count)
             task.status = "aggregating"
             task.result_message = "aggregating blogger result"
             task.successful_video_count = len(success_tasks)
