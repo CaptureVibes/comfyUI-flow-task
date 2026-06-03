@@ -17,6 +17,7 @@ from app.db.session import SessionLocal
 from app.models.persona_tagging import BloggerTaggingResult, VideoTaggingResult
 from app.models.tiktok_blogger import TiktokBlogger
 from app.models.video_source import VideoSource
+from app.utils.gcs_signing import ensure_video_source_signed_urls
 from app.services.persona_tagging_service import (
     aggregate_classifications,
     aggregate_style_results,
@@ -141,14 +142,31 @@ async def _run_video_task(task_id: uuid.UUID) -> None:
             return
 
         try:
-            video_url = task.gcs_url
             caption = task.description
             hashtag = ""
+
+            # 查 VideoSource，续签 GCS URL，按优先级选视频 URL
+            vs_row = await db.execute(
+                select(VideoSource).where(VideoSource.id == task.video_id)
+            )
+            vs = vs_row.scalar_one_or_none()
+            if vs is not None:
+                await ensure_video_source_signed_urls(db, vs)
+
+            if vs is not None and vs.local_gcs_video_url:
+                video_url = vs.local_gcs_video_url
+            elif vs is not None and vs.local_video_url:
+                video_url = vs.local_video_url
+            else:
+                video_url = task.gcs_url  # 兜底：任务创建时存的 URL
+
+            if not video_url:
+                raise RuntimeError("no usable video URL (local_gcs_video_url / local_video_url both empty)")
 
             # 阶段1：生成描述单元（需要视频内容）
             unit_result = await analyze_video_description_unit(
                 video_url=video_url,
-                gcs_url=task.gcs_url,
+                gcs_url=video_url,
                 caption=caption,
                 hashtag=hashtag,
                 video_index=1,

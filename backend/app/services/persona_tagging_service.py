@@ -1229,11 +1229,17 @@ def merge_blogger_personal_tags(llm_tags: dict, classification_summary: dict) ->
 # ── 数据库操作（用于队列服务）──────────────────────────────────────────────────
 
 async def get_blogger_videos(db: AsyncSession, tiktok_blogger_id: uuid.UUID) -> list[dict]:
-    """获取博主旗下有 GCS 视频 URL 和描述的视频列表。"""
+    """获取博主旗下有视频 URL 和描述的视频列表。
+    优先 local_gcs_video_url，兜底 local_video_url。
+    """
+    from sqlalchemy import or_
     result = await db.execute(
         select(VideoSource).where(
             VideoSource.tiktok_blogger_id == tiktok_blogger_id,
-            VideoSource.local_gcs_video_url.isnot(None),
+            or_(
+                VideoSource.local_gcs_video_url.isnot(None),
+                VideoSource.local_video_url.isnot(None),
+            ),
         ).order_by(VideoSource.publish_date.desc().nullslast(), VideoSource.created_at.desc())
     )
     videos = result.scalars().all()
@@ -1247,9 +1253,10 @@ async def get_blogger_videos(db: AsyncSession, tiktok_blogger_id: uuid.UUID) -> 
         description = v.video_desc or v.video_title or ""
         if not description:
             continue
+        video_url = v.local_gcs_video_url or v.local_video_url
         out.append({
             "video_id": vid,
-            "gcs_url": v.local_gcs_video_url,
+            "gcs_url": video_url,
             "description": description,
             "source_url": v.source_url or "",
         })
