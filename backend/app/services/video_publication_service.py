@@ -2214,6 +2214,10 @@ class VideoPublicationService:
                         task_id=pub.open_api_task_id,
                         external_id=pub.external_id,
                     )
+                    logger.info(
+                        "sync_metrics: publication=%s task_id=%s external_id=%s response=%s",
+                        pub.id, pub.open_api_task_id, pub.external_id, response,
+                    )
                     if response.get("code") != 0:
                         raise RuntimeError(f"API code={response.get('code')} msg={response.get('message')}")
                     data = response.get("data") or {}
