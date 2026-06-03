@@ -1244,6 +1244,7 @@ async def bulk_generate_ai_bloggers(
 
     created_accounts: list[Account] = []
     created_tag_ids: list[str] = []
+    bound_blogger_ids: list = []
     for tag in tags:
         account = Account(
             owner_id=creator_id,
@@ -1271,6 +1272,7 @@ async def bulk_generate_ai_bloggers(
                 account_id=account.id,
                 tiktok_blogger_id=blogger_id_row[0],
             ))
+            bound_blogger_ids.append(blogger_id_row[0])
 
         created_accounts.append(account)
         created_tag_ids.append(str(tag.id))
@@ -1279,6 +1281,29 @@ async def bulk_generate_ai_bloggers(
 
     for account, tag_id in zip(created_accounts, created_tag_ids, strict=False):
         await enqueue_ai_account_generation(str(account.id), [tag_id])
+
+    # 异步触发绑定博主的人设打标（不阻塞当前请求）
+    _blogger_ids_to_tag = list({str(bid) for bid in bound_blogger_ids})
+    if _blogger_ids_to_tag:
+        import asyncio as _asyncio
+        import uuid as _uuid
+
+        async def _trigger_tagging() -> None:
+            from app.db.session import SessionLocal as _SessionLocal
+            from app.services.persona_tagging_queue_service import enqueue_blogger_tagging
+            import logging as _logging
+            _log = _logging.getLogger("app.accounts")
+            async with _SessionLocal() as _db:
+                for _bid_str in _blogger_ids_to_tag:
+                    try:
+                        await enqueue_blogger_tagging(_uuid.UUID(_bid_str), _db)
+                    except Exception as _e:
+                        _log.warning(
+                            "Failed to enqueue persona tagging for blogger %s: %s", _bid_str, _e
+                        )
+                await _db.commit()
+
+        _asyncio.create_task(_trigger_tagging())
 
     return BulkGenerateAIAccountsResponse(
         status="queued",

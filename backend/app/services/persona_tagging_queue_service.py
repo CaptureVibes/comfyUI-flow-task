@@ -552,6 +552,93 @@ async def _blogger_worker_loop() -> None:
 
 # ── 启动 / 停止 ────────────────────────────────────────────────────────────────
 
+async def enqueue_blogger_tagging(
+    tiktok_blogger_id: uuid.UUID,
+    db: AsyncSession,
+    min_video_count: int = 15,
+) -> BloggerTaggingResult | None:
+    """
+    公开接口：为指定博主创建或重置打标任务（幂等），写入 pending 状态。
+    Worker 会自动拾取并执行，无需手动触发。
+
+    已有 success 任务时跳过（不重复打标）。
+    已有 pending/running 任务时同样跳过。
+    其余状态（failed/waiting_videos 等）重置为 pending 重跑。
+    """
+    from sqlalchemy import select as _select
+    from app.models.tiktok_blogger import TiktokBlogger
+    from app.services.persona_tagging_service import get_blogger_videos
+
+    # 校验博主存在
+    blogger_row = await db.execute(
+        _select(TiktokBlogger).where(TiktokBlogger.id == tiktok_blogger_id)
+    )
+    blogger = blogger_row.scalar_one_or_none()
+    if blogger is None:
+        logger.warning("enqueue_blogger_tagging: blogger not found %s", tiktok_blogger_id)
+        return None
+
+    # 检查可用视频数
+    videos = await get_blogger_videos(db, tiktok_blogger_id)
+    available = len(videos)
+
+    existing_row = await db.execute(
+        _select(BloggerTaggingResult).where(
+            BloggerTaggingResult.tiktok_blogger_id == tiktok_blogger_id
+        )
+    )
+    existing = existing_row.scalar_one_or_none()
+
+    now = datetime.now(timezone.utc)
+
+    if existing and existing.status == "success":
+        logger.info("enqueue_blogger_tagging: already success, skip %s", tiktok_blogger_id)
+        return existing
+    if existing and existing.status in ("pending", "checking_videos", "waiting_videos", "aggregating"):
+        logger.info("enqueue_blogger_tagging: already running (%s), skip %s", existing.status, tiktok_blogger_id)
+        return existing
+
+    blogger.tagging_status = "pending"
+    blogger.updated_at = now
+
+    if existing:
+        existing.min_video_count = min_video_count
+        existing.available_video_count = available
+        existing.usable_video_count = available
+        existing.status = "pending"
+        existing.result_code = 0
+        existing.result_message = "received"
+        existing.error_code = None
+        existing.error_message = None
+        existing.worker_id = None
+        existing.lock_until = None
+        existing.next_retry_at = None
+        existing.started_at = None
+        existing.finished_at = None
+        existing.updated_at = now
+        task = existing
+    else:
+        task = BloggerTaggingResult(
+            id=uuid.uuid4(),
+            tiktok_blogger_id=tiktok_blogger_id,
+            min_video_count=min_video_count,
+            available_video_count=available,
+            usable_video_count=available,
+            status="pending",
+            result_code=0,
+            result_message="received",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(task)
+
+    logger.info(
+        "enqueue_blogger_tagging: queued blogger_id=%s available_videos=%d",
+        tiktok_blogger_id, available,
+    )
+    return task
+
+
 def start_persona_tagging_workers() -> None:
     global _video_processor_task, _blogger_processor_task, _shutting_down
     _shutting_down = False
