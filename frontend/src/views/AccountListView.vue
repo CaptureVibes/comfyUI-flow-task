@@ -11,6 +11,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M4 4h16v16H4z" opacity=".2"/></svg>
           一键生成AI博主
         </el-button>
+        <el-button class="al-tagging-btn" @click="handleBulkPersonaTagging" :loading="personaTagging">
+          <svg v-if="!personaTagging" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          {{ selectedMap.size > 0 ? `人设打标 (${selectedMap.size})` : '人设打标' }}
+        </el-button>
         <el-button class="al-restart-btn" @click="openBulkContinueDialog" :loading="bulkRestarting" :disabled="items.length === 0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:6px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
           {{ selectedMap.size > 0 ? `一键继续 (${selectedMap.size})` : '一键继续' }}
@@ -1501,7 +1505,58 @@
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
                   </div>
                   <span class="ac-blogger-name">{{ blogger.blogger_name }}</span>
+                  <!-- 打标状态指示 -->
+                  <span
+                    v-if="blogger.tagging_status && blogger.tagging_status !== 'idle'"
+                    class="ac-tagging-badge"
+                    :class="`ac-tagging-badge--${blogger.tagging_status}`"
+                    :title="bloggerTaggingTitle(blogger)"
+                  >
+                    <span v-if="blogger.tagging_status === 'pending' || blogger.tagging_status === 'running'">⏳</span>
+                    <span v-else-if="blogger.tagging_status === 'success'">🏷</span>
+                    <span v-else-if="blogger.tagging_status === 'failed'">✗</span>
+                  </span>
                 </span>
+              </div>
+              <!-- 打标结果展示（成功时） -->
+              <div
+                v-if="item.tiktok_bloggers?.some(b => b.tagging_status === 'success' && b.persona_tags)"
+                class="al-persona-result-wrap"
+              >
+                <template v-for="blogger in item.tiktok_bloggers.filter(b => b.tagging_status === 'success' && b.persona_tags)" :key="blogger.id + '-tags'">
+                  <div class="al-persona-result">
+                    <span class="al-persona-label">{{ blogger.blogger_name }}</span>
+                    <span v-if="blogger.persona_tags?.basic_demographics?.gender_or_sexuality_presentation" class="al-persona-chip al-persona-chip--demo">
+                      {{ blogger.persona_tags.basic_demographics.gender_or_sexuality_presentation }}
+                    </span>
+                    <span v-if="blogger.persona_tags?.basic_demographics?.age_range" class="al-persona-chip al-persona-chip--demo">
+                      {{ blogger.persona_tags.basic_demographics.age_range }}
+                    </span>
+                    <span v-if="blogger.persona_tags?.basic_demographics?.body_type" class="al-persona-chip al-persona-chip--demo">
+                      {{ blogger.persona_tags.basic_demographics.body_type }}
+                    </span>
+                    <span v-if="blogger.persona_tags?.consumption_tier" class="al-persona-chip al-persona-chip--consumption">
+                      {{ blogger.persona_tags.consumption_tier }}
+                    </span>
+                    <span v-if="blogger.persona_tags?.temperament_psychology" class="al-persona-chip al-persona-chip--temperament">
+                      {{ blogger.persona_tags.temperament_psychology }}
+                    </span>
+                    <span v-if="blogger.persona_tags?.occasion" class="al-persona-chip al-persona-chip--occasion">
+                      {{ blogger.persona_tags.occasion }}
+                    </span>
+                    <!-- Top 3 风格 -->
+                    <template v-if="blogger.style_vector">
+                      <span
+                        v-for="(score, style) in topStyles(blogger.style_vector, 3)"
+                        :key="style"
+                        class="al-persona-chip al-persona-chip--style"
+                        :title="`${style}: ${(score * 100).toFixed(0)}%`"
+                      >
+                        {{ style }} {{ (score * 100).toFixed(0) }}%
+                      </span>
+                    </template>
+                  </div>
+                </template>
               </div>
               <!-- Hashtags -->
               <div v-if="item.hashtags?.length" class="al-hashtags-wrap">
@@ -1791,7 +1846,7 @@ import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision, fetchChannelAnalytics } from '../api/accounts'
+import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision, fetchChannelAnalytics, bulkPersonaTagging } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
@@ -2025,6 +2080,7 @@ async function handleSyncAccount(item) {
 }
 
 const bulkGenerating = ref(false)
+const personaTagging = ref(false)
 const bulkRestarting = ref(false)
 const showBulkContinueDialog = ref(false)
 const bulkResumeStage = ref('current')
@@ -2972,6 +3028,47 @@ async function handleBulkGenerateAIAccounts() {
     ElMessage.error(err?.response?.data?.detail || '一键生成失败')
   } finally {
     bulkGenerating.value = false
+  }
+}
+
+function bloggerTaggingTitle(blogger) {
+  const statusMap = { pending: '打标排队中', running: '打标进行中', success: '打标完成', failed: '打标失败' }
+  return statusMap[blogger.tagging_status] || blogger.tagging_status
+}
+
+function topStyles(styleVector, n = 3) {
+  if (!styleVector) return {}
+  return Object.fromEntries(
+    Object.entries(styleVector)
+      .filter(([, v]) => v > 0)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, n)
+  )
+}
+
+async function handleBulkPersonaTagging() {
+  if (personaTagging.value) return
+  const isSelection = selectedMap.value.size > 0
+  const accountIds = isSelection ? [...selectedMap.value.keys()] : []
+  const desc = isSelection ? `已选 ${accountIds.length} 个 AI 博主` : '全部 AI 博主'
+  try {
+    await ElMessageBox.confirm(
+      `将为${desc}绑定的 TikTok 博主异步进行人设打标，完成后结果自动写回。确定继续？`,
+      '确认人设打标',
+      { confirmButtonText: '开始打标', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+  personaTagging.value = true
+  try {
+    const result = await bulkPersonaTagging(accountIds.length ? accountIds : null)
+    ElMessage.success(result.message || `已为 ${result.queued} 个博主入队打标`)
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '人设打标失败')
+  } finally {
+    personaTagging.value = false
   }
 }
 
@@ -4840,6 +4937,87 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 90px;
+}
+
+.ac-tagging-badge {
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ac-tagging-badge--success { opacity: 0.9; }
+.ac-tagging-badge--failed { opacity: 0.7; }
+
+/* 打标结果区域 */
+.al-persona-result-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.al-persona-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+.al-persona-label {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.al-persona-chip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.al-persona-chip--demo {
+  background: #eff6ff;
+  color: #3b82f6;
+  border: 1px solid #bfdbfe;
+}
+
+.al-persona-chip--consumption {
+  background: #fefce8;
+  color: #ca8a04;
+  border: 1px solid #fde68a;
+}
+
+.al-persona-chip--temperament {
+  background: #fdf4ff;
+  color: #a855f7;
+  border: 1px solid #e9d5ff;
+}
+
+.al-persona-chip--occasion {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+
+.al-persona-chip--style {
+  background: #fff7ed;
+  color: #ea580c;
+  border: 1px solid #fed7aa;
+}
+
+/* 人设打标按钮 */
+.al-tagging-btn {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #ea580c;
+}
+.al-tagging-btn:hover {
+  background: #ffedd5;
+  border-color: #fdba74;
+  color: #c2410c;
 }
 
 .ac-tag-chip {

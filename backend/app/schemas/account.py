@@ -193,6 +193,11 @@ class BoundBloggerRead(BaseModel):
     blogger_handle: str | None
     avatar_url: str | None
     platform: str | None
+    # 人设打标回写字段
+    tagging_status: str = "idle"
+    persona_tags: dict | None = None
+    style_vector: dict | None = None
+    style_signature: dict | None = None
 
     model_config = {"from_attributes": True}
 

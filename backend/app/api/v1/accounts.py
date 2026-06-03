@@ -1315,6 +1315,43 @@ async def bulk_generate_ai_bloggers(
     )
 
 
+@router.post("/bulk-persona-tagging", status_code=202)
+async def bulk_persona_tagging(
+    body: dict,
+    creator_id: uuid.UUID = Depends(_get_creator_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    为已勾选的 AI 博主（或全部）触发绑定 TikTok 博主的人设打标。
+    body: { account_ids?: string[] }  — 不传则取当前用户全部账号
+    """
+    from app.services.persona_tagging_queue_service import enqueue_blogger_tagging
+
+    account_ids = body.get("account_ids") or []
+
+    # 查这批账号绑定的所有 TikTok 博主（去重）
+    stmt = (
+        select(AccountBloggerBinding.tiktok_blogger_id)
+        .join(Account, Account.id == AccountBloggerBinding.account_id)
+        .where(Account.owner_id == creator_id)
+    )
+    if account_ids:
+        stmt = stmt.where(AccountBloggerBinding.account_id.in_([uuid.UUID(i) for i in account_ids]))
+    rows = (await session.execute(stmt.distinct())).scalars().all()
+
+    if not rows:
+        return {"queued": 0, "message": "没有找到绑定的 TikTok 博主"}
+
+    queued = 0
+    for blogger_id in rows:
+        task = await enqueue_blogger_tagging(blogger_id, session)
+        if task is not None:
+            queued += 1
+
+    await session.commit()
+    return {"queued": queued, "message": f"已为 {queued} 个博主入队人设打标"}
+
+
 @router.post("/bulk-restart-ai-generation", status_code=202)
 async def bulk_restart_ai_generation(
     body: BulkRestartAIBody,

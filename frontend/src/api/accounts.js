@@ -83,6 +83,12 @@ export async function bulkGenerateAIAccounts() {
   return data
 }
 
+export async function bulkPersonaTagging(accountIds = null) {
+  const body = accountIds?.length ? { account_ids: accountIds } : {}
+  const { data } = await http.post('/accounts/bulk-persona-tagging', body)
+  return data
+}
+
 export async function selectAIPhotoCandidate(accountId, candidateId) {
   const { data } = await http.post(`/accounts/${accountId}/ai-generate/select-photo`, { candidate_id: candidateId })
   return data
