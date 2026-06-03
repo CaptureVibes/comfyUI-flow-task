@@ -34,10 +34,19 @@ logger = logging.getLogger("app.persona_tagging_queue")
 
 _TASK_LOCK_SECONDS = 3600
 _POLL_INTERVAL = 5
+_VIDEO_CONCURRENCY = 50  # 同时处理的视频打标任务数
 
 _video_processor_task: asyncio.Task | None = None
 _blogger_processor_task: asyncio.Task | None = None
 _shutting_down = False
+_video_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_video_semaphore() -> asyncio.Semaphore:
+    global _video_semaphore
+    if _video_semaphore is None:
+        _video_semaphore = asyncio.Semaphore(_VIDEO_CONCURRENCY)
+    return _video_semaphore
 
 
 # ── 任务领取（SELECT ... FOR UPDATE SKIP LOCKED）──────────────────────────────
@@ -572,19 +581,42 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
 
 # ── Worker 循环 ────────────────────────────────────────────────────────────────
 
+async def _run_video_task_with_semaphore(task_id: uuid.UUID) -> None:
+    async with _get_video_semaphore():
+        await _run_video_task(task_id)
+
+
 async def _video_worker_loop() -> None:
-    worker_id = f"video-persona-{id(asyncio.current_task())}"
-    logger.info("Video persona tagging worker started: %s", worker_id)
+    """持续从队列拉取视频打标任务，最多 _VIDEO_CONCURRENCY 个并发执行。"""
+    worker_id_base = f"video-persona-{id(asyncio.current_task())}"
+    logger.info("Video persona tagging worker started: %s (concurrency=%d)", worker_id_base, _VIDEO_CONCURRENCY)
+    running: set[asyncio.Task] = set()
+    seq = 0
+
     while not _shutting_down:
         try:
-            async with SessionLocal() as db:
-                task = await _claim_next_video_task(db, worker_id)
-            if task is None:
-                await asyncio.sleep(_POLL_INTERVAL)
-                continue
-            await _run_video_task(task.id)
+            # 只要还有并发槽位就继续拉取
+            if len(running) < _VIDEO_CONCURRENCY:
+                seq += 1
+                worker_id = f"{worker_id_base}-{seq}"
+                async with SessionLocal() as db:
+                    task = await _claim_next_video_task(db, worker_id)
+                if task is not None:
+                    t = asyncio.get_event_loop().create_task(
+                        _run_video_task_with_semaphore(task.id)
+                    )
+                    running.add(t)
+                    t.add_done_callback(running.discard)
+                    continue  # 立即尝试再拉一条
+
+            # 队列空或已满并发，等一会儿
+            await asyncio.sleep(_POLL_INTERVAL)
+
+            # 清理已完成的 task 引用
+            running = {t for t in running if not t.done()}
+
         except Exception as exc:
-            logger.exception("Video worker error: %s", exc)
+            logger.exception("Video worker loop error: %s", exc)
             await asyncio.sleep(_POLL_INTERVAL)
 
 
@@ -700,8 +732,9 @@ async def enqueue_blogger_tagging(
 
 
 def start_persona_tagging_workers() -> None:
-    global _video_processor_task, _blogger_processor_task, _shutting_down
+    global _video_processor_task, _blogger_processor_task, _shutting_down, _video_semaphore
     _shutting_down = False
+    _video_semaphore = asyncio.Semaphore(_VIDEO_CONCURRENCY)
     loop = asyncio.get_event_loop()
     if _video_processor_task is None or _video_processor_task.done():
         _video_processor_task = loop.create_task(_video_worker_loop())
