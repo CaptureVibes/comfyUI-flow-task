@@ -537,19 +537,30 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             task.finished_at = now
             task.updated_at = now
 
-            # 写回 tiktok_bloggers 表
-            blogger_row = await db.execute(
-                select(TiktokBlogger).where(TiktokBlogger.id == tiktok_blogger_id)
-            )
-            blogger_obj = blogger_row.scalar_one_or_none()
-            if blogger_obj is not None:
-                blogger_obj.persona_tags = account_personal_tags
-                blogger_obj.style_vector = style_summary.get("average_style_vector") or {}
-                blogger_obj.style_signature = style_summary.get("account_style_signature") or {}
-                blogger_obj.tagging_status = "success"
-                blogger_obj.updated_at = now
-
+            # 先 commit 博主任务本身，确保 success 状态落库
+            await db.commit()
             logger.info("Blogger tagging success: task_id=%s blogger_id=%s", task_id, tiktok_blogger_id)
+
+            # 写回 tiktok_bloggers 表（独立 commit，失败不影响任务状态）
+            try:
+                blogger_row = await db.execute(
+                    select(TiktokBlogger).where(TiktokBlogger.id == tiktok_blogger_id)
+                )
+                blogger_obj = blogger_row.scalar_one_or_none()
+                if blogger_obj is not None:
+                    blogger_obj.persona_tags = account_personal_tags
+                    blogger_obj.style_vector = style_summary.get("average_style_vector") or {}
+                    blogger_obj.style_signature = style_summary.get("account_style_signature") or {}
+                    blogger_obj.tagging_status = "success"
+                    blogger_obj.updated_at = now
+                    await db.commit()
+                    logger.info("Blogger tagging written back to tiktok_bloggers: blogger_id=%s", tiktok_blogger_id)
+            except Exception as wb_exc:
+                logger.error(
+                    "Blogger tagging writeback failed (task already success): blogger_id=%s err=%s",
+                    tiktok_blogger_id, wb_exc,
+                )
+                await db.rollback()
 
         except Exception as exc:
             logger.exception("Blogger tagging failed: task_id=%s err=%s", task_id, exc)
@@ -678,12 +689,23 @@ async def enqueue_blogger_tagging(
     now = datetime.now(timezone.utc)
 
     if existing and existing.status == "success":
-        # 只有 tiktok_bloggers 里也已写回结果才算真正完成，否则重跑补写
         if blogger.persona_tags is not None:
             logger.info("enqueue_blogger_tagging: already success, skip %s", tiktok_blogger_id)
             return existing
+        # blogger_tagging_results 已有结果，直接补写 tiktok_bloggers，不必重跑
+        if existing.account_personal_tags is not None:
+            logger.info(
+                "enqueue_blogger_tagging: writeback only (task success, persona_tags missing) %s",
+                tiktok_blogger_id,
+            )
+            blogger.persona_tags = existing.account_personal_tags
+            blogger.style_vector = existing.account_style_vector or {}
+            blogger.style_signature = existing.account_style_signature or {}
+            blogger.tagging_status = "success"
+            blogger.updated_at = datetime.now(timezone.utc)
+            return existing  # 调用方会 commit
         logger.info(
-            "enqueue_blogger_tagging: status=success but persona_tags not written back, re-enqueue %s",
+            "enqueue_blogger_tagging: status=success but no data, re-enqueue %s",
             tiktok_blogger_id,
         )
     elif existing and existing.status in ("pending", "checking_videos", "waiting_videos", "aggregating"):
