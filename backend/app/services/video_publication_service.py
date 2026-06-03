@@ -2214,7 +2214,7 @@ class VideoPublicationService:
                         task_id=pub.open_api_task_id,
                         external_id=pub.external_id,
                     )
-                    logger.info(
+                    logger.debug(
                         "sync_metrics: publication=%s task_id=%s external_id=%s response=%s",
                         pub.id, pub.open_api_task_id, pub.external_id, response,
                     )
