@@ -983,6 +983,83 @@
       </div>
     </el-dialog>
 
+    <!-- 人设打标进度 dialog -->
+    <el-dialog
+      v-model="showTaggingProgressDialog"
+      :title="taggingProgressBlogger ? `人设打标进度 · ${taggingProgressBlogger.blogger_name}` : '人设打标进度'"
+      width="640px"
+      :close-on-click-modal="true"
+      destroy-on-close
+      @close="closeTaggingProgressDialog"
+    >
+      <div v-loading="taggingProgressLoading" class="tp-body">
+        <!-- 顶部总览 -->
+        <div class="tp-overview">
+          <div class="tp-overview-left">
+            <div class="tp-overview-status">
+              <span class="tp-status-dot" :class="`is-${taggingProgressData?.blogger_status || 'not_started'}`"></span>
+              <span class="tp-status-label">{{ taggingStatusLabel(taggingProgressData?.blogger_status) }}</span>
+            </div>
+            <div class="tp-overview-counts" v-if="taggingProgressData?.summary">
+              共 {{ taggingProgressData.summary.total }} 条视频
+              <template v-if="taggingProgressData.summary.total">
+                （至少需 {{ taggingProgressData.min_video_count }} 条）
+              </template>
+              <span style="color:#16a34a;margin-left:6px">✓ {{ taggingProgressData.summary.success }}</span>
+              <span v-if="taggingProgressData.summary.running" style="color:#6366f1;margin-left:4px">⏳ 处理中 {{ taggingProgressData.summary.running }}</span>
+              <span v-if="taggingProgressData.summary.pending" style="color:#ca8a04;margin-left:4px">排队 {{ taggingProgressData.summary.pending }}</span>
+              <span v-if="taggingProgressData.summary.failed" style="color:#dc2626;margin-left:4px">✗ {{ taggingProgressData.summary.failed }}</span>
+              <span v-if="taggingProgressData.summary.not_started" style="color:#94a3b8;margin-left:4px">未开始 {{ taggingProgressData.summary.not_started }}</span>
+            </div>
+            <!-- 进度条 -->
+            <div v-if="taggingProgressData?.summary?.total" class="tp-progress-bar-wrap">
+              <div class="tp-progress-bar">
+                <div
+                  class="tp-progress-fill tp-progress-fill--success"
+                  :style="{ width: (taggingProgressData.summary.success / taggingProgressData.summary.total * 100).toFixed(1) + '%' }"
+                ></div>
+                <div
+                  class="tp-progress-fill tp-progress-fill--running"
+                  :style="{ width: ((taggingProgressData.summary.running + taggingProgressData.summary.pending) / taggingProgressData.summary.total * 100).toFixed(1) + '%' }"
+                ></div>
+                <div
+                  class="tp-progress-fill tp-progress-fill--failed"
+                  :style="{ width: (taggingProgressData.summary.failed / taggingProgressData.summary.total * 100).toFixed(1) + '%' }"
+                ></div>
+              </div>
+              <span class="tp-progress-pct">{{ taggingProgressData.summary.total ? ((taggingProgressData.summary.success / taggingProgressData.summary.total) * 100).toFixed(0) : 0 }}%</span>
+            </div>
+          </div>
+          <div class="tp-overview-right">
+            <el-button
+              type="primary"
+              size="small"
+              :loading="taggingProgressStarting"
+              :disabled="taggingProgressData?.is_active"
+              @click="handleRestartTagging"
+            >
+              {{ taggingProgressData?.is_active ? '打标中...' : (taggingProgressData?.blogger_status === 'success' ? '重新打标' : '开始打标') }}
+            </el-button>
+          </div>
+        </div>
+
+        <!-- 视频列表 -->
+        <div class="tp-video-list" v-if="taggingProgressData?.videos?.length">
+          <div
+            v-for="v in taggingProgressData.videos"
+            :key="v.video_id"
+            class="tp-video-item"
+            :class="`is-${v.status}`"
+          >
+            <span class="tp-video-status-dot" :class="`is-${v.status}`"></span>
+            <span class="tp-video-desc">{{ v.description }}</span>
+            <span class="tp-video-status-label">{{ videoTaggingStatusLabel(v.status) }}</span>
+          </div>
+        </div>
+        <div v-else-if="!taggingProgressLoading" class="tp-empty">暂无视频数据</div>
+      </div>
+    </el-dialog>
+
     <!-- 视频自定义全屏遮罩（固定铺满视口，CSS 控制 9:16） -->
     <teleport to="body">
       <div v-if="vcFullscreenVisible" class="vc-fullscreen-mask" @click.self="closeVcFullscreen">
@@ -1505,12 +1582,13 @@
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
                   </div>
                   <span class="ac-blogger-name">{{ blogger.blogger_name }}</span>
-                  <!-- 打标状态指示 -->
+                  <!-- 打标状态指示（可点击查看进度） -->
                   <span
                     v-if="blogger.tagging_status && blogger.tagging_status !== 'idle'"
-                    class="ac-tagging-badge"
+                    class="ac-tagging-badge ac-tagging-badge--clickable"
                     :class="`ac-tagging-badge--${blogger.tagging_status}`"
-                    :title="bloggerTaggingTitle(blogger)"
+                    :title="bloggerTaggingTitle(blogger) + ' · 点击查看进度'"
+                    @click.stop="openTaggingProgress(blogger)"
                   >
                     <span v-if="blogger.tagging_status === 'pending' || blogger.tagging_status === 'running'">⏳</span>
                     <span v-else-if="blogger.tagging_status === 'success'">🏷</span>
@@ -1848,6 +1926,7 @@ import { openInNewTab } from '../utils/nav'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkGenerateAIAccounts, bulkResumeAIAccountGeneration, fetchAccounts, deleteAccount, updateScheduledPublish, supplementTemplates, autoSupplementTemplates, bulkGenerateVideoTasks, bulkUpdateScheduledPublish, patchAccount, bulkUpdateAccountAttributes, bulkGenerateNameHandle, bulkSearchHashtags, exportVideoUrls, fetchPlatformStats, startAccountClassification, fetchAccountClassification, retryAccountClassificationFailed, batchClassifyVideos, previewTierEvaluation, applyTierEvaluation, retryKolProvision, fetchChannelAnalytics, bulkPersonaTagging } from '../api/accounts'
 import { fetchFlags, createFlag, updateFlag, deleteFlag, bulkBindFlags, bulkUnbindFlags } from '../api/flags'
+import { fetchBloggerTaggingProgress, submitBloggerTagging } from '../api/persona_tagging'
 import { syncAccountSnapshots } from '../api/video_publications'
 import { isDuplicateRequestError } from '../api/http'
 import { fetchPipelineSettings, updatePipelineSettings } from '../api/settings'
@@ -3034,6 +3113,118 @@ async function handleBulkGenerateAIAccounts() {
 function bloggerTaggingTitle(blogger) {
   const statusMap = { pending: '打标排队中', running: '打标进行中', success: '打标完成', failed: '打标失败' }
   return statusMap[blogger.tagging_status] || blogger.tagging_status
+}
+
+// ── 人设打标进度 dialog ──────────────────────────────────────────────────────
+const showTaggingProgressDialog = ref(false)
+const taggingProgressBlogger = ref(null)
+const taggingProgressData = ref(null)
+const taggingProgressLoading = ref(false)
+const taggingProgressStarting = ref(false)
+let _taggingProgressPollTimer = null
+let _taggingProgressPollSeq = 0
+
+function taggingStatusLabel(status) {
+  const map = {
+    not_started: '未开始',
+    pending: '排队中',
+    checking_videos: '检查视频',
+    waiting_videos: '等待视频打标',
+    aggregating: '聚合中',
+    running: '进行中',
+    success: '打标完成',
+    failed: '打标失败',
+  }
+  return map[status] || status || '未开始'
+}
+
+function videoTaggingStatusLabel(status) {
+  const map = {
+    not_started: '未开始',
+    pending: '排队',
+    running: '处理中',
+    success: '完成',
+    failed: '失败',
+  }
+  return map[status] || status
+}
+
+function _clearTaggingProgressPoll() {
+  if (_taggingProgressPollTimer) clearTimeout(_taggingProgressPollTimer)
+  _taggingProgressPollTimer = null
+  _taggingProgressPollSeq++
+}
+
+function _shouldKeepTaggingPoll() {
+  const d = taggingProgressData.value
+  if (!d) return false
+  if (d.is_active) return true
+  const s = d.summary
+  return s && (s.running > 0 || s.pending > 0)
+}
+
+async function _refreshTaggingProgress() {
+  if (!taggingProgressBlogger.value) return
+  const bloggerId = taggingProgressBlogger.value.id
+  try {
+    const res = await fetchBloggerTaggingProgress(bloggerId)
+    if (!taggingProgressBlogger.value || taggingProgressBlogger.value.id !== bloggerId) return
+    taggingProgressData.value = res.data
+  } catch (e) {
+    // 静默失败，不打断轮询
+  }
+}
+
+function _scheduleTaggingPoll() {
+  _clearTaggingProgressPoll()
+  if (!showTaggingProgressDialog.value) return
+  if (!_shouldKeepTaggingPoll()) return
+  const seq = ++_taggingProgressPollSeq
+  _taggingProgressPollTimer = setTimeout(async () => {
+    if (seq !== _taggingProgressPollSeq) return
+    if (!showTaggingProgressDialog.value) return
+    await _refreshTaggingProgress()
+    _scheduleTaggingPoll()
+  }, 3000)
+}
+
+async function openTaggingProgress(blogger) {
+  taggingProgressBlogger.value = blogger
+  taggingProgressData.value = null
+  showTaggingProgressDialog.value = true
+  taggingProgressLoading.value = true
+  try {
+    const res = await fetchBloggerTaggingProgress(blogger.id)
+    taggingProgressData.value = res.data
+  } catch (e) {
+    ElMessage.error('加载打标进度失败')
+  } finally {
+    taggingProgressLoading.value = false
+  }
+  _scheduleTaggingPoll()
+}
+
+function closeTaggingProgressDialog() {
+  _clearTaggingProgressPoll()
+  taggingProgressBlogger.value = null
+  taggingProgressData.value = null
+  showTaggingProgressDialog.value = false
+}
+
+async function handleRestartTagging() {
+  if (!taggingProgressBlogger.value) return
+  taggingProgressStarting.value = true
+  try {
+    await submitBloggerTagging(taggingProgressBlogger.value.id)
+    ElMessage.success('已入队重新打标')
+    await _refreshTaggingProgress()
+    _scheduleTaggingPoll()
+    await loadData()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '提交失败')
+  } finally {
+    taggingProgressStarting.value = false
+  }
 }
 
 function topStyles(styleVector, n = 3) {
@@ -4944,8 +5135,114 @@ onMounted(() => {
   line-height: 1;
   flex-shrink: 0;
 }
+.ac-tagging-badge--clickable {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 2px;
+  transition: background 0.15s;
+}
+.ac-tagging-badge--clickable:hover { background: rgba(0,0,0,0.06); }
 .ac-tagging-badge--success { opacity: 0.9; }
 .ac-tagging-badge--failed { opacity: 0.7; }
+
+/* 人设打标进度 dialog */
+.tp-body { display: flex; flex-direction: column; gap: 14px; }
+
+.tp-overview {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.tp-overview-left { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.tp-overview-right { flex-shrink: 0; }
+
+.tp-overview-status { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #334155; }
+.tp-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; flex-shrink: 0;
+}
+.tp-status-dot.is-pending, .tp-status-dot.is-checking_videos,
+.tp-status-dot.is-waiting_videos, .tp-status-dot.is-aggregating {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245,158,11,.2);
+  animation: tp-pulse 1.2s ease-in-out infinite;
+}
+.tp-status-dot.is-running {
+  background: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,.2);
+  animation: tp-pulse 1.2s ease-in-out infinite;
+}
+.tp-status-dot.is-success { background: #16a34a; }
+.tp-status-dot.is-failed { background: #dc2626; }
+.tp-status-dot.is-not_started { background: #94a3b8; }
+.tp-status-label { font-size: 12px; color: #64748b; }
+
+@keyframes tp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.tp-overview-counts { font-size: 12px; color: #475569; }
+
+.tp-progress-bar-wrap { display: flex; align-items: center; gap: 8px; }
+.tp-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #f1f5f9;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+}
+.tp-progress-fill {
+  height: 100%;
+  transition: width 0.4s ease;
+  flex-shrink: 0;
+}
+.tp-progress-fill--success { background: #16a34a; }
+.tp-progress-fill--running { background: #6366f1; }
+.tp-progress-fill--failed { background: #dc2626; }
+.tp-progress-pct { font-size: 11px; color: #64748b; min-width: 30px; text-align: right; }
+
+.tp-video-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.tp-video-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+  font-size: 12px;
+}
+.tp-video-item.is-success { background: #f0fdf4; }
+.tp-video-item.is-running { background: #eef2ff; }
+.tp-video-item.is-failed { background: #fef2f2; }
+.tp-video-item.is-pending { background: #fffbeb; }
+
+.tp-video-status-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: #94a3b8;
+}
+.tp-video-status-dot.is-success { background: #16a34a; }
+.tp-video-status-dot.is-running { background: #6366f1; animation: tp-pulse 1.2s ease-in-out infinite; }
+.tp-video-status-dot.is-failed { background: #dc2626; }
+.tp-video-status-dot.is-pending { background: #f59e0b; }
+
+.tp-video-desc { flex: 1; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-video-status-label { flex-shrink: 0; font-size: 11px; color: #64748b; min-width: 42px; text-align: right; }
+.tp-video-item.is-success .tp-video-status-label { color: #16a34a; }
+.tp-video-item.is-running .tp-video-status-label { color: #6366f1; }
+.tp-video-item.is-failed .tp-video-status-label { color: #dc2626; }
+.tp-video-item.is-pending .tp-video-status-label { color: #d97706; }
+
+.tp-empty { text-align: center; color: #94a3b8; font-size: 13px; padding: 24px 0; }
 
 /* 打标结果区域 */
 .al-persona-result-wrap {

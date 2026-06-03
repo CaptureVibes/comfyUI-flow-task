@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenData, get_current_user
@@ -231,6 +231,79 @@ async def get_blogger_tagging(
     if task is None:
         raise HTTPException(status_code=404, detail="tagging task not found")
     return {"code": 0, "data": _blogger_task_dict(task)}
+
+
+@router.get("/bloggers/{blogger_id}/progress")
+async def get_blogger_tagging_progress(
+    blogger_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    查询博主打标进度：任务整体状态 + 每条视频的打标状态。
+    用于前端进度弹窗轮询。
+    """
+    # 博主任务
+    task_result = await db.execute(
+        select(BloggerTaggingResult).where(BloggerTaggingResult.tiktok_blogger_id == blogger_id)
+    )
+    task = task_result.scalar_one_or_none()
+
+    # 博主旗下所有视频（有 URL + 描述的）
+    videos = await get_blogger_videos(db, blogger_id)
+    video_ids = [uuid.UUID(v["video_id"]) for v in videos]
+
+    # 批量查视频打标任务
+    video_tasks_result = await db.execute(
+        select(VideoTaggingResult).where(VideoTaggingResult.video_id.in_(video_ids))
+    )
+    video_tasks_by_id = {str(t.video_id): t for t in video_tasks_result.scalars().all()}
+
+    # 构建每个视频的进度条目
+    video_items = []
+    for v in videos:
+        vt = video_tasks_by_id.get(v["video_id"])
+        video_items.append({
+            "video_id": v["video_id"],
+            "description": v["description"][:60] + ("…" if len(v["description"]) > 60 else ""),
+            "status": vt.status if vt else "not_started",
+            "error_message": vt.error_message if vt else None,
+            "updated_at": vt.updated_at.isoformat() if vt and vt.updated_at else None,
+        })
+
+    # 统计各状态数量
+    status_counts: dict[str, int] = {}
+    for item in video_items:
+        s = item["status"]
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    total = len(video_items)
+    summary = {
+        "total": total,
+        "success": status_counts.get("success", 0),
+        "failed": status_counts.get("failed", 0),
+        "running": status_counts.get("running", 0),
+        "pending": status_counts.get("pending", 0),
+        "not_started": status_counts.get("not_started", 0),
+    }
+
+    # 整体打标状态
+    blogger_status = task.status if task else "not_started"
+    is_active = blogger_status in ("pending", "checking_videos", "waiting_videos", "aggregating", "running")
+
+    return {
+        "code": 0,
+        "data": {
+            "blogger_id": str(blogger_id),
+            "blogger_status": blogger_status,
+            "is_active": is_active,
+            "summary": summary,
+            "videos": video_items,
+            "min_video_count": task.min_video_count if task else 15,
+            "started_at": task.started_at.isoformat() if task and task.started_at else None,
+            "finished_at": task.finished_at.isoformat() if task and task.finished_at else None,
+        },
+    }
 
 
 @router.get("/bloggers")
