@@ -145,10 +145,11 @@ async def list_video_taggings(
 async def submit_blogger_tagging(
     blogger_id: uuid.UUID,
     min_video_count: int = Query(15, ge=1, le=50),
+    force: bool = Query(False, description="强制重新打标，清除已有视频打标结果"),
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """提交博主账号级人设打标任务。"""
+    """提交博主账号级人设打标任务。force=True 时强制重跑并清除已有视频打标结果。"""
     # 校验博主存在
     blogger_result = await db.execute(select(TiktokBlogger).where(TiktokBlogger.id == blogger_id))
     blogger = blogger_result.scalar_one_or_none()
@@ -170,15 +171,55 @@ async def submit_blogger_tagging(
     )
     existing = existing_result.scalar_one_or_none()
 
-    if existing and existing.status == "success":
-        return {"code": 0, "message": "already_processed", "task": _blogger_task_dict(existing)}
+    if not force:
+        if existing and existing.status == "success":
+            return {"code": 0, "message": "already_processed", "task": _blogger_task_dict(existing)}
+        if existing and existing.status in ("pending", "checking_videos", "waiting_videos", "aggregating"):
+            return {"code": 0, "message": "already_running", "task": _blogger_task_dict(existing)}
+
     if existing and existing.status in ("pending", "checking_videos", "waiting_videos", "aggregating"):
         return {"code": 0, "message": "already_running", "task": _blogger_task_dict(existing)}
 
     now = _utcnow()
 
+    # force 时清除关联视频的打标结果，让进度从头开始
+    if force:
+        video_ids = [uuid.UUID(v["video_id"]) for v in videos]
+        if video_ids:
+            video_tasks_result = await db.execute(
+                select(VideoTaggingResult).where(VideoTaggingResult.video_id.in_(video_ids))
+            )
+            for vt in video_tasks_result.scalars().all():
+                vt.status = "pending"
+                vt.result_code = None
+                vt.result_message = "re-queued"
+                vt.error_code = None
+                vt.error_message = None
+                vt.video_description_unit = None
+                vt.personal_tags = None
+                vt.style_vector = None
+                vt.style_signature = None
+                vt.raw_outputs = None
+                vt.worker_id = None
+                vt.lock_until = None
+                vt.started_at = None
+                vt.finished_at = None
+                vt.updated_at = now
+            # 同时清除 video_sources 的打标结果
+            vs_result = await db.execute(
+                select(VideoSource).where(VideoSource.id.in_(video_ids))
+            )
+            for vs in vs_result.scalars().all():
+                vs.personal_tags = None
+                vs.style_vector = None
+                vs.tagging_status = "pending"
+                vs.updated_at = now
+
     # 更新博主的打标状态为 pending
     blogger.tagging_status = "pending"
+    blogger.persona_tags = None
+    blogger.style_vector = None
+    blogger.style_signature = None
     blogger.updated_at = now
 
     if existing:
@@ -190,6 +231,12 @@ async def submit_blogger_tagging(
         existing.result_message = "received"
         existing.error_code = None
         existing.error_message = None
+        existing.account_personal_tags = None
+        existing.account_style_vector = None
+        existing.account_style_signature = None
+        existing.aggregated_social_identity = None
+        existing.aggregated_occasion = None
+        existing.raw_outputs = None
         existing.worker_id = None
         existing.lock_until = None
         existing.next_retry_at = None

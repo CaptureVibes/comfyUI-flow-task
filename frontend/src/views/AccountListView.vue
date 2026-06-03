@@ -3213,10 +3213,20 @@ function closeTaggingProgressDialog() {
 
 async function handleRestartTagging() {
   if (!taggingProgressBlogger.value) return
+  const isRestart = taggingProgressData.value?.blogger_status === 'success'
+  if (isRestart) {
+    try {
+      await ElMessageBox.confirm(
+        '将清除该博主所有视频的已有打标结果，从头重新打标。确定继续？',
+        '确认重新打标',
+        { confirmButtonText: '确定重打', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch { return }
+  }
   taggingProgressStarting.value = true
   try {
-    await submitBloggerTagging(taggingProgressBlogger.value.id)
-    ElMessage.success('已入队重新打标')
+    await submitBloggerTagging(taggingProgressBlogger.value.id, { force: isRestart })
+    ElMessage.success(isRestart ? '已清除旧结果并入队重新打标' : '已入队打标')
     await _refreshTaggingProgress()
     _scheduleTaggingPoll()
     await loadData()

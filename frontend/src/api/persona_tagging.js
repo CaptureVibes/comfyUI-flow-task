@@ -5,9 +5,9 @@ export async function fetchBloggerTaggingProgress(bloggerId) {
   return data
 }
 
-export async function submitBloggerTagging(bloggerId, minVideoCount = 15) {
+export async function submitBloggerTagging(bloggerId, { minVideoCount = 15, force = false } = {}) {
   const { data } = await http.post(`/persona-tagging/bloggers/${bloggerId}/tag`, null, {
-    params: { min_video_count: minVideoCount },
+    params: { min_video_count: minVideoCount, force },
   })
   return data
 }
