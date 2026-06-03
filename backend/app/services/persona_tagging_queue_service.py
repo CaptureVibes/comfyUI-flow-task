@@ -702,10 +702,11 @@ async def enqueue_blogger_tagging(
 def start_persona_tagging_workers() -> None:
     global _video_processor_task, _blogger_processor_task, _shutting_down
     _shutting_down = False
+    loop = asyncio.get_event_loop()
     if _video_processor_task is None or _video_processor_task.done():
-        _video_processor_task = asyncio.create_task(_video_worker_loop())
+        _video_processor_task = loop.create_task(_video_worker_loop())
     if _blogger_processor_task is None or _blogger_processor_task.done():
-        _blogger_processor_task = asyncio.create_task(_blogger_worker_loop())
+        _blogger_processor_task = loop.create_task(_blogger_worker_loop())
     logger.info("Persona tagging workers started")
 
 
