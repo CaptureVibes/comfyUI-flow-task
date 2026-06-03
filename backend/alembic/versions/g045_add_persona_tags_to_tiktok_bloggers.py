@@ -24,13 +24,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("tiktok_bloggers", sa.Column("persona_tags", postgresql.JSONB, nullable=True))
-    op.add_column("tiktok_bloggers", sa.Column("style_vector", postgresql.JSONB, nullable=True))
-    op.add_column("tiktok_bloggers", sa.Column("style_signature", postgresql.JSONB, nullable=True))
-    op.add_column(
-        "tiktok_bloggers",
-        sa.Column("tagging_status", sa.String(20), nullable=False, server_default="idle"),
-    )
+    op.execute("ALTER TABLE tiktok_bloggers ADD COLUMN IF NOT EXISTS persona_tags JSONB")
+    op.execute("ALTER TABLE tiktok_bloggers ADD COLUMN IF NOT EXISTS style_vector JSONB")
+    op.execute("ALTER TABLE tiktok_bloggers ADD COLUMN IF NOT EXISTS style_signature JSONB")
+    op.execute("ALTER TABLE tiktok_bloggers ADD COLUMN IF NOT EXISTS tagging_status VARCHAR(20) NOT NULL DEFAULT 'idle'")
 
 
 def downgrade() -> None:

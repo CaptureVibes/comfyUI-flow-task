@@ -21,72 +21,74 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "video_tagging_results",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("video_id", postgresql.UUID(as_uuid=True), nullable=False, unique=True),
-        sa.Column("gcs_url", sa.Text, nullable=False),
-        sa.Column("description", sa.Text, nullable=False),
-        sa.Column("status", sa.String(50), nullable=False, server_default="pending"),
-        sa.Column("result_code", sa.Integer, nullable=True),
-        sa.Column("result_message", sa.Text, nullable=True),
-        sa.Column("error_code", sa.String(50), nullable=True),
-        sa.Column("error_message", sa.Text, nullable=True),
-        sa.Column("video_description_unit", postgresql.JSONB, nullable=True),
-        sa.Column("personal_tags", postgresql.JSONB, nullable=True),
-        sa.Column("style_vector", postgresql.JSONB, nullable=True),
-        sa.Column("style_signature", postgresql.JSONB, nullable=True),
-        sa.Column("raw_outputs", postgresql.JSONB, nullable=True),
-        sa.Column("source_type", sa.String(50), nullable=False, server_default="direct"),
-        sa.Column("source_blogger_task_id", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("source_tiktok_blogger_id", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("worker_id", sa.String(200), nullable=True),
-        sa.Column("lock_until", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("attempts", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("next_retry_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index("ix_video_tagging_results_video_id", "video_tagging_results", ["video_id"])
-    op.create_index("ix_video_tagging_results_status", "video_tagging_results", ["status"])
-    op.create_index("ix_video_tagging_results_source_blogger", "video_tagging_results", ["source_tiktok_blogger_id"])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS video_tagging_results (
+            id UUID PRIMARY KEY,
+            video_id UUID NOT NULL UNIQUE,
+            gcs_url TEXT NOT NULL,
+            description TEXT NOT NULL,
+            status VARCHAR(50) NOT NULL DEFAULT 'pending',
+            result_code INTEGER,
+            result_message TEXT,
+            error_code VARCHAR(50),
+            error_message TEXT,
+            video_description_unit JSONB,
+            personal_tags JSONB,
+            style_vector JSONB,
+            style_signature JSONB,
+            raw_outputs JSONB,
+            source_type VARCHAR(50) NOT NULL DEFAULT 'direct',
+            source_blogger_task_id UUID,
+            source_tiktok_blogger_id UUID,
+            worker_id VARCHAR(200),
+            lock_until TIMESTAMPTZ,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_retry_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            started_at TIMESTAMPTZ,
+            finished_at TIMESTAMPTZ
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_video_tagging_results_video_id ON video_tagging_results (video_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_video_tagging_results_status ON video_tagging_results (status)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_video_tagging_results_source_blogger ON video_tagging_results (source_tiktok_blogger_id)")
 
-    op.create_table(
-        "blogger_tagging_results",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tiktok_blogger_id", postgresql.UUID(as_uuid=True), nullable=False, unique=True),
-        sa.Column("status", sa.String(50), nullable=False, server_default="pending"),
-        sa.Column("result_code", sa.Integer, nullable=True),
-        sa.Column("result_message", sa.Text, nullable=True),
-        sa.Column("error_code", sa.String(50), nullable=True),
-        sa.Column("error_message", sa.Text, nullable=True),
-        sa.Column("min_video_count", sa.Integer, nullable=False, server_default="15"),
-        sa.Column("available_video_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("usable_video_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("successful_video_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("failed_video_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("submitted_video_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("selected_video_ids", postgresql.ARRAY(postgresql.UUID(as_uuid=True)), nullable=True),
-        sa.Column("video_task_ids", postgresql.ARRAY(postgresql.UUID(as_uuid=True)), nullable=True),
-        sa.Column("account_personal_tags", postgresql.JSONB, nullable=True),
-        sa.Column("account_style_vector", postgresql.JSONB, nullable=True),
-        sa.Column("account_style_signature", postgresql.JSONB, nullable=True),
-        sa.Column("aggregated_social_identity", postgresql.JSONB, nullable=True),
-        sa.Column("aggregated_occasion", postgresql.JSONB, nullable=True),
-        sa.Column("raw_outputs", postgresql.JSONB, nullable=True),
-        sa.Column("worker_id", sa.String(200), nullable=True),
-        sa.Column("lock_until", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("attempts", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("next_retry_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index("ix_blogger_tagging_results_blogger_id", "blogger_tagging_results", ["tiktok_blogger_id"])
-    op.create_index("ix_blogger_tagging_results_status", "blogger_tagging_results", ["status"])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS blogger_tagging_results (
+            id UUID PRIMARY KEY,
+            tiktok_blogger_id UUID NOT NULL UNIQUE,
+            status VARCHAR(50) NOT NULL DEFAULT 'pending',
+            result_code INTEGER,
+            result_message TEXT,
+            error_code VARCHAR(50),
+            error_message TEXT,
+            min_video_count INTEGER NOT NULL DEFAULT 15,
+            available_video_count INTEGER NOT NULL DEFAULT 0,
+            usable_video_count INTEGER NOT NULL DEFAULT 0,
+            successful_video_count INTEGER NOT NULL DEFAULT 0,
+            failed_video_count INTEGER NOT NULL DEFAULT 0,
+            submitted_video_count INTEGER NOT NULL DEFAULT 0,
+            selected_video_ids UUID[],
+            video_task_ids UUID[],
+            account_personal_tags JSONB,
+            account_style_vector JSONB,
+            account_style_signature JSONB,
+            aggregated_social_identity JSONB,
+            aggregated_occasion JSONB,
+            raw_outputs JSONB,
+            worker_id VARCHAR(200),
+            lock_until TIMESTAMPTZ,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_retry_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            started_at TIMESTAMPTZ,
+            finished_at TIMESTAMPTZ
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_blogger_tagging_results_blogger_id ON blogger_tagging_results (tiktok_blogger_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_blogger_tagging_results_status ON blogger_tagging_results (status)")
 
 
 def downgrade() -> None:

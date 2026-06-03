@@ -23,12 +23,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("video_sources", sa.Column("personal_tags", postgresql.JSONB, nullable=True))
-    op.add_column("video_sources", sa.Column("style_vector", postgresql.JSONB, nullable=True))
-    op.add_column(
-        "video_sources",
-        sa.Column("tagging_status", sa.String(20), nullable=False, server_default="idle"),
-    )
+    op.execute("ALTER TABLE video_sources ADD COLUMN IF NOT EXISTS personal_tags JSONB")
+    op.execute("ALTER TABLE video_sources ADD COLUMN IF NOT EXISTS style_vector JSONB")
+    op.execute("ALTER TABLE video_sources ADD COLUMN IF NOT EXISTS tagging_status VARCHAR(20) NOT NULL DEFAULT 'idle'")
 
 
 def downgrade() -> None:
