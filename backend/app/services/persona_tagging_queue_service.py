@@ -646,9 +646,15 @@ async def enqueue_blogger_tagging(
     now = datetime.now(timezone.utc)
 
     if existing and existing.status == "success":
-        logger.info("enqueue_blogger_tagging: already success, skip %s", tiktok_blogger_id)
-        return existing
-    if existing and existing.status in ("pending", "checking_videos", "waiting_videos", "aggregating"):
+        # 只有 tiktok_bloggers 里也已写回结果才算真正完成，否则重跑补写
+        if blogger.persona_tags is not None:
+            logger.info("enqueue_blogger_tagging: already success, skip %s", tiktok_blogger_id)
+            return existing
+        logger.info(
+            "enqueue_blogger_tagging: status=success but persona_tags not written back, re-enqueue %s",
+            tiktok_blogger_id,
+        )
+    elif existing and existing.status in ("pending", "checking_videos", "waiting_videos", "aggregating"):
         logger.info("enqueue_blogger_tagging: already running (%s), skip %s", existing.status, tiktok_blogger_id)
         return existing
 
