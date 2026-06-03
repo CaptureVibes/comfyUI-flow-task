@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.persona_tagging import BloggerTaggingResult, VideoTaggingResult
 from app.models.video_source import VideoSource
-from app.services.evolink_api import call_evolink_text
+from app.services.ai_api import call_gemini_api
 
 logger = logging.getLogger("app.persona_tagging")
 
@@ -771,8 +771,16 @@ def _build_blogger_account_prompt(units: list[dict]) -> str:
 
 # ── LLM 调用封装 ───────────────────────────────────────────────────────────────
 
+_DEFAULT_MODEL = "gemini-3.1-pro-preview"
+
+
 async def _call_text(prompt: str, model: str | None = None, temperature: float = 0.3) -> str:
-    return await call_evolink_text(prompt=prompt, model=model, temperature=temperature, timeout=180.0)
+    return await call_gemini_api(
+        model_name=model or _DEFAULT_MODEL,
+        prompt=prompt,
+        temperature=temperature,
+        timeout=180.0,
+    )
 
 
 # ── 单视频 4 阶段分析 ──────────────────────────────────────────────────────────
@@ -788,10 +796,10 @@ async def analyze_video_description_unit(
     """阶段1：生成单视频描述单元（通过视频 URL）。返回 {parsed, raw_text, error}。"""
     try:
         prompt = _build_video_prompt(PROMPT_1, video_url, caption, hashtag, video_index)
-        text = await call_evolink_text(
+        text = await call_gemini_api(
+            model_name=model or _DEFAULT_MODEL,
             prompt=prompt,
             video_url=gcs_url,
-            model=model,
             temperature=0.3,
             timeout=180.0,
         )
