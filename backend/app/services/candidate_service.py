@@ -1400,6 +1400,15 @@ async def _process_one_ai_review(candidate_id: uuid.UUID) -> None:
             row = await session.get(CandidateVideo, candidate_id)
             if not row or row.status != CandidateVideoStatus.ai_reviewing:
                 return  # 已被其他任务处理或状态已变
+            if row.hidden:
+                logger.info("【全量审核】跳过 hidden 视频 candidate_id=%s", candidate_id)
+                await session.execute(
+                    sa_update(CandidateVideo)
+                    .where(CandidateVideo.id == candidate_id)
+                    .values(status=CandidateVideoStatus.pending)
+                )
+                await session.commit()
+                return
 
             # 读取配置（用 row.owner_id 或兜底）
             cfg_owner = row.owner_id or uuid.UUID(int=0)
@@ -1503,10 +1512,26 @@ async def recover_stuck_ai_review_on_startup() -> None:
     from app.db.session import SessionLocal
 
     async with SessionLocal() as session:
+        # hidden 的视频若卡在 ai_reviewing，退回 pending
+        hidden_result = await session.execute(
+            sa_update(CandidateVideo)
+            .where(
+                CandidateVideo.status == CandidateVideoStatus.ai_reviewing,
+                CandidateVideo.hidden.is_(True),
+            )
+            .values(status=CandidateVideoStatus.pending)
+            .returning(CandidateVideo.id)
+        )
+        hidden_reset = len(hidden_result.fetchall())
+        if hidden_reset:
+            await session.commit()
+            logger.info("【全量审核】启动恢复：重置 %d 条 hidden 视频从 ai_reviewing → pending", hidden_reset)
+
         result = await session.execute(
             select(CandidateVideo.id).where(
                 CandidateVideo.status == CandidateVideoStatus.ai_reviewing,
                 CandidateVideo.video_url.isnot(None),
+                CandidateVideo.hidden.is_not(True),
             )
         )
         ids = [row[0] for row in result.fetchall()]
