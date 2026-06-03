@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -29,6 +30,13 @@ class TiktokBlogger(Base):
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     signature: Mapped[str | None] = mapped_column(Text, nullable=True)   # TikTok bio/signature
     sec_uid: Mapped[str | None] = mapped_column(String(200), nullable=True)  # TikTok secUid
+
+    # 人设打标回写字段（由 persona_tagging_queue_service 在打标成功后写入）
+    persona_tags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    style_vector: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    style_signature: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tagging_status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

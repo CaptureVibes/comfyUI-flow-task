@@ -37,6 +37,11 @@ class TiktokBloggerRead(BaseModel):
     blogger_url: str | None
     avatar_url: str | None
     video_count: int = 0
+    # 人设打标回写字段
+    tagging_status: str = "idle"
+    persona_tags: dict | None = None
+    style_vector: dict | None = None
+    style_signature: dict | None = None
     created_at: datetime
     updated_at: datetime
 

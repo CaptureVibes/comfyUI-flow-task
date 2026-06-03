@@ -39,6 +39,11 @@ from app.services.publish_meta_service import (
     start_publish_meta_workers,
     stop_publish_meta_workers,
 )
+from app.services.persona_tagging_queue_service import (
+    start_persona_tagging_workers,
+    stop_persona_tagging_workers,
+    recover_stuck_tagging_on_startup,
+)
 
 setup_logging(settings.log_level, settings.log_dir)
 logger = logging.getLogger("app")
@@ -125,6 +130,8 @@ async def startup_event() -> None:
     await recover_classification_on_startup()
     await start_publish_meta_workers()
     await recover_stuck_publish_meta_on_startup()
+    start_persona_tagging_workers()
+    await recover_stuck_tagging_on_startup()
 
 
 @app.on_event("shutdown")
@@ -143,6 +150,7 @@ async def shutdown_event() -> None:
     await stop_channel_name_sync_scheduler()
     await stop_account_tier_scheduler()
     await stop_classification_queue_processor()
+    await stop_persona_tagging_workers()
 
 
 @app.get("/health")
