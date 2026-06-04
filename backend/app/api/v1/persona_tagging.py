@@ -360,6 +360,13 @@ async def get_blogger_tagging_progress(
             "min_video_count": task.min_video_count if task else 15,
             "started_at": task.started_at.isoformat() if task and task.started_at else None,
             "finished_at": task.finished_at.isoformat() if task and task.finished_at else None,
+            # 完整打标结果（写回成功后可见）
+            "result": {
+                "one_sentence_summary": tb.one_sentence_summary if tb else None,
+                "persona_tags": tb.persona_tags if tb else None,
+                "style_vector": tb.style_vector if tb else None,
+                "style_signature": tb.style_signature if tb else None,
+            } if writeback_done else None,
         },
     }
 

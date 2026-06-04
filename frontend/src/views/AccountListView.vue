@@ -1119,6 +1119,85 @@
           聚合失败：{{ taggingProgressData.blogger_error }}
         </div>
 
+        <!-- 打标完整结果 -->
+        <div v-if="taggingProgressData?.result" class="tp-result">
+          <!-- 一句话总结 -->
+          <div v-if="taggingProgressData.result.one_sentence_summary" class="tp-result-summary">
+            <span class="tp-result-summary-icon">💬</span>
+            <span>{{ taggingProgressData.result.one_sentence_summary }}</span>
+          </div>
+
+          <div class="tp-result-tags">
+            <!-- 基础人口 -->
+            <div class="tp-result-group" v-if="taggingProgressData.result.persona_tags?.basic_demographics">
+              <span class="tp-result-group-label">基础人口</span>
+              <div class="tp-result-chips">
+                <span v-if="taggingProgressData.result.persona_tags.basic_demographics.gender_or_sexuality_presentation" class="tp-chip tp-chip--demo">{{ taggingProgressData.result.persona_tags.basic_demographics.gender_or_sexuality_presentation }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.basic_demographics.age_range" class="tp-chip tp-chip--demo">{{ taggingProgressData.result.persona_tags.basic_demographics.age_range }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.basic_demographics.visual_ethnicity" class="tp-chip tp-chip--demo">{{ taggingProgressData.result.persona_tags.basic_demographics.visual_ethnicity }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.basic_demographics.body_type" class="tp-chip tp-chip--demo">{{ taggingProgressData.result.persona_tags.basic_demographics.body_type }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.basic_demographics.height_impression && taggingProgressData.result.persona_tags.basic_demographics.height_impression !== '无明显'" class="tp-chip tp-chip--demo">{{ taggingProgressData.result.persona_tags.basic_demographics.height_impression }}</span>
+                <template v-if="taggingProgressData.result.persona_tags.basic_demographics.special_body_parts?.length">
+                  <span v-for="p in taggingProgressData.result.persona_tags.basic_demographics.special_body_parts.filter(x => x !== '无明显特殊 Body 部位')" :key="p" class="tp-chip tp-chip--demo">{{ p }}</span>
+                </template>
+              </div>
+            </div>
+
+            <!-- 消费/气质/身份/场合 -->
+            <div class="tp-result-group">
+              <span class="tp-result-group-label">人设标签</span>
+              <div class="tp-result-chips">
+                <span v-if="taggingProgressData.result.persona_tags?.consumption_tier" class="tp-chip tp-chip--consumption">{{ taggingProgressData.result.persona_tags.consumption_tier }}</span>
+                <span v-if="taggingProgressData.result.persona_tags?.temperament_psychology" class="tp-chip tp-chip--temperament">{{ taggingProgressData.result.persona_tags.temperament_psychology }}</span>
+                <span v-if="taggingProgressData.result.persona_tags?.social_identity && taggingProgressData.result.persona_tags.social_identity !== '无明确社会身份型'" class="tp-chip tp-chip--identity">{{ taggingProgressData.result.persona_tags.social_identity }}</span>
+                <span v-if="taggingProgressData.result.persona_tags?.occasion && taggingProgressData.result.persona_tags.occasion !== '无明显赛道'" class="tp-chip tp-chip--occasion">{{ taggingProgressData.result.persona_tags.occasion }}</span>
+              </div>
+            </div>
+
+            <!-- Top 风格 -->
+            <div class="tp-result-group" v-if="taggingProgressData.result.style_vector">
+              <span class="tp-result-group-label">风格向量 Top 5</span>
+              <div class="tp-result-chips">
+                <span
+                  v-for="(score, style) in topStyles(taggingProgressData.result.style_vector, 5)"
+                  :key="style"
+                  class="tp-chip tp-chip--style"
+                  :title="`${style}: ${(score * 100).toFixed(0)}%`"
+                >{{ style }} <b>{{ (score * 100).toFixed(0) }}%</b></span>
+              </div>
+            </div>
+
+            <!-- 风格签名关键信息 -->
+            <template v-if="taggingProgressData.result.style_signature">
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.color_palette?.dominant_colors?.length">
+                <span class="tp-result-group-label">主色调</span>
+                <div class="tp-result-chips">
+                  <span v-for="c in taggingProgressData.result.style_signature.color_palette.dominant_colors" :key="c" class="tp-chip tp-chip--color">{{ c }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.color_palette.temperature }} · {{ taggingProgressData.result.style_signature.color_palette.saturation }}</span>
+                </div>
+              </div>
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.aesthetic_mood?.mood_keywords?.length">
+                <span class="tp-result-group-label">情绪关键词</span>
+                <div class="tp-result-chips">
+                  <span v-for="k in taggingProgressData.result.style_signature.aesthetic_mood.mood_keywords" :key="k" class="tp-chip tp-chip--mood">{{ k }}</span>
+                </div>
+              </div>
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.material_profile?.primary_materials?.length">
+                <span class="tp-result-group-label">常用材质</span>
+                <div class="tp-result-chips">
+                  <span v-for="m in taggingProgressData.result.style_signature.material_profile.primary_materials" :key="m" class="tp-chip tp-chip--meta">{{ m }}</span>
+                </div>
+              </div>
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.price_positioning?.tier">
+                <span class="tp-result-group-label">价格定位</span>
+                <div class="tp-result-chips">
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.price_positioning.tier }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <!-- 视频列表 -->
         <div class="tp-video-list" v-if="taggingProgressData?.videos?.length">
           <div
@@ -5391,6 +5470,56 @@ onMounted(() => {
 .tp-video-item.is-pending .tp-video-status-label { color: #d97706; }
 
 .tp-empty { text-align: center; color: #94a3b8; font-size: 13px; padding: 24px 0; }
+
+/* 完整结果区域 */
+.tp-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.tp-result-summary {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.5;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.tp-result-summary-icon { flex-shrink: 0; font-size: 14px; }
+.tp-result-tags { display: flex; flex-direction: column; gap: 8px; }
+.tp-result-group { display: flex; align-items: flex-start; gap: 8px; }
+.tp-result-group-label {
+  flex-shrink: 0;
+  width: 68px;
+  font-size: 11px;
+  color: #94a3b8;
+  padding-top: 2px;
+  text-align: right;
+}
+.tp-result-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+.tp-chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.tp-chip--demo    { background:#eff6ff; color:#3b82f6; border:1px solid #bfdbfe; }
+.tp-chip--consumption { background:#fefce8; color:#ca8a04; border:1px solid #fde68a; }
+.tp-chip--temperament { background:#fdf4ff; color:#a855f7; border:1px solid #e9d5ff; }
+.tp-chip--identity    { background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; }
+.tp-chip--occasion    { background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; }
+.tp-chip--style       { background:#fff7ed; color:#ea580c; border:1px solid #fed7aa; }
+.tp-chip--color       { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; }
+.tp-chip--mood        { background:#fdf4ff; color:#9333ea; border:1px solid #e9d5ff; }
+.tp-chip--meta        { background:#f8fafc; color:#64748b; border:1px solid #e2e8f0; }
 
 /* 步骤条 */
 .tp-stage-bar {
