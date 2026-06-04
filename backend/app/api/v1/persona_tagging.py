@@ -338,12 +338,23 @@ async def get_blogger_tagging_progress(
     blogger_status = task.status if task else "not_started"
     is_active = blogger_status in ("pending", "checking_videos", "waiting_videos", "aggregating", "running")
 
+    # tiktok_bloggers 写回状态（反映聚合结果是否已落地）
+    tb_result = await db.execute(
+        select(TiktokBlogger).where(TiktokBlogger.id == blogger_id)
+    )
+    tb = tb_result.scalar_one_or_none()
+    writeback_status = tb.tagging_status if tb else "idle"
+    writeback_done = tb.persona_tags is not None if tb else False
+
     return {
         "code": 0,
         "data": {
             "blogger_id": str(blogger_id),
             "blogger_status": blogger_status,
+            "blogger_error": task.error_message if task and task.status == "failed" else None,
             "is_active": is_active,
+            "writeback_status": writeback_status,
+            "writeback_done": writeback_done,
             "summary": summary,
             "videos": video_items,
             "min_video_count": task.min_video_count if task else 15,

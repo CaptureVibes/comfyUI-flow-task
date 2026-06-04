@@ -1074,6 +1074,51 @@
           </div>
         </div>
 
+        <!-- 博主聚合步骤 -->
+        <div class="tp-stage-bar">
+          <!-- 第一步：视频打标 -->
+          <div class="tp-stage" :class="videoStageClass">
+            <span class="tp-stage-dot" :class="videoStageClass"></span>
+            <div class="tp-stage-info">
+              <span class="tp-stage-title">① 视频打标</span>
+              <span class="tp-stage-desc" v-if="taggingProgressData?.summary">
+                {{ taggingProgressData.summary.success }}/{{ taggingProgressData.summary.total }} 完成
+                <span v-if="taggingProgressData.summary.failed" style="color:#dc2626">
+                  · {{ taggingProgressData.summary.failed }} 失败
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <span class="tp-stage-arrow">→</span>
+
+          <!-- 第二步：博主聚合 -->
+          <div class="tp-stage" :class="aggregateStageClass">
+            <span class="tp-stage-dot" :class="aggregateStageClass"></span>
+            <div class="tp-stage-info">
+              <span class="tp-stage-title">② 博主聚合</span>
+              <span class="tp-stage-desc">{{ aggregateStageDesc }}</span>
+            </div>
+          </div>
+
+          <span class="tp-stage-arrow">→</span>
+
+          <!-- 第三步：写回 -->
+          <div class="tp-stage" :class="writebackStageClass">
+            <span class="tp-stage-dot" :class="writebackStageClass"></span>
+            <div class="tp-stage-info">
+              <span class="tp-stage-title">③ 写回博主</span>
+              <span class="tp-stage-desc">{{ writebackStageDesc }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 博主聚合失败错误信息 -->
+        <div v-if="taggingProgressData?.blogger_error" class="tp-error-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          聚合失败：{{ taggingProgressData.blogger_error }}
+        </div>
+
         <!-- 视频列表 -->
         <div class="tp-video-list" v-if="taggingProgressData?.videos?.length">
           <div
@@ -3169,6 +3214,59 @@ function taggingStatusLabel(status) {
   return map[status] || status || '未开始'
 }
 
+const videoStageClass = computed(() => {
+  const s = taggingProgressData.value?.summary
+  if (!s) return 'is-not_started'
+  if (s.running > 0 || s.pending > 0) return 'is-running'
+  if (s.success > 0 && s.failed === 0 && s.pending === 0 && s.running === 0) return 'is-success'
+  if (s.failed > 0 && s.pending === 0 && s.running === 0) return 'is-partial'
+  if (s.success > 0) return 'is-partial'
+  return 'is-not_started'
+})
+
+const aggregateStageClass = computed(() => {
+  const bs = taggingProgressData.value?.blogger_status
+  if (!bs || bs === 'not_started') return 'is-not_started'
+  if (bs === 'aggregating' || bs === 'checking_videos') return 'is-running'
+  if (bs === 'waiting_videos' || bs === 'pending') return 'is-pending'
+  if (bs === 'success') return 'is-success'
+  if (bs === 'failed') return 'is-failed'
+  return 'is-not_started'
+})
+
+const aggregateStageDesc = computed(() => {
+  const bs = taggingProgressData.value?.blogger_status
+  const map = {
+    not_started: '等待视频完成',
+    pending: '排队中',
+    checking_videos: '检查视频数量...',
+    waiting_videos: '等待视频打标完成...',
+    aggregating: '正在聚合博主标签...',
+    success: '聚合完成',
+    failed: '聚合失败',
+  }
+  return map[bs] || '等待中'
+})
+
+const writebackStageClass = computed(() => {
+  const wb = taggingProgressData.value?.writeback_status
+  if (!wb || wb === 'idle') return 'is-not_started'
+  if (wb === 'pending') return 'is-running'
+  if (wb === 'success') return taggingProgressData.value?.writeback_done ? 'is-success' : 'is-partial'
+  if (wb === 'failed') return 'is-failed'
+  return 'is-not_started'
+})
+
+const writebackStageDesc = computed(() => {
+  const wb = taggingProgressData.value?.writeback_status
+  const done = taggingProgressData.value?.writeback_done
+  if (wb === 'success' && done) return '已写回博主标签'
+  if (wb === 'success' && !done) return '写回未完成'
+  if (wb === 'pending') return '写回中...'
+  if (wb === 'failed') return '写回失败'
+  return '等待中'
+})
+
 function videoTaggingStatusLabel(status) {
   const map = {
     not_started: '未开始',
@@ -3191,7 +3289,10 @@ function _shouldKeepTaggingPoll() {
   if (!d) return false
   if (d.is_active) return true
   const s = d.summary
-  return s && (s.running > 0 || s.pending > 0)
+  if (s && (s.running > 0 || s.pending > 0)) return true
+  // 视频都完成了但博主还在聚合/写回，继续轮询
+  if (d.writeback_status === 'pending') return true
+  return false
 }
 
 async function _refreshTaggingProgress() {
@@ -5284,6 +5385,54 @@ onMounted(() => {
 .tp-video-item.is-pending .tp-video-status-label { color: #d97706; }
 
 .tp-empty { text-align: center; color: #94a3b8; font-size: 13px; padding: 24px 0; }
+
+/* 步骤条 */
+.tp-stage-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.tp-stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+.tp-stage-arrow { color: #cbd5e1; font-size: 14px; flex-shrink: 0; }
+.tp-stage-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: #cbd5e1;
+}
+.tp-stage-dot.is-running { background: #6366f1; animation: tp-pulse 1.2s ease-in-out infinite; }
+.tp-stage-dot.is-pending { background: #f59e0b; animation: tp-pulse 1.2s ease-in-out infinite; }
+.tp-stage-dot.is-success { background: #16a34a; }
+.tp-stage-dot.is-partial { background: #f59e0b; }
+.tp-stage-dot.is-failed { background: #dc2626; }
+.tp-stage-dot.is-not_started { background: #cbd5e1; }
+.tp-stage-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tp-stage-title { font-size: 12px; font-weight: 600; color: #334155; }
+.tp-stage-desc { font-size: 11px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-stage.is-success .tp-stage-title { color: #16a34a; }
+.tp-stage.is-failed .tp-stage-title { color: #dc2626; }
+.tp-stage.is-running .tp-stage-title { color: #6366f1; }
+
+/* 错误 banner */
+.tp-error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #dc2626;
+  word-break: break-all;
+}
 
 /* 打标结果区域 */
 .al-persona-result-wrap {
