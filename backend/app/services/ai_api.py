@@ -46,16 +46,22 @@ from app.services.google_api import (
 logger = logging.getLogger("app.ai_api")
 
 
+def _is_gemini_file_error(exc: Exception) -> bool:
+    """Gemini Files API 上传/处理失败（与 quota 无关，但可以 fallback 到 Evolink 重试）。"""
+    msg = str(exc)
+    return "Gemini file processing failed" in msg or "Gemini file processing timeout" in msg
+
+
 def _should_fallback(exc: Exception) -> bool:
-    """fallback 触发条件：Google quota 耗尽 AND Evolink 已配置。
+    """fallback 触发条件：(Google quota 耗尽 OR Gemini 文件处理失败) AND Evolink 已配置。
 
     Evolink Native API（v1beta/generateContent）与 Google 原生协议同构，
     text / image / video / audio / pdf 都支持，所以不再因 video 输入跳过。
     """
-    if not is_quota_error(exc):
+    if not (is_quota_error(exc) or _is_gemini_file_error(exc)):
         return False
     if not is_evolink_configured():
-        logger.warning("ai_api: Google quota exhausted but EVOLINK_API_KEY 未配置，跳过 fallback")
+        logger.warning("ai_api: Google error but EVOLINK_API_KEY 未配置，跳过 fallback")
         return False
     return True
 
@@ -88,9 +94,10 @@ async def call_gemini_api(
     except Exception as exc:
         if not _should_fallback(exc):
             raise
+        reason = "文件处理失败" if _is_gemini_file_error(exc) else "quota 耗尽"
         logger.warning(
-            "ai_api: Google quota 耗尽，fallback → Evolink (model_name=%s, has_video=%s, prompt_chars=%d)",
-            model_name, bool(video_url), len(prompt or ""),
+            "ai_api: Google %s，fallback → Evolink (model_name=%s, has_video=%s, prompt_chars=%d)",
+            reason, model_name, bool(video_url), len(prompt or ""),
         )
         return await call_evolink_text(
             prompt=prompt,
