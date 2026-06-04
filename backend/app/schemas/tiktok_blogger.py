@@ -42,6 +42,7 @@ class TiktokBloggerRead(BaseModel):
     persona_tags: dict | None = None
     style_vector: dict | None = None
     style_signature: dict | None = None
+    one_sentence_summary: str | None = None
     created_at: datetime
     updated_at: datetime
 

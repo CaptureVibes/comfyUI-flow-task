@@ -88,6 +88,7 @@ class BloggerTaggingResult(Base):
     account_personal_tags: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     account_style_vector: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     account_style_signature: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    account_one_sentence_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     aggregated_social_identity: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     aggregated_occasion: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     raw_outputs: Mapped[Any | None] = mapped_column(JSONB, nullable=True)

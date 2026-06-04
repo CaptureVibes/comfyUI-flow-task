@@ -35,6 +35,7 @@ class TiktokBlogger(Base):
     persona_tags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     style_vector: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     style_signature: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    one_sentence_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     tagging_status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

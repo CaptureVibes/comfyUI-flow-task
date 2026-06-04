@@ -22,6 +22,7 @@ from app.services.persona_tagging_service import (
     aggregate_classifications,
     aggregate_style_results,
     analyze_blogger_account,
+    analyze_blogger_one_sentence_summary,
     analyze_video_classification,
     analyze_video_description_unit,
     analyze_video_style_signature,
@@ -497,10 +498,31 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             selected = success_tasks[:min_count]
 
             units = [t.video_description_unit for t in selected if t.video_description_unit]
+
+            # 获取博主 profile/bio（用于一句话总结）
+            blogger_profile = ""
+            try:
+                blogger_row2 = await db.execute(
+                    select(TiktokBlogger).where(TiktokBlogger.id == tiktok_blogger_id)
+                )
+                blogger_for_profile = blogger_row2.scalar_one_or_none()
+                blogger_profile = (blogger_for_profile.signature or "") if blogger_for_profile else ""
+            except Exception:
+                pass
+
+            # 账号标签 + 一句话总结并行
             account_result = await analyze_blogger_account(units)
             if account_result.get("error"):
                 raise RuntimeError(f"blogger_account: {account_result['error']}")
             account_parsed = account_result.get("parsed") or {}
+
+            summary_result = await analyze_blogger_one_sentence_summary(units, blogger_profile)
+            account_one_sentence_summary = summary_result.get("summary") or ""
+            if summary_result.get("error"):
+                logger.warning(
+                    "[blogger_tagging] one_sentence_summary failed (non-fatal): %s task_id=%s",
+                    summary_result["error"], task_id,
+                )
 
             classification_inputs = [
                 {"parsed": t.personal_tags, "error": ""} for t in selected
@@ -526,11 +548,13 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             task.account_personal_tags = account_personal_tags
             task.account_style_vector = style_summary.get("average_style_vector") or {}
             task.account_style_signature = style_summary.get("account_style_signature") or {}
+            task.account_one_sentence_summary = account_one_sentence_summary
             task.aggregated_social_identity = classification_summary.get("social_identity") or {}
             task.aggregated_occasion = classification_summary.get("occasion") or {}
             task.raw_outputs = {
                 "account_result": account_result,
                 "style_summary": style_summary,
+                "one_sentence_summary": summary_result,
             }
             task.worker_id = None
             task.lock_until = None
@@ -551,6 +575,7 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
                     blogger_obj.persona_tags = account_personal_tags
                     blogger_obj.style_vector = style_summary.get("average_style_vector") or {}
                     blogger_obj.style_signature = style_summary.get("account_style_signature") or {}
+                    blogger_obj.one_sentence_summary = account_one_sentence_summary
                     blogger_obj.tagging_status = "success"
                     blogger_obj.updated_at = now
                     await db.commit()
@@ -701,6 +726,7 @@ async def enqueue_blogger_tagging(
             blogger.persona_tags = existing.account_personal_tags
             blogger.style_vector = existing.account_style_vector or {}
             blogger.style_signature = existing.account_style_signature or {}
+            blogger.one_sentence_summary = existing.account_one_sentence_summary or ""
             blogger.tagging_status = "success"
             blogger.updated_at = datetime.now(timezone.utc)
             return existing  # 调用方会 commit

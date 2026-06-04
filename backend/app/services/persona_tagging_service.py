@@ -631,6 +631,62 @@ era_influence: primary_era=90s/70s/y2k/contemporary/null；era_authenticity=fait
   }
 }"""
 
+PROMPT_6 = """你是一个 TikTok 博主账号级一句话总结模型。
+
+我会提供同一个博主的 TikTok 主页 profile/bio 文案，以及多个 video_description_unit。
+请把 profile/bio 和所有 video_description_unit 当作同一个账号的整体信息来分析，不要逐条视频总结，不要输出统计过程。
+
+你的任务是生成一个字段：account_one_sentence_summary。
+它是一句话，用来快速说明这个博主是谁、在做什么、为什么有人看、适合怎么复刻成 AI 博主。
+
+特别注意：
+- profile/bio 是账号自我介绍，通常比单条视频更能说明地点、职业、身份、内容定位、联系方式或账号人设。
+- 如果 profile/bio 里有重要信息，并且不与视频内容明显冲突，要优先用于判断"他是谁"和"账号主要定位"。
+- 邮箱、合作方式等联系方式一般不要写进最终总结，除非它能证明职业/商业属性。
+- 如果 profile/bio 很空、只有 emoji、只有联系方式，主要根据 video_description_unit 判断。
+
+分析逻辑按这 4 步：
+
+1. 他是谁？
+判断这个人的基础身份和第一印象，包括：
+年龄感、性别/性向呈现、族裔视觉、身材、社会身份、气质、审美。
+重点回答：这个人看起来像什么样的人？
+
+2. 他在做什么？
+判断这个账号主要在做哪类内容。
+重点回答：这个账号主要靠什么内容运转？
+
+3. 为什么有人看他？
+判断这个博主的核心吸引力，例如：
+好看、会穿、生活有代入感、内容有用、能帮人买东西、有情绪价值、代表某类人群。
+重点回答：观众为什么愿意停下来继续看？
+
+4. 他能被怎么复刻？
+判断这个博主对 AI 账号生产的价值，例如：
+美美展示型 AI 博主、穿搭方法型 AI 博主、人设生活型 AI 博主、可拆素材但不适合整体复刻、不适合复刻。
+重点回答：这个博主适合被复刻成什么方向的 AI 博主？
+
+输出要求：
+- 只输出 JSON。
+- 只输出一个字段 account_one_sentence_summary。
+- 不要输出分析过程。
+- 不要输出 evidence。
+- 不要输出多个版本。
+- 不要编造 profile/bio 或 video_description_unit 里完全没有的强信息。
+- 如果信息不明确，用"无明显""偏""可能"这类保守表达。
+- 句子尽量自然、短、可直接给业务方看。
+
+最终句式尽量遵循：
+
+这是一个【什么样的人】，主要在做【什么类型的内容】，用户看TA是因为【核心吸引力】，适合被复刻成【什么方向的 AI 博主】。
+
+输出 JSON 格式：
+
+{
+  "account_one_sentence_summary": ""
+}"""
+
+
 BLOGGER_ACCOUNT_PROMPT = """你是一个 TikTok 博主账号级 Personal Tags 打标模型。
 
 我会提供同一个 TikTok 博主的多个 video_description_unit。
@@ -873,6 +929,33 @@ async def analyze_blogger_account(units: list[dict], model: str | None = None) -
     except Exception as exc:
         logger.warning("analyze_blogger_account failed: %s", exc)
         return {"parsed": None, "raw_text": "", "error": str(exc)}
+
+
+async def analyze_blogger_one_sentence_summary(
+    units: list[dict],
+    blogger_profile: str = "",
+    model: str | None = None,
+) -> dict:
+    """生成博主一句话总结，结合 profile/bio 和 video_description_unit。"""
+    try:
+        profile = (blogger_profile or "").strip() or "无"
+        prompt = (
+            f"{PROMPT_6}\n\n"
+            f"以下是该 TikTok 博主主页 profile/bio 文案。它可能包含地点、职业、身份、内容定位、联系方式或自我介绍；"
+            f"如果它提供了重要且可信的信息，请优先用于判断这个人是谁和账号定位，但不要编造 profile 里没有的信息：\n"
+            f"{profile}\n\n"
+            f"以下是该账号的 {len(units)} 个 video_description_unit：\n"
+            f"{json.dumps(units, ensure_ascii=False, indent=2)}"
+        )
+        text = await _call_text(prompt, model=model)
+        parsed = parse_json_text(text)
+        summary = ""
+        if isinstance(parsed, dict):
+            summary = (parsed.get("account_one_sentence_summary") or "").strip()
+        return {"parsed": parsed, "raw_text": text, "summary": summary, "error": ""}
+    except Exception as exc:
+        logger.warning("analyze_blogger_one_sentence_summary failed: %s", exc)
+        return {"parsed": None, "raw_text": "", "summary": "", "error": str(exc)}
 
 
 # ── 聚合工具函数 ───────────────────────────────────────────────────────────────
