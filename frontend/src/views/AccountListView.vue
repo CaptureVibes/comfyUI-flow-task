@@ -1058,7 +1058,7 @@
                   :style="{ width: (taggingProgressData.summary.failed / taggingProgressData.summary.total * 100).toFixed(1) + '%' }"
                 ></div>
               </div>
-              <span class="tp-progress-pct">{{ taggingProgressData.summary.total ? ((taggingProgressData.summary.success / taggingProgressData.summary.total) * 100).toFixed(0) : 0 }}%</span>
+              <span class="tp-progress-pct">{{ taggingProgressData.summary.total ? (((taggingProgressData.summary.success + taggingProgressData.summary.running) / taggingProgressData.summary.total) * 100).toFixed(0) : 0 }}%</span>
             </div>
           </div>
           <div class="tp-overview-right">
@@ -3250,6 +3250,9 @@ const aggregateStageDesc = computed(() => {
 
 const writebackStageClass = computed(() => {
   const wb = taggingProgressData.value?.writeback_status
+  const bs = taggingProgressData.value?.blogger_status
+  // 博主聚合还没完成，写回就是"等待中"
+  if (bs !== 'success') return 'is-not_started'
   if (!wb || wb === 'idle') return 'is-not_started'
   if (wb === 'pending') return 'is-running'
   if (wb === 'success') return taggingProgressData.value?.writeback_done ? 'is-success' : 'is-partial'
@@ -3259,7 +3262,9 @@ const writebackStageClass = computed(() => {
 
 const writebackStageDesc = computed(() => {
   const wb = taggingProgressData.value?.writeback_status
+  const bs = taggingProgressData.value?.blogger_status
   const done = taggingProgressData.value?.writeback_done
+  if (bs !== 'success') return '等待中'
   if (wb === 'success' && done) return '已写回博主标签'
   if (wb === 'success' && !done) return '写回未完成'
   if (wb === 'pending') return '写回中...'
