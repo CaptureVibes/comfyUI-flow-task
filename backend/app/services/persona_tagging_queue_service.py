@@ -779,10 +779,12 @@ async def stop_persona_tagging_workers() -> None:
 
 
 async def recover_stuck_tagging_on_startup() -> None:
-    """启动时将残留 running 状态的任务重置为 pending。"""
+    """启动时恢复所有未完成的打标任务，确保断点续跑。"""
     async with SessionLocal() as db:
         now = datetime.now(timezone.utc)
-        await db.execute(
+
+        # 视频任务：running → pending（重新拾取）
+        vr = await db.execute(
             update(VideoTaggingResult)
             .where(VideoTaggingResult.status == "running")
             .values(
@@ -793,7 +795,9 @@ async def recover_stuck_tagging_on_startup() -> None:
                 updated_at=now,
             )
         )
-        await db.execute(
+
+        # 博主任务：running/checking_videos/aggregating → pending
+        br1 = await db.execute(
             update(BloggerTaggingResult)
             .where(BloggerTaggingResult.status.in_(["running", "checking_videos", "aggregating"]))
             .values(
@@ -804,5 +808,23 @@ async def recover_stuck_tagging_on_startup() -> None:
                 updated_at=now,
             )
         )
+
+        # 博主任务：waiting_videos → next_retry_at 清零，让 worker 立即重新检查
+        br2 = await db.execute(
+            update(BloggerTaggingResult)
+            .where(BloggerTaggingResult.status == "waiting_videos")
+            .values(
+                next_retry_at=now,  # 立即可被拾取
+                worker_id=None,
+                lock_until=None,
+                updated_at=now,
+            )
+        )
+
         await db.commit()
-    logger.info("Recovered stuck persona tagging tasks on startup")
+
+    logger.info(
+        "Recovered stuck persona tagging tasks on startup: "
+        "video_running=%d blogger_active=%d blogger_waiting=%d",
+        vr.rowcount, br1.rowcount, br2.rowcount,
+    )
