@@ -83,8 +83,9 @@ export async function bulkGenerateAIAccounts() {
   return data
 }
 
-export async function bulkPersonaTagging(accountIds = null) {
+export async function bulkPersonaTagging(accountIds = null, force = false) {
   const body = accountIds?.length ? { account_ids: accountIds } : {}
+  if (force) body.force = true
   const { data } = await http.post('/accounts/bulk-persona-tagging', body)
   return data
 }

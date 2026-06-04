@@ -983,6 +983,37 @@
       </div>
     </el-dialog>
 
+    <!-- 人设打标确认 dialog -->
+    <el-dialog
+      v-model="showPersonaTagConfirmDialog"
+      title="人设打标"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <div class="al-supplement-body">
+        <div class="al-supplement-scope">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span v-if="personaTagConfirmIds.length > 0">
+            将为已选 <b>{{ personaTagConfirmIds.length }}</b> 个 AI 博主绑定的 TikTok 博主进行人设打标
+          </span>
+          <span v-else>
+            将为全部 <b>{{ total }}</b> 个 AI 博主绑定的 TikTok 博主进行人设打标
+          </span>
+        </div>
+        <div class="al-classify-confirm-option">
+          <label class="al-classify-force-label">
+            <input type="checkbox" v-model="personaTagForce" />
+            <span>覆盖已有打标结果</span>
+          </label>
+          <div class="al-classify-force-hint">勾选后，已完成打标的博主也会清除旧结果重新打标</div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showPersonaTagConfirmDialog = false">取消</el-button>
+        <el-button type="primary" :loading="personaTagging" @click="confirmPersonaTagging">开始打标</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 人设打标进度 dialog -->
     <el-dialog
       v-model="showTaggingProgressDialog"
@@ -3247,23 +3278,23 @@ function topStyles(styleVector, n = 3) {
   )
 }
 
-async function handleBulkPersonaTagging() {
+const showPersonaTagConfirmDialog = ref(false)
+const personaTagConfirmIds = ref([])
+const personaTagForce = ref(false)
+
+function handleBulkPersonaTagging() {
   if (personaTagging.value) return
-  const isSelection = selectedMap.value.size > 0
-  const accountIds = isSelection ? [...selectedMap.value.keys()] : []
-  const desc = isSelection ? `已选 ${accountIds.length} 个 AI 博主` : '全部 AI 博主'
-  try {
-    await ElMessageBox.confirm(
-      `将为${desc}绑定的 TikTok 博主异步进行人设打标，完成后结果自动写回。确定继续？`,
-      '确认人设打标',
-      { confirmButtonText: '开始打标', cancelButtonText: '取消', type: 'info' }
-    )
-  } catch {
-    return
-  }
+  personaTagConfirmIds.value = selectedMap.value.size > 0 ? [...selectedMap.value.keys()] : []
+  personaTagForce.value = false
+  showPersonaTagConfirmDialog.value = true
+}
+
+async function confirmPersonaTagging() {
   personaTagging.value = true
   try {
-    const result = await bulkPersonaTagging(accountIds.length ? accountIds : null)
+    const accountIds = personaTagConfirmIds.value
+    const result = await bulkPersonaTagging(accountIds.length ? accountIds : null, personaTagForce.value)
+    showPersonaTagConfirmDialog.value = false
     ElMessage.success(result.message || `已为 ${result.queued} 个博主入队打标`)
     await loadData()
   } catch (err) {

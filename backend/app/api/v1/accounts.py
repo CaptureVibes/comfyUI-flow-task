@@ -1323,11 +1323,15 @@ async def bulk_persona_tagging(
 ) -> dict:
     """
     为已勾选的 AI 博主（或全部）触发绑定 TikTok 博主的人设打标。
-    body: { account_ids?: string[] }  — 不传则取当前用户全部账号
+    body: { account_ids?: string[], force?: bool }
+    force=true 时强制重跑，清除已有打标结果。
     """
     from app.services.persona_tagging_queue_service import enqueue_blogger_tagging
+    from app.models.persona_tagging import BloggerTaggingResult, VideoTaggingResult
+    from app.models.video_source import VideoSource as _VS
 
     account_ids = body.get("account_ids") or []
+    force = bool(body.get("force", False))
 
     # 查这批账号绑定的所有 TikTok 博主（去重）
     stmt = (
@@ -1337,13 +1341,84 @@ async def bulk_persona_tagging(
     )
     if account_ids:
         stmt = stmt.where(AccountBloggerBinding.account_id.in_([uuid.UUID(i) for i in account_ids]))
-    rows = (await session.execute(stmt.distinct())).scalars().all()
+    blogger_ids = (await session.execute(stmt.distinct())).scalars().all()
 
-    if not rows:
+    if not blogger_ids:
         return {"queued": 0, "message": "没有找到绑定的 TikTok 博主"}
 
+    if force:
+        # 清除这批博主的所有视频打标结果和博主聚合结果
+        now_dt = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+        for bid in blogger_ids:
+            # 查博主旗下视频
+            from app.services.persona_tagging_service import get_blogger_videos as _gbv
+            videos = await _gbv(session, bid)
+            video_ids = [uuid.UUID(v["video_id"]) for v in videos]
+            if video_ids:
+                vt_rows = (await session.execute(
+                    select(VideoTaggingResult).where(VideoTaggingResult.video_id.in_(video_ids))
+                )).scalars().all()
+                for vt in vt_rows:
+                    vt.status = "pending"
+                    vt.result_code = None
+                    vt.result_message = "re-queued"
+                    vt.error_code = None
+                    vt.error_message = None
+                    vt.video_description_unit = None
+                    vt.personal_tags = None
+                    vt.style_vector = None
+                    vt.style_signature = None
+                    vt.raw_outputs = None
+                    vt.worker_id = None
+                    vt.lock_until = None
+                    vt.started_at = None
+                    vt.finished_at = None
+                    vt.updated_at = now_dt
+                vs_rows = (await session.execute(
+                    select(_VS).where(_VS.id.in_(video_ids))
+                )).scalars().all()
+                for vs in vs_rows:
+                    vs.personal_tags = None
+                    vs.style_vector = None
+                    vs.tagging_status = "pending"
+                    vs.updated_at = now_dt
+            # 清空博主聚合结果
+            from app.models.tiktok_blogger import TiktokBlogger as _TB
+            tb = (await session.execute(select(_TB).where(_TB.id == bid))).scalar_one_or_none()
+            if tb:
+                tb.persona_tags = None
+                tb.style_vector = None
+                tb.style_signature = None
+                tb.one_sentence_summary = None
+                tb.tagging_status = "pending"
+                tb.updated_at = now_dt
+            # 清空博主任务聚合结果
+            bt = (await session.execute(
+                select(BloggerTaggingResult).where(BloggerTaggingResult.tiktok_blogger_id == bid)
+            )).scalar_one_or_none()
+            if bt:
+                bt.account_personal_tags = None
+                bt.account_style_vector = None
+                bt.account_style_signature = None
+                bt.account_one_sentence_summary = None
+                bt.aggregated_social_identity = None
+                bt.aggregated_occasion = None
+                bt.raw_outputs = None
+                bt.status = "pending"
+                bt.result_code = 0
+                bt.result_message = "re-queued"
+                bt.error_code = None
+                bt.error_message = None
+                bt.worker_id = None
+                bt.lock_until = None
+                bt.next_retry_at = None
+                bt.started_at = None
+                bt.finished_at = None
+                bt.updated_at = now_dt
+        await session.commit()
+
     queued = 0
-    for blogger_id in rows:
+    for blogger_id in blogger_ids:
         task = await enqueue_blogger_tagging(blogger_id, session)
         if task is not None:
             queued += 1
