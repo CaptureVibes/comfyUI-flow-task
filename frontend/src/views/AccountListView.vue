@@ -1128,7 +1128,7 @@
           </div>
 
           <div class="tp-result-tags">
-            <!-- 基础人口 -->
+            <!-- ① persona_tags: 基础人口 -->
             <div class="tp-result-group" v-if="taggingProgressData.result.persona_tags?.basic_demographics">
               <span class="tp-result-group-label">基础人口</span>
               <div class="tp-result-chips">
@@ -1142,56 +1142,126 @@
                 </template>
               </div>
             </div>
-
-            <!-- 消费/气质/身份/场合 -->
-            <div class="tp-result-group">
+            <!-- ① persona_tags: 消费层级 / 气质 / 社会身份 / 场合 -->
+            <div class="tp-result-group" v-if="taggingProgressData.result.persona_tags">
               <span class="tp-result-group-label">人设标签</span>
               <div class="tp-result-chips">
-                <span v-if="taggingProgressData.result.persona_tags?.consumption_tier" class="tp-chip tp-chip--consumption">{{ taggingProgressData.result.persona_tags.consumption_tier }}</span>
-                <span v-if="taggingProgressData.result.persona_tags?.temperament_psychology" class="tp-chip tp-chip--temperament">{{ taggingProgressData.result.persona_tags.temperament_psychology }}</span>
-                <span v-if="taggingProgressData.result.persona_tags?.social_identity && taggingProgressData.result.persona_tags.social_identity !== '无明确社会身份型'" class="tp-chip tp-chip--identity">{{ taggingProgressData.result.persona_tags.social_identity }}</span>
-                <span v-if="taggingProgressData.result.persona_tags?.occasion && taggingProgressData.result.persona_tags.occasion !== '无明显赛道'" class="tp-chip tp-chip--occasion">{{ taggingProgressData.result.persona_tags.occasion }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.consumption_tier" class="tp-chip tp-chip--consumption">{{ taggingProgressData.result.persona_tags.consumption_tier }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.temperament_psychology" class="tp-chip tp-chip--temperament">{{ taggingProgressData.result.persona_tags.temperament_psychology }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.social_identity" class="tp-chip tp-chip--identity">{{ taggingProgressData.result.persona_tags.social_identity }}</span>
+                <span v-if="taggingProgressData.result.persona_tags.occasion" class="tp-chip tp-chip--occasion">{{ taggingProgressData.result.persona_tags.occasion }}</span>
+              </div>
+            </div>
+            <!-- ① persona_tags: 置信度 -->
+            <div class="tp-result-group" v-if="taggingProgressData.result.persona_tags?.confidence">
+              <span class="tp-result-group-label">置信度</span>
+              <div class="tp-result-chips">
+                <span class="tp-chip tp-chip--meta">基础人口 {{ taggingProgressData.result.persona_tags.confidence.basic_demographics }}</span>
+                <span class="tp-chip tp-chip--meta">消费层级 {{ taggingProgressData.result.persona_tags.confidence.consumption_tier }}</span>
+                <span class="tp-chip tp-chip--meta">气质心理 {{ taggingProgressData.result.persona_tags.confidence.temperament_psychology }}</span>
               </div>
             </div>
 
-            <!-- Top 风格 -->
+            <!-- ② style_vector: 全部 32 维（按分数排序，>0 的都展示） -->
             <div class="tp-result-group" v-if="taggingProgressData.result.style_vector">
-              <span class="tp-result-group-label">风格向量 Top 5</span>
+              <span class="tp-result-group-label">风格向量</span>
               <div class="tp-result-chips">
                 <span
-                  v-for="(score, style) in topStyles(taggingProgressData.result.style_vector, 5)"
+                  v-for="(score, style) in allStyles(taggingProgressData.result.style_vector)"
                   :key="style"
                   class="tp-chip tp-chip--style"
+                  :class="score >= 0.5 ? 'tp-chip--style-hi' : ''"
                   :title="`${style}: ${(score * 100).toFixed(0)}%`"
-                >{{ style }} <b>{{ (score * 100).toFixed(0) }}%</b></span>
+                >{{ style }} {{ (score * 100).toFixed(0) }}%</span>
               </div>
             </div>
 
-            <!-- 风格签名关键信息 -->
+            <!-- ③ style_signature: color_palette -->
             <template v-if="taggingProgressData.result.style_signature">
-              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.color_palette?.dominant_colors?.length">
-                <span class="tp-result-group-label">主色调</span>
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.color_palette">
+                <span class="tp-result-group-label">色彩</span>
                 <div class="tp-result-chips">
                   <span v-for="c in taggingProgressData.result.style_signature.color_palette.dominant_colors" :key="c" class="tp-chip tp-chip--color">{{ c }}</span>
-                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.color_palette.temperature }} · {{ taggingProgressData.result.style_signature.color_palette.saturation }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.color_palette.temperature }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.color_palette.saturation }}</span>
+                  <span class="tp-chip tp-chip--meta">对比度 {{ taggingProgressData.result.style_signature.color_palette.contrast }}</span>
+                  <span v-for="c in taggingProgressData.result.style_signature.color_palette.signature_combos" :key="c" class="tp-chip tp-chip--color">{{ c }}</span>
+                  <span class="tp-chip tp-chip--meta">单色倾向 {{ (taggingProgressData.result.style_signature.color_palette.monochromatic_tendency * 100).toFixed(0) }}%</span>
                 </div>
               </div>
-              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.aesthetic_mood?.mood_keywords?.length">
-                <span class="tp-result-group-label">情绪关键词</span>
-                <div class="tp-result-chips">
-                  <span v-for="k in taggingProgressData.result.style_signature.aesthetic_mood.mood_keywords" :key="k" class="tp-chip tp-chip--mood">{{ k }}</span>
-                </div>
-              </div>
-              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.material_profile?.primary_materials?.length">
-                <span class="tp-result-group-label">常用材质</span>
+              <!-- style_signature: material_profile -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.material_profile">
+                <span class="tp-result-group-label">材质</span>
                 <div class="tp-result-chips">
                   <span v-for="m in taggingProgressData.result.style_signature.material_profile.primary_materials" :key="m" class="tp-chip tp-chip--meta">{{ m }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.material_profile.texture_preference }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.material_profile.weight_preference }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.material_profile.transparency_level }}</span>
+                  <span class="tp-chip tp-chip--meta">硬件感 {{ (taggingProgressData.result.style_signature.material_profile.hardware_affinity * 100).toFixed(0) }}%</span>
                 </div>
               </div>
-              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.price_positioning?.tier">
+              <!-- style_signature: silhouette_profile -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.silhouette_profile">
+                <span class="tp-result-group-label">廓形</span>
+                <div class="tp-result-chips">
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.silhouette_profile.fit_preference }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.silhouette_profile.proportion_play }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.silhouette_profile.structure_level }}</span>
+                  <span class="tp-chip tp-chip--meta">层叠 {{ taggingProgressData.result.style_signature.silhouette_profile.layering_complexity }}</span>
+                  <template v-if="taggingProgressData.result.style_signature.silhouette_profile.length_preference">
+                    <span v-for="(v, k) in taggingProgressData.result.style_signature.silhouette_profile.length_preference" :key="k" class="tp-chip tp-chip--meta">{{ k }}: {{ v }}</span>
+                  </template>
+                </div>
+              </div>
+              <!-- style_signature: pattern_profile -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.pattern_profile">
+                <span class="tp-result-group-label">图案</span>
+                <div class="tp-result-chips">
+                  <span v-for="p in taggingProgressData.result.style_signature.pattern_profile.pattern_types" :key="p" class="tp-chip tp-chip--meta">{{ p }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.pattern_profile.pattern_scale }}</span>
+                  <span class="tp-chip tp-chip--meta">频率 {{ (taggingProgressData.result.style_signature.pattern_profile.pattern_frequency * 100).toFixed(0) }}%</span>
+                  <span class="tp-chip tp-chip--meta">logo {{ taggingProgressData.result.style_signature.pattern_profile.logo_visibility }}</span>
+                  <span class="tp-chip tp-chip--meta">混搭印花 {{ taggingProgressData.result.style_signature.pattern_profile.print_mixing ? '是' : '否' }}</span>
+                </div>
+              </div>
+              <!-- style_signature: aesthetic_mood -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.aesthetic_mood">
+                <span class="tp-result-group-label">气场</span>
+                <div class="tp-result-chips">
+                  <span class="tp-chip tp-chip--mood">{{ taggingProgressData.result.style_signature.aesthetic_mood.energy }}</span>
+                  <span v-for="f in taggingProgressData.result.style_signature.aesthetic_mood.formality_range" :key="f" class="tp-chip tp-chip--mood">{{ f }}</span>
+                  <span class="tp-chip tp-chip--mood">{{ taggingProgressData.result.style_signature.aesthetic_mood.gender_expression }}</span>
+                  <span v-for="k in taggingProgressData.result.style_signature.aesthetic_mood.mood_keywords" :key="k" class="tp-chip tp-chip--mood">{{ k }}</span>
+                  <span v-for="r in taggingProgressData.result.style_signature.aesthetic_mood.cultural_references" :key="r" class="tp-chip tp-chip--meta">{{ r }}</span>
+                </div>
+              </div>
+              <!-- style_signature: occasion_vector Top 5 -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.occasion_vector">
+                <span class="tp-result-group-label">场合向量</span>
+                <div class="tp-result-chips">
+                  <span
+                    v-for="(score, occ) in topStyles(taggingProgressData.result.style_signature.occasion_vector, 5)"
+                    :key="occ"
+                    class="tp-chip tp-chip--occasion"
+                  >{{ occ }} {{ (score * 100).toFixed(0) }}%</span>
+                </div>
+              </div>
+              <!-- style_signature: price_positioning -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.price_positioning">
                 <span class="tp-result-group-label">价格定位</span>
                 <div class="tp-result-chips">
-                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.price_positioning.tier }}</span>
+                  <span class="tp-chip tp-chip--consumption">{{ taggingProgressData.result.style_signature.price_positioning.tier }}</span>
+                  <span class="tp-chip tp-chip--meta">投资感 {{ (taggingProgressData.result.style_signature.price_positioning.investment_vs_trend * 100).toFixed(0) }}%</span>
+                  <span class="tp-chip tp-chip--meta">品牌感知 {{ (taggingProgressData.result.style_signature.price_positioning.brand_consciousness * 100).toFixed(0) }}%</span>
+                </div>
+              </div>
+              <!-- style_signature: era_influence -->
+              <div class="tp-result-group" v-if="taggingProgressData.result.style_signature.era_influence?.primary_era">
+                <span class="tp-result-group-label">年代感</span>
+                <div class="tp-result-chips">
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.era_influence.primary_era }}</span>
+                  <span class="tp-chip tp-chip--meta">{{ taggingProgressData.result.style_signature.era_influence.era_authenticity }}</span>
+                  <span class="tp-chip tp-chip--meta">未来感 {{ (taggingProgressData.result.style_signature.era_influence.retro_futurism * 100).toFixed(0) }}%</span>
                 </div>
               </div>
             </template>
@@ -3464,6 +3534,15 @@ function topStyles(styleVector, n = 3) {
   )
 }
 
+function allStyles(styleVector) {
+  if (!styleVector) return {}
+  return Object.fromEntries(
+    Object.entries(styleVector)
+      .filter(([, v]) => v > 0)
+      .sort(([, a], [, b]) => b - a)
+  )
+}
+
 const showPersonaTagConfirmDialog = ref(false)
 const personaTagConfirmIds = ref([])
 const personaTagForce = ref(false)
@@ -5517,6 +5596,7 @@ onMounted(() => {
 .tp-chip--identity    { background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; }
 .tp-chip--occasion    { background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; }
 .tp-chip--style       { background:#fff7ed; color:#ea580c; border:1px solid #fed7aa; }
+.tp-chip--style-hi    { background:#ffedd5; font-weight:700; border-color:#fb923c; }
 .tp-chip--color       { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; }
 .tp-chip--mood        { background:#fdf4ff; color:#9333ea; border:1px solid #e9d5ff; }
 .tp-chip--meta        { background:#f8fafc; color:#64748b; border:1px solid #e2e8f0; }
