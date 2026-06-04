@@ -3224,16 +3224,6 @@ const videoStageClass = computed(() => {
   return 'is-not_started'
 })
 
-const aggregateStageClass = computed(() => {
-  const bs = taggingProgressData.value?.blogger_status
-  if (!bs || bs === 'not_started') return 'is-not_started'
-  if (bs === 'aggregating' || bs === 'checking_videos') return 'is-running'
-  if (bs === 'waiting_videos' || bs === 'pending') return 'is-pending'
-  if (bs === 'success') return 'is-success'
-  if (bs === 'failed') return 'is-failed'
-  return 'is-not_started'
-})
-
 const aggregateStageDesc = computed(() => {
   const bs = taggingProgressData.value?.blogger_status
   const map = {
@@ -3251,10 +3241,9 @@ const aggregateStageDesc = computed(() => {
 const writebackStageClass = computed(() => {
   const wb = taggingProgressData.value?.writeback_status
   const bs = taggingProgressData.value?.blogger_status
-  // 博主聚合还没完成，写回就是"等待中"
   if (bs !== 'success') return 'is-not_started'
   if (!wb || wb === 'idle') return 'is-not_started'
-  if (wb === 'pending') return 'is-running'
+  if (wb === 'pending' || wb === 'running') return 'is-running'
   if (wb === 'success') return taggingProgressData.value?.writeback_done ? 'is-success' : 'is-partial'
   if (wb === 'failed') return 'is-failed'
   return 'is-not_started'
@@ -3265,11 +3254,23 @@ const writebackStageDesc = computed(() => {
   const bs = taggingProgressData.value?.blogger_status
   const done = taggingProgressData.value?.writeback_done
   if (bs !== 'success') return '等待中'
+  if (wb === 'running') return '写回中...'
   if (wb === 'success' && done) return '已写回博主标签'
   if (wb === 'success' && !done) return '写回未完成'
   if (wb === 'pending') return '写回中...'
   if (wb === 'failed') return '写回失败'
   return '等待中'
+})
+
+const aggregateStageClass = computed(() => {
+  const wb = taggingProgressData.value?.writeback_status
+  const bs = taggingProgressData.value?.blogger_status
+  if (!bs || bs === 'not_started') return 'is-not_started'
+  if (bs === 'aggregating' || bs === 'checking_videos' || wb === 'running') return 'is-running'
+  if (bs === 'waiting_videos' || bs === 'pending') return 'is-pending'
+  if (bs === 'success') return 'is-success'
+  if (bs === 'failed') return 'is-failed'
+  return 'is-not_started'
 })
 
 function videoTaggingStatusLabel(status) {

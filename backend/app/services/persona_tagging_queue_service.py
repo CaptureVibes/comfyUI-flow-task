@@ -493,6 +493,16 @@ async def _run_blogger_task(task_id: uuid.UUID) -> None:
             task.successful_video_count = len(success_tasks)
             task.selected_video_ids = [str(t.video_id) for t in success_tasks[:min_count]]
             task.updated_at = datetime.now(timezone.utc)
+
+            # 同步博主 tagging_status → running，让前端能感知到聚合阶段
+            _blogger_running_row = await db.execute(
+                select(TiktokBlogger).where(TiktokBlogger.id == tiktok_blogger_id)
+            )
+            _blogger_running = _blogger_running_row.scalar_one_or_none()
+            if _blogger_running is not None:
+                _blogger_running.tagging_status = "running"
+                _blogger_running.updated_at = datetime.now(timezone.utc)
+
             await db.commit()
 
             selected = success_tasks[:min_count]
